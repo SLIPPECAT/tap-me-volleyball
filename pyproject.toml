@@ -3,9 +3,11 @@ name = "tap-me-volleyball"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "meta-sam-parser>=0.1.0",
     "numpy>=2.5.4",
     "openai>=3.40.0",
     "opencv-python-headless<5",
+    "pillow>=13.0.0",
     "python-dotenv>=1.2.4",
 ]
 
