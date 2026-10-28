@@ -1,6 +1,6 @@
 # tap-me-volleyball
 
-Tap yourself once in a phone-recorded amateur volleyball video, and get a vertical highlight of your team's scoring plays with Korean and Japanese subtitles.
+Tap yourself once in a phone-recorded amateur volleyball video, and get a vertical highlight of your team's scoring plays with subtitles in the languages you pick (Korean, Japanese, English).
 
 - Player tracking: SAM 3.1 (Meta Model API)
 - Scoring moment and subtitles: Muse Spark (Meta Model API)
