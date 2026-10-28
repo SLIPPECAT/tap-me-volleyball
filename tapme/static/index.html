@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tap Me Volleyball</title>
+<style>
+  :root { --fg: #14181f; --muted: #667085; --line: #e4e7ec; --bg: #ffffff; --accent: #0091b3; --warn: #b54708; --bad: #b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #f2f4f7; --muted: #98a2b3; --line: #344054; --bg: #0c111d; --accent: #3ec5e6; --warn: #fdb022; --bad: #f97066; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  main { max-width: 560px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 4px 0 16px; }
+  h2 { font-size: 17px; margin: 20px 0 8px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .error { color: var(--bad); font-weight: 600; }
+  button, select, input[type=text] { font: inherit; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; width: 100%; }
+  button:disabled { opacity: .5; }
+  .card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 8px 0; }
+  .card .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .tag { font-size: 13px; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
+  .tag.yes { color: var(--accent); } .tag.no { color: var(--muted); } .tag.unsure { color: var(--warn); }
+  .tapwrap { position: relative; touch-action: manipulation; }
+  .tapwrap img { width: 100%; display: block; border-radius: 10px; }
+  .marker { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border: 3px solid var(--accent); border-radius: 50%; pointer-events: none; display: none; }
+  .field { margin: 12px 0; }
+  .field label { display: block; font-size: 14px; color: var(--muted); margin-bottom: 4px; }
+  .langs label { display: inline-flex; gap: 6px; margin-right: 16px; color: var(--fg); font-size: 16px; }
+  .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .opts select { width: 100%; }
+  video { width: 100%; border-radius: 10px; background: #000; }
+  .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 8px 0; }
+  .progress div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tap Me Volleyball</h1>
+  <p class="error" id="error" hidden></p>
+
+  <!-- 1. 영상 올리기 -->
+  <section id="s-upload">
+    <p>정모 경기 영상을 올리면 랠리를 찾아 드립니다. 다른 회원 얼굴은 서버로 보내기 전에 모자이크합니다.</p>
+    <input type="file" id="file" accept="video/*">
+    <div class="progress" id="up-progress" hidden><div></div></div>
+    <p class="muted" id="up-status"></p>
+  </section>
+
+  <!-- 2. 랠리 후보 -->
+  <section id="s-rallies" hidden>
+    <h2>우리 팀이 득점한 랠리를 고르세요</h2>
+    <p class="muted">AI가 랠리인지 판정했지만 틀릴 수 있어요. 어느 후보든 고를 수 있습니다.</p>
+    <div id="rally-list"></div>
+  </section>
+
+  <!-- 3. 나를 탭 -->
+  <section id="s-tap" hidden>
+    <h2>화면에서 나를 탭하세요</h2>
+    <p class="muted" id="tap-status"></p>
+    <div class="tapwrap" id="tapwrap" hidden>
+      <img id="tap-img" alt="탭할 장면">
+      <div class="marker" id="marker"></div>
+    </div>
+    <div id="tap-form" hidden>
+      <div class="field">
+        <label for="team">우리 팀 이름 (자막에 들어가요)</label>
+        <input type="text" id="team" value="검정" maxlength="20">
+      </div>
+      <div id="opts-tap"></div>
+      <button class="primary" id="make" disabled>하이라이트 만들기</button>
+    </div>
+    <p><button id="back-rallies">다른 랠리 고르기</button></p>
+  </section>
+
+  <!-- 4. 결과 -->
+  <section id="s-result" hidden>
+    <h2>내 하이라이트</h2>
+    <p class="muted" id="result-status"></p>
+    <video id="result" controls playsinline hidden></video>
+    <p><a id="download" download="highlight.mp4" hidden>영상 저장</a></p>
+    <h2>옵션 바꾸기</h2>
+    <p class="muted">다시 만들어도 AI 비용은 들지 않아요.</p>
+    <div id="opts-result"></div>
+    <button class="primary" id="rerender">다시 만들기</button>
+    <p><button id="back-rallies2">다른 랠리 고르기</button></p>
+  </section>
+
+  <p class="muted" id="spent"></p>
+</main>
+
+<template id="opts-tpl">
+  <div class="field langs">
+    <label>자막 언어</label>
+    <label><input type="checkbox" value="ko" checked> 한국어</label>
+    <label><input type="checkbox" value="ja"> 日本語</label>
+    <label><input type="checkbox" value="en"> English</label>
+  </div>
+  <div class="opts">
+    <div class="field"><label>다른 회원 가리기</label>
+      <select class="privacy">
+        <option value="face" selected>얼굴만</option>
+        <option value="silhouette">몸 실루엣</option>
+        <option value="background">나 빼고 전부</option>
+      </select></div>
+    <div class="field"><label>확대</label>
+      <select class="zoom">
+        <option value="1">1배</option><option value="1.5">1.5배</option>
+        <option value="2" selected>2배</option><option value="2.5">2.5배</option>
+      </select></div>
+  </div>
+</template>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { job: null, rally: null, tap: null, poll: null };
+
+function show(section) {
+  for (const s of ["s-upload", "s-rallies", "s-tap", "s-result"]) $(s).hidden = s !== section;
+}
+function setError(msg) { $("error").textContent = msg || ""; $("error").hidden = !msg; }
+function setHash() {
+  location.hash = state.job ? `job=${state.job}` + (state.rally !== null ? `&rally=${state.rally}` : "") : "";
+}
+function readOptions(box) {
+  return {
+    languages: [...box.querySelectorAll("input[type=checkbox]:checked")].map((c) => c.value),
+    privacy: box.querySelector(".privacy").value,
+    zoom: parseFloat(box.querySelector(".zoom").value),
+  };
+}
+function mountOptions(boxId) { $(boxId).replaceChildren($("opts-tpl").content.cloneNode(true)); }
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `요청 실패 (${r.status})`);
+  return r.json();
+}
+function fmt(sec) { const m = Math.floor(sec / 60), s = Math.floor(sec % 60); return `${m}:${String(s).padStart(2, "0")}`; }
+
+// 상태를 2초마다 보고 지금 단계의 화면을 그린다
+function startPolling() {
+  clearInterval(state.poll);
+  const tick = async () => {
+    let s;
+    try { s = await api(`/jobs/${state.job}`); } catch (e) { setError(e.message); return; }
+    setError(s.error);
+    $("spent").textContent = `이 작업에 쓴 AI 비용 $${s.spent_usd.toFixed(3)}`;
+    if (state.rally === null) return renderRallies(s);
+    const scene = s.scenes[String(state.rally)];
+    if (!scene || scene.status === "preparing") {
+      show("s-tap"); $("tap-status").textContent = s.error ? "" : "득점 장면을 찾는 중… (1분 안팎)";
+      $("tapwrap").hidden = $("tap-form").hidden = true;
+    } else if (scene.status === "awaiting_tap") {
+      show("s-tap"); renderTap();
+    } else if (scene.status === "rendering") {
+      if ($("s-result").hidden) { show("s-tap"); $("tap-status").textContent = "나를 따라가며 영상을 만드는 중… (2~3분)"; }
+      else { $("result-status").textContent = "다시 만드는 중…"; }
+      $("make").disabled = $("rerender").disabled = true;
+    } else if (scene.status === "done") {
+      renderResult(scene);
+    }
+  };
+  tick();
+  state.poll = setInterval(tick, 2000);
+}
+
+function renderRallies(s) {
+  show(s.status === "rallies_ready" ? "s-rallies" : "s-upload");
+  if (s.status !== "rallies_ready") { $("up-status").textContent = s.error ? "" : "랠리를 찾는 중… (영상 길이에 따라 몇 분)"; return; }
+  const list = $("rally-list");
+  if (list.dataset.job === state.job && list.children.length) return;
+  list.dataset.job = state.job;
+  list.replaceChildren(...s.rallies.map((r) => {
+    const card = document.createElement("div"); card.className = "card";
+    const row = document.createElement("div"); row.className = "row";
+    const time = document.createElement("strong"); time.textContent = `${fmt(r.start_sec)} ~ ${fmt(r.end_sec)}`;
+    const tag = document.createElement("span");
+    tag.className = "tag " + (r.uncertain ? "unsure" : r.is_rally ? "yes" : "no");
+    tag.textContent = r.uncertain ? "판정 불확실" : r.is_rally ? "랠리" : "랠리 아님";
+    row.append(time, tag);
+    const reason = document.createElement("p"); reason.className = "muted"; reason.textContent = r.reason || "";
+    const pick = document.createElement("button"); pick.textContent = "이 랠리로 만들기";
+    pick.onclick = async () => {
+      state.rally = r.index; state.tap = null; setHash();
+      try { await api(`/jobs/${state.job}/rallies/${r.index}/prepare`, { method: "POST" }); } catch (e) { setError(e.message); }
+      startPolling();
+    };
+    card.append(row, reason, pick);
+    return card;
+  }));
+}
+
+function renderTap() {
+  $("tap-status").textContent = "선수 몸 위를 탭하면 그 선수를 따라가요.";
+  const img = $("tap-img"), src = `/jobs/${state.job}/rallies/${state.rally}/tap-frame`;
+  if (img.dataset.src !== src) { img.src = src; img.dataset.src = src; $("marker").style.display = "none"; state.tap = null; }
+  $("tapwrap").hidden = $("tap-form").hidden = false;
+  if (!$("opts-tap").children.length) mountOptions("opts-tap");
+  $("make").disabled = !state.tap;
+}
+
+// 화면에 보이는 위치를 원본 이미지 픽셀로 바꿔 서버에 보낸다
+$("tap-img").addEventListener("click", (ev) => {
+  const img = ev.currentTarget, rect = img.getBoundingClientRect();
+  const x = (ev.clientX - rect.left) * img.naturalWidth / rect.width;
+  const y = (ev.clientY - rect.top) * img.naturalHeight / rect.height;
+  state.tap = { x: Math.round(x), y: Math.round(y) };
+  const m = $("marker"); m.style.left = `${ev.clientX - rect.left}px`; m.style.top = `${ev.clientY - rect.top}px`; m.style.display = "block";
+  $("make").disabled = false;
+});
+
+$("make").onclick = async () => {
+  const body = { ...state.tap, team: $("team").value.trim() || "우리 팀", ...readOptions($("opts-tap")) };
+  $("make").disabled = true;
+  try { await api(`/jobs/${state.job}/rallies/${state.rally}/highlight`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
+  catch (e) { setError(e.message); $("make").disabled = false; }
+};
+
+function renderResult(scene) {
+  show("s-result");
+  const url = `/jobs/${state.job}/rallies/${state.rally}/video?v=${encodeURIComponent(JSON.stringify(scene.options))}`;
+  const v = $("result");
+  if (v.dataset.src !== url) { v.src = url; v.dataset.src = url; }
+  v.hidden = false; $("download").href = url; $("download").hidden = false;
+  $("result-status").textContent = scene.captions ? `자막: ${Object.values(scene.captions).join(" / ")}` : "";
+  if (!$("opts-result").children.length) {
+    mountOptions("opts-result");
+    const box = $("opts-result"), o = scene.options;
+    box.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = o.languages.includes(c.value); });
+    box.querySelector(".privacy").value = o.privacy;
+    box.querySelector(".zoom").value = String(o.zoom);
+  }
+  $("rerender").disabled = false;
+}
+
+$("rerender").onclick = async () => {
+  $("rerender").disabled = true;
+  try { await api(`/jobs/${state.job}/rallies/${state.rally}/rerender`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(readOptions($("opts-result"))) }); }
+  catch (e) { setError(e.message); $("rerender").disabled = false; }
+};
+
+for (const id of ["back-rallies", "back-rallies2"]) {
+  $(id).onclick = () => { state.rally = null; $("opts-result").replaceChildren(); setHash(); startPolling(); };
+}
+
+// 업로드: 진행률을 보여 주려고 XHR을 쓴다
+$("file").addEventListener("change", () => {
+  const f = $("file").files[0]; if (!f) return;
+  const form = new FormData(); form.append("file", f);
+  const xhr = new XMLHttpRequest();
+  $("up-progress").hidden = false; setError("");
+  xhr.upload.onprogress = (e) => { if (e.lengthComputable) { $("up-progress").firstElementChild.style.width = `${100 * e.loaded / e.total}%`; $("up-status").textContent = `올리는 중… ${Math.round(100 * e.loaded / e.total)}%`; } };
+  xhr.onload = () => {
+    if (xhr.status !== 200) { setError(`업로드 실패 (${xhr.status})`); return; }
+    state.job = JSON.parse(xhr.responseText).id; state.rally = null; setHash(); startPolling();
+  };
+  xhr.onerror = () => setError("업로드 실패 (연결)");
+  xhr.open("POST", "/jobs"); xhr.send(form);
+});
+
+// 새로고침해도 이어서 한다
+const params = new URLSearchParams(location.hash.slice(1));
+if (params.get("job")) {
+  state.job = params.get("job");
+  state.rally = params.has("rally") ? Number(params.get("rally")) : null;
+  startPolling();
+}
+</script>
+</body>
+</html>

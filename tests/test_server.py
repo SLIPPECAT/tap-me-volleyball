@@ -49,3 +49,14 @@ def test_tap_before_prepare_is_refused(client: TestClient) -> None:
 def test_unknown_job_is_404(client: TestClient) -> None:
     assert client.get("/jobs/nope123").status_code == 404
     assert client.get("/jobs/..%2F..%2Fetc").status_code == 404
+
+
+def test_index_page_is_served(client: TestClient) -> None:
+    r = client.get("/")
+    assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    assert "Tap Me Volleyball" in r.text
+
+
+def test_upload_streams_to_disk_with_safe_suffix(client: TestClient, tmp_path: Path) -> None:
+    job_id = client.post("/jobs", files={"file": ("../../evil.sh", b"video")}).json()["id"]
+    assert [p.name for p in (tmp_path / job_id).glob("source*")] == ["source.mp4"]

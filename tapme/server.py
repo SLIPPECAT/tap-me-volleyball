@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import traceback
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile
@@ -23,6 +24,7 @@ app = FastAPI(title="tap-me-volleyball")
 # 테스트에서 가짜 API 클라이언트로 바꾼다
 client_factory: Callable[[], Any] = muse.client_from_env
 _step_lock = threading.Lock()
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 class RenderOptions(BaseModel):
@@ -82,9 +84,14 @@ def _run(job_id: str, step: Callable[..., Any], *args: Any, **kwargs: Any) -> No
         job.save()
 
 
+@app.get("/")
+def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
+
+
 @app.post("/jobs")
-async def upload(file: UploadFile, background: BackgroundTasks) -> dict[str, Any]:
-    job = jobs.create_job(file.filename or "video.mp4", await file.read())
+def upload(file: UploadFile, background: BackgroundTasks) -> dict[str, Any]:
+    job = jobs.create_job(file.filename or "video.mp4", file.file)
     background.add_task(_run, job.id, jobs.find_rallies, client_factory())
     return {"id": job.id}
 

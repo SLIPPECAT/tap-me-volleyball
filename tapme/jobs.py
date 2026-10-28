@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from tapme import anonymize, muse, rally, rally_filter, render, score, track
 
@@ -60,11 +61,20 @@ class Job:
             raise BudgetExceeded(f"작업당 상한 ${MAX_USD_PER_JOB:.2f}을 넘는다 (쓴 돈 ${self.spent_usd:.3f} + 예상 ${estimate_usd:.3f})")
 
 
-def create_job(filename: str, data: bytes) -> Job:
+VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
+
+
+def create_job(filename: str, data: bytes | BinaryIO) -> Job:
+    """data는 바이트 또는 파일 객체. 경기 영상은 GB 단위일 수 있어 파일 객체는 조금씩 옮겨 쓴다."""
     job = Job(id=uuid.uuid4().hex[:12], video="")
     job.dir.mkdir(parents=True, exist_ok=True)
-    src = job.dir / f"source{Path(filename).suffix.lower() or '.mp4'}"
-    src.write_bytes(data)
+    suffix = Path(filename).suffix.lower()
+    src = job.dir / f"source{suffix if suffix in VIDEO_SUFFIXES else '.mp4'}"
+    if isinstance(data, bytes):
+        src.write_bytes(data)
+    else:
+        with src.open("wb") as f:
+            shutil.copyfileobj(data, f, length=8 * 1024 * 1024)
     job.video = str(src)
     job.save()
     return job
