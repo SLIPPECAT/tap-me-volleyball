@@ -28,7 +28,8 @@ def caption_prompt(team_label: str, score_time_sec: float) -> str:
         f"This is one rally from an amateur volleyball match. The point at {score_time_sec:.1f}s was won by "
         f"the team the user calls '{team_label}' (decided by the user, do not change it). "
         "Write a short highlight caption in Korean, Japanese and English, at most 20 characters each "
-        "(English at most 30). "
+        "(English at most 30). Translate the team name naturally into each language "
+        "(for example a colour name '검정' becomes '黒' in Japanese and 'Black' in English). "
         "Name the kind of play (spike, block, ace, ...) only if it is clearly visible; otherwise just say it is a point. "
         'Answer with JSON only: {"ko": "...", "ja": "...", "en": "..."}'
     )

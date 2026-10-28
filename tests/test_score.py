@@ -23,6 +23,8 @@ def test_caption_prompt_fixes_the_users_team_and_asks_all_languages() -> None:
     assert "'검정'" in p and "6.0s" in p and "do not change it" in p
     # 세 언어를 한 번에 받아 두면 사용자가 언어를 바꿔도 다시 묻지 않는다
     assert '{"ko": "...", "ja": "...", "en": "..."}' in p
+    # 10/28 서버 확인: 팀 이름을 그대로 둬서 "Point for 검정!"이 나왔다
+    assert "Translate the team name" in p
 
 
 def test_subtitle_uses_only_chosen_languages_in_order() -> None:
