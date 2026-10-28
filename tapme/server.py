@@ -93,7 +93,8 @@ async def upload(file: UploadFile, background: BackgroundTasks) -> dict[str, Any
 def status(job_id: str) -> dict[str, Any]:
     job = _job(job_id)
     return {"id": job.id, "status": job.status, "error": job.error, "spent_usd": round(job.spent_usd, 4),
-            "rallies": [{k: r[k] for k in ("index", "start_sec", "end_sec", "is_rally", "confidence", "reason")}
+            "rallies": [{k: r.get(k) for k in ("index", "start_sec", "end_sec", "is_rally", "confidence", "reason",
+                                               "uncertain")}
                         for r in job.rallies],
             "scenes": {k: {f: v for f, v in s.items() if f not in ("window5", "tap_frame", "window30", "video")}
                        for k, s in job.scenes.items()}}

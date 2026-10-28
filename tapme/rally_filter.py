@@ -19,6 +19,10 @@ from typing import Any
 from tapme import anonymize, muse, rally
 
 PAD_SEC = 1.0
+# 10/28 서버 확인: 같은 흐림본(입력 토큰도 같음)에 한 번은 "랠리"(0.95), 한 번은 "영상 프레임이 없다"(0.0)고 답했다.
+# 확신이 낮은 답은 한 번 더 묻고, 그래도 낮으면 '불확실'로 표시해 사용자가 판단하게 한다
+MIN_CONFIDENCE = 0.5
+MAX_ATTEMPTS = 2
 CLIP_FPS = 5  # Muse 입력 토큰은 fps와 무관하게 길이에 비례하므로 업로드 크기만 줄인다
 RALLY_CHECK_PROMPT = (
     "This clip is part of an amateur volleyball match video (faces are pixelated for privacy). "
@@ -49,8 +53,12 @@ def check_candidates(
         blurred = work_dir / f"cand{i:02d}_blur.mp4"
         anonymize.anonymize_video(raw, blurred)
         raw.unlink()  # 얼굴이 그대로인 사본은 남기지 않는다
-        reply = muse.ask_about_video(client, blurred, RALLY_CHECK_PROMPT)
-        answer = muse.parse_json_reply(reply.text)
+        replies, answer = [], {}
+        for _ in range(MAX_ATTEMPTS):
+            replies.append(muse.ask_about_video(client, blurred, RALLY_CHECK_PROMPT))
+            answer = muse.parse_json_reply(replies[-1].text)
+            if float(answer.get("confidence") or 0) >= MIN_CONFIDENCE:
+                break
         results.append({
             **asdict(c),
             "clip": str(blurred),
@@ -58,9 +66,11 @@ def check_candidates(
             "is_rally": bool(answer.get("is_rally")),
             "confidence": answer.get("confidence"),
             "reason": answer.get("reason"),
-            "input_tokens": reply.input_tokens,
-            "output_tokens": reply.output_tokens,
-            "usd": round(reply.usd, 6),
+            "uncertain": float(answer.get("confidence") or 0) < MIN_CONFIDENCE,
+            "attempts": len(replies),
+            "input_tokens": sum(r.input_tokens for r in replies),
+            "output_tokens": sum(r.output_tokens for r in replies),
+            "usd": round(sum(r.usd for r in replies), 6),
         })
     return results
 

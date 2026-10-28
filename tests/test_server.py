@@ -28,7 +28,8 @@ def test_upload_lists_rally_candidates(client: TestClient) -> None:
     body = client.get(f"/jobs/{job_id}").json()
     assert body["status"] == "rallies_ready"
     assert body["rallies"][0] == {"index": 0, "start_sec": 1.0, "end_sec": 9.0, "is_rally": True,
-                                  "confidence": 0.9, "reason": "serve"}
+                                  "confidence": 0.9, "reason": "serve",
+                                  "uncertain": None}
     assert "clip" not in body["rallies"][0]  # 서버 안 경로는 내보내지 않는다
 
 

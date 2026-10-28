@@ -29,6 +29,23 @@ def test_cut_clip_pads_and_downsamples(tmp_path: Path) -> None:
     assert abs(int(frames) - 20) <= 1
 
 
+def test_low_confidence_answer_is_asked_again(tmp_path: Path, monkeypatch) -> None:
+    # 10/28 서버 확인: 같은 클립에 "영상 프레임이 없다"(확신 0.0)고 답한 적이 있다. 한 번 더 묻는다
+    src = _video(tmp_path / "m.mp4")
+    monkeypatch.setattr(rally_filter.anonymize, "anonymize_video", lambda raw, dst: dst.write_bytes(raw.read_bytes()))
+    answers = iter(['{"is_rally": false, "confidence": 0.0, "reason": "No video frames available."}',
+                    '{"is_rally": true, "confidence": 0.95, "reason": "serve and attack"}'])
+
+    def respond(**kw) -> SimpleNamespace:
+        return SimpleNamespace(output_text=next(answers), usage=SimpleNamespace(input_tokens=10, output_tokens=5))
+
+    client = SimpleNamespace(files=SimpleNamespace(create=lambda purpose, file: SimpleNamespace(id="f")),
+                             responses=SimpleNamespace(create=respond))
+    r = rally_filter.check_candidates(client, src, [rally.RallyCandidate(1.0, 4.0)], tmp_path / "work")[0]
+    assert (r["is_rally"], r["attempts"], r["uncertain"]) == (True, 2, False)
+    assert r["input_tokens"] == 20  # 두 번 낸 돈을 다 센다
+
+
 def test_only_blurred_clip_is_sent(tmp_path: Path, monkeypatch) -> None:
     src = _video(tmp_path / "m.mp4")
     blurred: list[Path] = []
