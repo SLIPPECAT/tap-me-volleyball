@@ -63,6 +63,7 @@
   <!-- 1. 영상 올리기 -->
   <section id="s-upload">
     <p data-t="uploadIntro"></p>
+    <p class="muted" data-t="captureTip"></p>
     <label class="drop"><span data-t="pickVideo"></span><input type="file" id="file" accept="video/*"></label>
     <div class="progress" id="up-progress" hidden><div></div></div>
     <p class="muted" id="up-status" aria-live="polite"></p>
@@ -153,6 +154,7 @@
 const T = {
   ko: {
     uploadIntro: "정모 경기 영상을 올리면 랠리를 찾아 드려요. 다른 회원 얼굴은 AI로 보내기 전에 모자이크합니다.",
+    captureTip: "팁: 폰을 삼각대나 난간에 고정하고 코트 전체가 보이게 찍은 영상이 가장 잘 돼요. 공을 따라 카메라를 움직이면 화면 밖으로 나간 나를 놓칠 수 있어요.",
     pickVideo: "영상 고르기", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
     findingRallies: "랠리를 찾는 중… (영상 길이에 따라 몇 분)",
     pickRally: "우리 팀이 득점한 랠리를 고르세요", pickRallyHint: "AI 판정은 틀릴 수 있어요. 어느 후보든 고를 수 있습니다.",
@@ -169,6 +171,7 @@ const T = {
   },
   ja: {
     uploadIntro: "練習試合の動画をアップすると、ラリーを見つけます。ほかのメンバーの顔はAIに送る前にモザイクをかけます。",
+    captureTip: "ヒント：スマホを三脚や手すりに固定して、コート全体が映るように撮った動画がいちばんうまくいきます。ボールを追ってカメラを動かすと、画面の外に出た自分を見失うことがあります。",
     pickVideo: "動画を選ぶ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
     findingRallies: "ラリーを探しています…（動画の長さにより数分）",
     pickRally: "自分のチームが得点したラリーを選んでください", pickRallyHint: "AIの判定は間違うことがあります。どの候補でも選べます。",
@@ -185,6 +188,7 @@ const T = {
   },
   en: {
     uploadIntro: "Upload a match video and we'll find the rallies. Other members' faces are pixelated before anything goes to the AI.",
+    captureTip: "Tip: works best when the phone is fixed on a tripod or railing with the whole court in view. If the camera follows the ball, it can lose you when you leave the frame.",
     pickVideo: "Choose a video", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
     findingRallies: "Finding rallies… (a few minutes, depending on length)",
     pickRally: "Pick a rally your team scored", pickRallyHint: "The AI can be wrong. You can pick any candidate.",

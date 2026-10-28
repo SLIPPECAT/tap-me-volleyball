@@ -71,3 +71,9 @@ def test_render_video_keeps_fps_and_makes_9_16(tmp_path: Path) -> None:
     out = render.render_video(src, tmp_path / "o.mp4", by, {}, "me", sam_fps=5, subtitle="득점!", zoom=1.0)
     w, h, fps, n = render.probe(out)
     assert (w, h, round(fps), n) == (100, 180, 30, 30)
+
+
+def test_background_mode_blurs_lighter_than_silhouette() -> None:
+    # 10/29 사용자 테스트: '나 빼고 전부'가 반지름 14면 경기가 안 보였다
+    assert render.BACKGROUND_BLUR_RADIUS < render.SILHOUETTE_BLUR_RADIUS
+    assert render.BACKGROUND_BLUR_RADIUS == 6

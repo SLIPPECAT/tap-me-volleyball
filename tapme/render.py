@@ -24,7 +24,10 @@ PRIVACY_MODES = ("face", "silhouette", "background")
 DEFAULT_PRIVACY = "face"
 ZOOM_CHOICES = (1.0, 1.5, 2.0, 2.5)
 DEFAULT_ZOOM = 2.0
-BLUR_RADIUS = 14
+SILHOUETTE_BLUR_RADIUS = 14  # 다른 선수 몸만 흐림
+# '나' 빼고 전부: 14는 공·네트까지 지워져 경기가 안 보였다(실험 H-20, 10/29 사용자 테스트). 얼굴은 입력 흐림본에서
+# 이미 모자이크돼 있어, 6이면 경기 흐름이 보이면서 다른 선수 등번호는 읽기 어렵다
+BACKGROUND_BLUR_RADIUS = 6
 RING_COLOR = (0, 230, 255, 235)
 
 # 한글과 일본어 한자를 모두 가진 글꼴을 고른다(Apple SD Gothic Neo에는 '黒'이 없음)
@@ -150,13 +153,13 @@ def compose(
     sharp = frame.convert("RGB")
     my_box = next((b for b in boxes if b.object_id == me), None)
     if privacy == "background":
-        work = sharp.filter(ImageFilter.GaussianBlur(BLUR_RADIUS))
+        work = sharp.filter(ImageFilter.GaussianBlur(BACKGROUND_BLUR_RADIUS))
         if my_box:
             _paste_region(work, sharp, my_box, masks.get(me))
     else:
         work = sharp.copy()
         if privacy == "silhouette":
-            blurred = sharp.filter(ImageFilter.GaussianBlur(BLUR_RADIUS))
+            blurred = sharp.filter(ImageFilter.GaussianBlur(SILHOUETTE_BLUR_RADIUS))
             for b in boxes:
                 if b.object_id != me:
                     _paste_region(work, blurred, b, masks.get(b.object_id))
