@@ -28,7 +28,9 @@ RALLY_CHECK_PROMPT = (
     "This clip is part of an amateur volleyball match video (faces are pixelated for privacy). "
     "Does it contain a rally, meaning play from a serve until the ball is dead? "
     "Players standing, clapping, rotating positions, or lining up at the net is not a rally. "
-    'Answer with JSON only: {"is_rally": true or false, "confidence": 0.0 to 1.0, "reason": "one short sentence"}'
+    "Give the reason as one short sentence in Korean, Japanese and English (shown to the user in their language). "
+    'Answer with JSON only: {"is_rally": true or false, "confidence": 0.0 to 1.0, '
+    '"reason": {"ko": "...", "ja": "...", "en": "..."}}'
 )
 
 

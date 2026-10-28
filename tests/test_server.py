@@ -83,3 +83,10 @@ def test_prepare_twice_is_refused(client: TestClient, monkeypatch: pytest.Monkey
     assert client.post(f"/jobs/{job_id}/rallies/0/prepare").status_code == 200
     assert client.post(f"/jobs/{job_id}/rallies/0/prepare").status_code == 409
     assert calls == [0]
+
+
+def test_home_screen_files_are_served(client: TestClient) -> None:
+    manifest = client.get("/static/manifest.json").json()
+    assert manifest["display"] == "standalone"
+    for icon in manifest["icons"]:
+        assert client.get(icon["src"]).headers["content-type"] == "image/png"

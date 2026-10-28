@@ -2,36 +2,49 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tap Me Volleyball</title>
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Tap Me">
+<meta name="theme-color" content="#0c111d">
 <style>
-  :root { --fg: #14181f; --muted: #667085; --line: #e4e7ec; --bg: #ffffff; --accent: #0091b3; --warn: #b54708; --bad: #b42318; }
+  :root { --fg: #14181f; --muted: #667085; --line: #e4e7ec; --bg: #ffffff; --card: #f9fafb; --accent: #0091b3; --warn: #b54708; --bad: #b42318; }
   @media (prefers-color-scheme: dark) {
-    :root { --fg: #f2f4f7; --muted: #98a2b3; --line: #344054; --bg: #0c111d; --accent: #3ec5e6; --warn: #fdb022; --bad: #f97066; }
+    :root { --fg: #f2f4f7; --muted: #98a2b3; --line: #344054; --bg: #0c111d; --card: #121826; --accent: #3ec5e6; --warn: #fdb022; --bad: #f97066; }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 -apple-system, "Apple SD Gothic Neo", sans-serif; }
-  main { max-width: 560px; margin: 0 auto; padding: 16px; }
-  h1 { font-size: 20px; margin: 4px 0 16px; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 -apple-system, "Apple SD Gothic Neo", "Hiragino Sans", sans-serif; }
+  main { max-width: 560px; margin: 0 auto; padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; }
   h2 { font-size: 17px; margin: 20px 0 8px; }
+  .langs-ui button { padding: 4px 8px; font-size: 13px; border-radius: 8px; }
+  .langs-ui button[aria-pressed=true] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
   .muted { color: var(--muted); font-size: 14px; }
   .error { color: var(--bad); font-weight: 600; }
   button, select, input[type=text] { font: inherit; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; width: 100%; }
   button:disabled { opacity: .5; }
-  .card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 8px 0; }
+  .card { border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 12px; margin: 8px 0; }
   .card .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .tag { font-size: 13px; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
-  .tag.yes { color: var(--accent); } .tag.no { color: var(--muted); } .tag.unsure { color: var(--warn); }
-  .tapwrap { position: relative; touch-action: manipulation; }
-  .tapwrap img { width: 100%; display: block; border-radius: 10px; }
-  .marker { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border: 3px solid var(--accent); border-radius: 50%; pointer-events: none; display: none; }
+  .tag.yes { color: var(--accent); } .tag.no { color: var(--muted); } .tag.unsure { color: var(--warn); } .tag.done { color: var(--fg); }
+  .drop { display: block; border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center; cursor: pointer; }
+  .drop input { display: none; }
+  .tapzoom { overflow: auto; border-radius: 10px; max-height: 70vh; -webkit-overflow-scrolling: touch; }
+  .tapwrap { position: relative; width: 100%; }
+  .tapwrap img { width: 100%; display: block; }
+  .marker { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border: 3px solid var(--accent); border-radius: 50%; pointer-events: none; display: none; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
+  .zoombar { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
   .field { margin: 12px 0; }
   .field label { display: block; font-size: 14px; color: var(--muted); margin-bottom: 4px; }
-  .langs label { display: inline-flex; gap: 6px; margin-right: 16px; color: var(--fg); font-size: 16px; }
+  .sublangs label { display: inline-flex; gap: 6px; margin-right: 16px; color: var(--fg); font-size: 16px; }
   .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .opts select { width: 100%; }
   video { width: 100%; border-radius: 10px; background: #000; }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
   .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 8px 0; }
   .progress div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
   [hidden] { display: none !important; }
@@ -39,100 +52,188 @@
 </head>
 <body>
 <main>
-  <h1>Tap Me Volleyball</h1>
-  <p class="error" id="error" hidden></p>
+  <header>
+    <h1>Tap Me Volleyball</h1>
+    <div class="langs-ui" role="group" aria-label="Language">
+      <button data-lang="ko">한</button><button data-lang="ja">日</button><button data-lang="en">EN</button>
+    </div>
+  </header>
+  <p class="error" id="error" role="alert" hidden></p>
 
   <!-- 1. 영상 올리기 -->
   <section id="s-upload">
-    <p>정모 경기 영상을 올리면 랠리를 찾아 드립니다. 다른 회원 얼굴은 서버로 보내기 전에 모자이크합니다.</p>
-    <input type="file" id="file" accept="video/*">
+    <p data-t="uploadIntro"></p>
+    <label class="drop"><span data-t="pickVideo"></span><input type="file" id="file" accept="video/*"></label>
     <div class="progress" id="up-progress" hidden><div></div></div>
-    <p class="muted" id="up-status"></p>
+    <p class="muted" id="up-status" aria-live="polite"></p>
   </section>
 
   <!-- 2. 랠리 후보 -->
   <section id="s-rallies" hidden>
-    <h2>우리 팀이 득점한 랠리를 고르세요</h2>
-    <p class="muted">AI가 랠리인지 판정했지만 틀릴 수 있어요. 어느 후보든 고를 수 있습니다.</p>
+    <h2 data-t="pickRally"></h2>
+    <p class="muted" data-t="pickRallyHint"></p>
     <div id="rally-list"></div>
     <div id="reel-box" hidden>
-      <h2>완성된 장면 모아 보기</h2>
-      <p class="muted">고른 장면을 득점 앞뒤만 잘라 한 편으로 이어요. AI 비용은 들지 않아요.</p>
+      <h2 data-t="reelTitle"></h2>
+      <p class="muted" data-t="reelHint"></p>
       <div id="reel-pick"></div>
-      <button class="primary" id="make-reel">모아서 한 편 만들기</button>
-      <p class="muted" id="reel-status"></p>
+      <button class="primary" id="make-reel" data-t="makeReel"></button>
+      <p class="muted" id="reel-status" aria-live="polite"></p>
       <video id="reel" controls playsinline hidden></video>
+      <div class="actions" id="reel-actions" hidden>
+        <button id="reel-share" data-t="share"></button><a id="reel-download" download="reel.mp4"><button style="width:100%" data-t="save"></button></a>
+      </div>
     </div>
   </section>
 
   <!-- 3. 나를 탭 -->
   <section id="s-tap" hidden>
-    <h2>화면에서 나를 탭하세요</h2>
-    <p class="muted" id="tap-status"></p>
-    <div class="tapwrap" id="tapwrap" hidden>
-      <img id="tap-img" alt="탭할 장면">
-      <div class="marker" id="marker"></div>
-    </div>
-    <div id="tap-form" hidden>
+    <h2 data-t="tapTitle"></h2>
+    <p class="muted" id="tap-status" aria-live="polite"></p>
+    <div id="tap-box" hidden>
+      <div class="zoombar">
+        <button id="zoom-out" aria-label="zoom out">−</button>
+        <button id="zoom-in" aria-label="zoom in">+</button>
+        <span class="muted" data-t="zoomHint"></span>
+      </div>
+      <div class="tapzoom" id="tapzoom">
+        <div class="tapwrap" id="tapwrap"><img id="tap-img" alt=""><div class="marker" id="marker"></div></div>
+      </div>
       <div class="field">
-        <label for="team">우리 팀 이름 (자막에 들어가요)</label>
-        <input type="text" id="team" value="검정" maxlength="20">
+        <label for="team" data-t="teamLabel"></label>
+        <input type="text" id="team" maxlength="20">
       </div>
       <div id="opts-tap"></div>
-      <button class="primary" id="make" disabled>하이라이트 만들기</button>
+      <button class="primary" id="make" disabled data-t="make"></button>
     </div>
-    <p><button id="back-rallies">다른 랠리 고르기</button></p>
+    <p><button id="back-rallies" data-t="otherRally"></button></p>
   </section>
 
   <!-- 4. 결과 -->
   <section id="s-result" hidden>
-    <h2>내 하이라이트</h2>
-    <p class="muted" id="result-status"></p>
+    <h2 data-t="resultTitle"></h2>
+    <p class="muted" id="result-status" aria-live="polite"></p>
     <video id="result" controls playsinline hidden></video>
-    <p><a id="download" download="highlight.mp4" hidden>영상 저장</a></p>
-    <h2>옵션 바꾸기</h2>
-    <p class="muted">다시 만들어도 AI 비용은 들지 않아요.</p>
+    <div class="actions" id="result-actions" hidden>
+      <button id="share" data-t="share"></button><a id="download" download="highlight.mp4"><button style="width:100%" data-t="save"></button></a>
+    </div>
+    <h2 data-t="changeOptions"></h2>
+    <p class="muted" data-t="rerenderHint"></p>
     <div id="opts-result"></div>
-    <button class="primary" id="rerender">다시 만들기</button>
-    <p><button id="back-rallies2">다른 랠리 고르기</button></p>
+    <button class="primary" id="rerender" data-t="rerender"></button>
+    <p><button id="back-rallies2" data-t="otherRally"></button></p>
   </section>
 
   <p class="muted" id="spent"></p>
 </main>
 
 <template id="opts-tpl">
-  <div class="field langs">
-    <label>자막 언어</label>
-    <label><input type="checkbox" value="ko" checked> 한국어</label>
+  <div class="field sublangs">
+    <label data-t="subLangs"></label>
+    <label><input type="checkbox" value="ko"> 한국어</label>
     <label><input type="checkbox" value="ja"> 日本語</label>
     <label><input type="checkbox" value="en"> English</label>
   </div>
   <div class="opts">
-    <div class="field"><label>다른 회원 가리기</label>
+    <div class="field"><label data-t="privacy"></label>
       <select class="privacy">
-        <option value="face" selected>얼굴만</option>
-        <option value="silhouette">몸 실루엣</option>
-        <option value="background">나 빼고 전부</option>
+        <option value="face" data-t="privFace"></option>
+        <option value="silhouette" data-t="privSilhouette"></option>
+        <option value="background" data-t="privBackground"></option>
       </select></div>
-    <div class="field"><label>확대</label>
+    <div class="field"><label data-t="zoom"></label>
       <select class="zoom">
-        <option value="1">1배</option><option value="1.5">1.5배</option>
-        <option value="2" selected>2배</option><option value="2.5">2.5배</option>
+        <option value="1">1×</option><option value="1.5">1.5×</option>
+        <option value="2" selected>2×</option><option value="2.5">2.5×</option>
       </select></div>
   </div>
 </template>
 
 <script>
+const T = {
+  ko: {
+    uploadIntro: "정모 경기 영상을 올리면 랠리를 찾아 드려요. 다른 회원 얼굴은 AI로 보내기 전에 모자이크합니다.",
+    pickVideo: "영상 고르기", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
+    findingRallies: "랠리를 찾는 중… (영상 길이에 따라 몇 분)",
+    pickRally: "우리 팀이 득점한 랠리를 고르세요", pickRallyHint: "AI 판정은 틀릴 수 있어요. 어느 후보든 고를 수 있습니다.",
+    rally: "랠리", notRally: "랠리 아님", unsure: "판정 불확실", done: "완성", makeFromRally: "이 랠리로 만들기", open: "열기",
+    reelTitle: "완성된 장면 모아 보기", reelHint: "고른 장면을 득점 앞뒤만 잘라 한 편으로 이어요. AI 비용은 들지 않아요.",
+    makeReel: "모아서 한 편 만들기", reelBusy: "모으는 중…", pickOne: "모을 장면을 하나 이상 고르세요", scoreAt: "{t} 득점",
+    tapTitle: "화면에서 나를 탭하세요", preparing: "득점 장면을 찾는 중… (1분 안팎)", tapHint: "선수 몸 위를 탭하면 그 선수를 따라가요.",
+    zoomHint: "선수가 작으면 확대해서 탭하세요", rendering: "나를 따라가며 영상을 만드는 중… (2~3분)",
+    teamLabel: "우리 팀 이름 (자막에 들어가요)", teamPh: "예: 검정", ourTeam: "우리 팀", make: "하이라이트 만들기", otherRally: "다른 랠리 고르기",
+    resultTitle: "내 하이라이트", captions: "자막: {c}", rerenderBusy: "다시 만드는 중…", share: "공유", save: "저장",
+    changeOptions: "옵션 바꾸기", rerenderHint: "다시 만들어도 AI 비용은 들지 않아요.", rerender: "다시 만들기",
+    subLangs: "자막 언어", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대",
+    spent: "이 작업에 쓴 AI 비용 ${u}", reqFail: "요청 실패 ({c})",
+  },
+  ja: {
+    uploadIntro: "練習試合の動画をアップすると、ラリーを見つけます。ほかのメンバーの顔はAIに送る前にモザイクをかけます。",
+    pickVideo: "動画を選ぶ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
+    findingRallies: "ラリーを探しています…（動画の長さにより数分）",
+    pickRally: "自分のチームが得点したラリーを選んでください", pickRallyHint: "AIの判定は間違うことがあります。どの候補でも選べます。",
+    rally: "ラリー", notRally: "ラリーではない", unsure: "判定があいまい", done: "完成", makeFromRally: "このラリーで作る", open: "開く",
+    reelTitle: "完成したシーンをまとめる", reelHint: "選んだシーンの得点前後だけを切り出してつなげます。AIの費用はかかりません。",
+    makeReel: "まとめて1本にする", reelBusy: "まとめています…", pickOne: "シーンを1つ以上選んでください", scoreAt: "{t} 得点",
+    tapTitle: "画面の中の自分をタップしてください", preparing: "得点シーンを探しています…（1分ほど）", tapHint: "選手の体をタップすると、その選手を追いかけます。",
+    zoomHint: "選手が小さいときは拡大してタップ", rendering: "自分を追いかけて動画を作っています…（2〜3分）",
+    teamLabel: "自分のチーム名（字幕に入ります）", teamPh: "例：黒", ourTeam: "自分のチーム", make: "ハイライトを作る", otherRally: "ほかのラリーを選ぶ",
+    resultTitle: "自分のハイライト", captions: "字幕：{c}", rerenderBusy: "作り直しています…", share: "共有", save: "保存",
+    changeOptions: "オプションを変える", rerenderHint: "作り直してもAIの費用はかかりません。", rerender: "作り直す",
+    subLangs: "字幕の言語", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大",
+    spent: "この作業のAI費用 ${u}", reqFail: "リクエスト失敗 ({c})",
+  },
+  en: {
+    uploadIntro: "Upload a match video and we'll find the rallies. Other members' faces are pixelated before anything goes to the AI.",
+    pickVideo: "Choose a video", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
+    findingRallies: "Finding rallies… (a few minutes, depending on length)",
+    pickRally: "Pick a rally your team scored", pickRallyHint: "The AI can be wrong. You can pick any candidate.",
+    rally: "Rally", notRally: "Not a rally", unsure: "Unsure", done: "Done", makeFromRally: "Use this rally", open: "Open",
+    reelTitle: "Combine finished scenes", reelHint: "Joins the moments around each point into one video. No AI cost.",
+    makeReel: "Combine into one", reelBusy: "Combining…", pickOne: "Pick at least one scene", scoreAt: "Point at {t}",
+    tapTitle: "Tap yourself", preparing: "Finding the scoring moment… (about a minute)", tapHint: "Tap a player's body to follow that player.",
+    zoomHint: "Zoom in if players look small", rendering: "Following you and making the video… (2–3 min)",
+    teamLabel: "Your team name (shown in subtitles)", teamPh: "e.g. Black", ourTeam: "Our team", make: "Make highlight", otherRally: "Pick another rally",
+    resultTitle: "Your highlight", captions: "Subtitles: {c}", rerenderBusy: "Re-rendering…", share: "Share", save: "Save",
+    changeOptions: "Change options", rerenderHint: "Re-rendering has no AI cost.", rerender: "Re-render",
+    subLangs: "Subtitle languages", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom",
+    spent: "AI cost for this job ${u}", reqFail: "Request failed ({c})",
+  },
+};
 const $ = (id) => document.getElementById(id);
-const state = { job: null, rally: null, tap: null, poll: null, last: null };
+const state = { job: null, rally: null, tap: null, poll: null, last: null, zoom: 1, lang: "ko" };
 
-function show(section) {
-  for (const s of ["s-upload", "s-rallies", "s-tap", "s-result"]) $(s).hidden = s !== section;
+function storeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function storeSet(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 못 해도 동작에는 지장 없음 */ } }
+function t(key, vars = {}) { return (T[state.lang][key] || T.en[key] || key).replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? ""); }
+function applyLang() {
+  document.documentElement.lang = state.lang;
+  document.querySelectorAll("[data-t]").forEach((el) => { el.textContent = t(el.dataset.t); });
+  document.querySelectorAll(".langs-ui button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lang === state.lang)));
+  $("team").placeholder = t("teamPh");
+  $("rally-list").dataset.key = "";  // 판정 이유를 새 언어로 다시 그린다
+  if (state.last) render(state.last);
 }
+function initLang() {
+  const saved = storeGet("lang");
+  const nav = (navigator.language || "en").slice(0, 2);
+  state.lang = T[saved] ? saved : T[nav] ? nav : "en";
+  document.querySelectorAll(".langs-ui button").forEach((b) => { b.onclick = () => { state.lang = b.dataset.lang; storeSet("lang", state.lang); applyLang(); }; });
+  applyLang();
+}
+
+function show(section) { for (const s of ["s-upload", "s-rallies", "s-tap", "s-result"]) $(s).hidden = s !== section; }
 function setError(msg) { $("error").textContent = msg || ""; $("error").hidden = !msg; }
-function setHash() {
-  location.hash = state.job ? `job=${state.job}` + (state.rally !== null ? `&rally=${state.rally}` : "") : "";
+function setHash() { location.hash = state.job ? `job=${state.job}` + (state.rally !== null ? `&rally=${state.rally}` : "") : ""; }
+function fmt(sec) { const m = Math.floor(sec / 60), s = Math.floor(sec % 60); return `${m}:${String(s).padStart(2, "0")}`; }
+function reasonText(r) { return r && typeof r === "object" ? (r[state.lang] || r.en || "") : (r || ""); }
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || t("reqFail", { c: r.status }));
+  return r.json();
 }
+const postJson = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
 function readOptions(box) {
   return {
     languages: [...box.querySelectorAll("input[type=checkbox]:checked")].map((c) => c.value),
@@ -140,63 +241,69 @@ function readOptions(box) {
     zoom: parseFloat(box.querySelector(".zoom").value),
   };
 }
-function mountOptions(boxId) { $(boxId).replaceChildren($("opts-tpl").content.cloneNode(true)); }
-async function api(path, opts) {
-  const r = await fetch(path, opts);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `요청 실패 (${r.status})`);
-  return r.json();
+function mountOptions(boxId, o) {
+  const box = $(boxId);
+  box.replaceChildren($("opts-tpl").content.cloneNode(true));
+  box.querySelectorAll("[data-t]").forEach((el) => { el.textContent = t(el.dataset.t); });
+  const langs = o ? o.languages : [state.lang];
+  box.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = langs.includes(c.value); });
+  if (o) { box.querySelector(".privacy").value = o.privacy; box.querySelector(".zoom").value = String(o.zoom); }
 }
-function fmt(sec) { const m = Math.floor(sec / 60), s = Math.floor(sec % 60); return `${m}:${String(s).padStart(2, "0")}`; }
 
 // 상태를 2초마다 보고 지금 단계의 화면을 그린다
 function startPolling() {
   clearInterval(state.poll);
   const tick = async () => {
-    let s;
-    try { s = await api(`/jobs/${state.job}`); } catch (e) { setError(e.message); return; }
-    setError(s.error); state.last = s;
-    $("spent").textContent = `이 작업에 쓴 AI 비용 $${s.spent_usd.toFixed(3)}`;
-    if (state.rally === null) return renderRallies(s);
-    const scene = s.scenes[String(state.rally)];
-    if (!scene || scene.status === "preparing") {
-      show("s-tap"); $("tap-status").textContent = s.error ? "" : "득점 장면을 찾는 중… (1분 안팎)";
-      $("tapwrap").hidden = $("tap-form").hidden = true;
-    } else if (scene.status === "awaiting_tap") {
-      show("s-tap"); renderTap();
-    } else if (scene.status === "rendering") {
-      if ($("s-result").hidden) { show("s-tap"); $("tap-status").textContent = "나를 따라가며 영상을 만드는 중… (2~3분)"; }
-      else { $("result-status").textContent = "다시 만드는 중…"; }
-      $("make").disabled = $("rerender").disabled = true;
-    } else if (scene.status === "done") {
-      renderResult(scene);
-    }
+    try { state.last = await api(`/jobs/${state.job}`); } catch (e) { setError(e.message); return; }
+    render(state.last);
   };
   tick();
   state.poll = setInterval(tick, 2000);
 }
 
+function render(s) {
+  setError(s.error);
+  $("spent").textContent = t("spent", { u: s.spent_usd.toFixed(3) });
+  if (state.rally === null) return renderRallies(s);
+  const scene = s.scenes[String(state.rally)];
+  if (!scene || scene.status === "preparing") {
+    show("s-tap"); $("tap-status").textContent = s.error ? "" : t("preparing"); $("tap-box").hidden = true;
+  } else if (scene.status === "awaiting_tap") {
+    show("s-tap"); renderTap();
+  } else if (scene.status === "rendering") {
+    if ($("s-result").hidden) { show("s-tap"); $("tap-status").textContent = t("rendering"); $("tap-box").hidden = true; }
+    else { $("result-status").textContent = t("rerenderBusy"); }
+    $("make").disabled = $("rerender").disabled = true;
+  } else if (scene.status === "done") {
+    renderResult(scene);
+  }
+}
+
 function renderRallies(s) {
   show(s.status === "rallies_ready" ? "s-rallies" : "s-upload");
-  if (s.status !== "rallies_ready") { $("up-status").textContent = s.error ? "" : "랠리를 찾는 중… (영상 길이에 따라 몇 분)"; return; }
+  if (s.status !== "rallies_ready") { $("up-status").textContent = s.error ? "" : t("findingRallies"); return; }
   renderReel(s);
   const list = $("rally-list");
-  if (list.dataset.job === state.job && list.children.length) return;
-  list.dataset.job = state.job;
+  const key = `${state.job}|${state.lang}|${Object.entries(s.scenes).map(([k, v]) => k + v.status).join(",")}`;
+  if (list.dataset.key === key) return;
+  list.dataset.key = key;
   list.replaceChildren(...s.rallies.map((r) => {
+    const scene = s.scenes[String(r.index)];
     const card = document.createElement("div"); card.className = "card";
     const row = document.createElement("div"); row.className = "row";
     const time = document.createElement("strong"); time.textContent = `${fmt(r.start_sec)} ~ ${fmt(r.end_sec)}`;
     const tag = document.createElement("span");
-    tag.className = "tag " + (r.uncertain ? "unsure" : r.is_rally ? "yes" : "no");
-    tag.textContent = r.uncertain ? "판정 불확실" : r.is_rally ? "랠리" : "랠리 아님";
+    const kind = scene && scene.status === "done" ? "done" : r.uncertain ? "unsure" : r.is_rally ? "yes" : "no";
+    tag.className = `tag ${kind}`;
+    tag.textContent = t({ done: "done", unsure: "unsure", yes: "rally", no: "notRally" }[kind]);
     row.append(time, tag);
-    const reason = document.createElement("p"); reason.className = "muted"; reason.textContent = r.reason || "";
-    const pick = document.createElement("button"); pick.textContent = "이 랠리로 만들기";
+    const reason = document.createElement("p"); reason.className = "muted"; reason.textContent = reasonText(r.reason);
+    const pick = document.createElement("button"); pick.textContent = scene ? t("open") : t("makeFromRally");
     pick.onclick = async () => {
       state.rally = r.index; state.tap = null; setHash();
       // 이미 준비했거나 만든 장면은 그대로 연다. 다시 준비하면 돈이 또 들고 결과가 지워진다
-      const scene = state.last && state.last.scenes[String(r.index)];
-      if (!scene || (scene.status !== "awaiting_tap" && scene.status !== "done")) {
+      const sc = state.last && state.last.scenes[String(r.index)];
+      if (!sc || (sc.status !== "awaiting_tap" && sc.status !== "done")) {
         try { await api(`/jobs/${state.job}/rallies/${r.index}/prepare`, { method: "POST" }); } catch (e) { setError(e.message); }
       }
       startPolling();
@@ -210,86 +317,103 @@ function renderReel(s) {
   const done = Object.values(s.scenes).filter((sc) => sc.status === "done").sort((a, b) => a.score_sec - b.score_sec);
   $("reel-box").hidden = done.length < 2;
   if (done.length < 2) return;
-  const key = done.map((d) => d.index).join(",");
+  const key = done.map((d) => d.index).join(",") + state.lang;
   if ($("reel-pick").dataset.key !== key) {
     $("reel-pick").dataset.key = key;
     $("reel-pick").replaceChildren(...done.map((d) => {
       const label = document.createElement("label"); label.style.display = "block";
       const box = document.createElement("input"); box.type = "checkbox"; box.value = d.index; box.checked = true;
-      label.append(box, ` ${fmt(d.score_sec)} 득점`);
+      label.append(box, " " + t("scoreAt", { t: fmt(d.score_sec) }));
       return label;
     }));
   }
   const reel = s.reel || {};
   $("make-reel").disabled = reel.status === "rendering";
-  $("reel-status").textContent = reel.status === "rendering" ? "모으는 중…" : "";
-  const v = $("reel");
+  $("reel-status").textContent = reel.status === "rendering" ? t("reelBusy") : "";
   if (reel.status === "done") {
     const url = `/jobs/${state.job}/reel/video?v=${reel.order.join("-")}`;
-    if (v.dataset.src !== url) { v.src = url; v.dataset.src = url; }
-    v.hidden = false;
+    if ($("reel").dataset.src !== url) { $("reel").src = url; $("reel").dataset.src = url; }
+    $("reel").hidden = $("reel-actions").hidden = false;
+    $("reel-download").href = url;
   }
 }
 
 $("make-reel").onclick = async () => {
   const order = [...$("reel-pick").querySelectorAll("input:checked")].map((c) => Number(c.value));
-  if (order.length < 1) { setError("모을 장면을 하나 이상 고르세요"); return; }
+  if (order.length < 1) { setError(t("pickOne")); return; }
   $("make-reel").disabled = true;
-  try { await api(`/jobs/${state.job}/reel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ order }) }); }
-  catch (e) { setError(e.message); $("make-reel").disabled = false; }
+  try { await postJson(`/jobs/${state.job}/reel`, { order }); } catch (e) { setError(e.message); $("make-reel").disabled = false; }
 };
 
+function setZoom(z) {
+  state.zoom = Math.min(4, Math.max(1, z));
+  const box = $("tapzoom"), wrap = $("tapwrap");
+  const cx = (box.scrollLeft + box.clientWidth / 2) / wrap.offsetWidth, cy = (box.scrollTop + box.clientHeight / 2) / wrap.offsetHeight;
+  wrap.style.width = `${state.zoom * 100}%`;
+  box.scrollLeft = cx * wrap.offsetWidth - box.clientWidth / 2;
+  box.scrollTop = cy * wrap.offsetHeight - box.clientHeight / 2;
+}
+$("zoom-in").onclick = () => setZoom(state.zoom + 1);
+$("zoom-out").onclick = () => setZoom(state.zoom - 1);
+
 function renderTap() {
-  $("tap-status").textContent = "선수 몸 위를 탭하면 그 선수를 따라가요.";
+  $("tap-status").textContent = t("tapHint");
   const img = $("tap-img"), src = `/jobs/${state.job}/rallies/${state.rally}/tap-frame`;
-  if (img.dataset.src !== src) { img.src = src; img.dataset.src = src; $("marker").style.display = "none"; state.tap = null; }
-  $("tapwrap").hidden = $("tap-form").hidden = false;
+  if (img.dataset.src !== src) { img.src = src; img.dataset.src = src; $("marker").style.display = "none"; state.tap = null; setZoom(1); }
+  img.alt = t("tapTitle");
+  $("tap-box").hidden = false;
   if (!$("opts-tap").children.length) mountOptions("opts-tap");
   $("make").disabled = !state.tap;
 }
 
-// 화면에 보이는 위치를 원본 이미지 픽셀로 바꿔 서버에 보낸다
+// 화면에 보이는 위치를 원본 이미지 픽셀로 바꿔 서버에 보낸다(확대해도 같은 계산)
 $("tap-img").addEventListener("click", (ev) => {
   const img = ev.currentTarget, rect = img.getBoundingClientRect();
-  const x = (ev.clientX - rect.left) * img.naturalWidth / rect.width;
-  const y = (ev.clientY - rect.top) * img.naturalHeight / rect.height;
-  state.tap = { x: Math.round(x), y: Math.round(y) };
-  const m = $("marker"); m.style.left = `${ev.clientX - rect.left}px`; m.style.top = `${ev.clientY - rect.top}px`; m.style.display = "block";
+  state.tap = { x: Math.round((ev.clientX - rect.left) * img.naturalWidth / rect.width),
+                y: Math.round((ev.clientY - rect.top) * img.naturalHeight / rect.height) };
+  const m = $("marker");
+  m.style.left = `${100 * (ev.clientX - rect.left) / rect.width}%`; m.style.top = `${100 * (ev.clientY - rect.top) / rect.height}%`;
+  m.style.display = "block";
   $("make").disabled = false;
 });
 
 $("make").onclick = async () => {
-  const body = { ...state.tap, team: $("team").value.trim() || "우리 팀", ...readOptions($("opts-tap")) };
+  const body = { ...state.tap, team: $("team").value.trim() || t("ourTeam"), ...readOptions($("opts-tap")) };
   $("make").disabled = true;
-  try { await api(`/jobs/${state.job}/rallies/${state.rally}/highlight`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
-  catch (e) { setError(e.message); $("make").disabled = false; }
+  try { await postJson(`/jobs/${state.job}/rallies/${state.rally}/highlight`, body); } catch (e) { setError(e.message); $("make").disabled = false; }
 };
 
 function renderResult(scene) {
   show("s-result");
   const url = `/jobs/${state.job}/rallies/${state.rally}/video?v=${encodeURIComponent(JSON.stringify(scene.options))}`;
-  const v = $("result");
-  if (v.dataset.src !== url) { v.src = url; v.dataset.src = url; }
-  v.hidden = false; $("download").href = url; $("download").hidden = false;
-  $("result-status").textContent = scene.captions ? `자막: ${Object.values(scene.captions).join(" / ")}` : "";
-  if (!$("opts-result").children.length) {
-    mountOptions("opts-result");
-    const box = $("opts-result"), o = scene.options;
-    box.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = o.languages.includes(c.value); });
-    box.querySelector(".privacy").value = o.privacy;
-    box.querySelector(".zoom").value = String(o.zoom);
-  }
+  if ($("result").dataset.src !== url) { $("result").src = url; $("result").dataset.src = url; }
+  $("result").hidden = $("result-actions").hidden = false;
+  $("download").href = url;
+  $("result-status").textContent = scene.captions ? t("captions", { c: Object.values(scene.captions).join(" / ") }) : "";
+  if (!$("opts-result").children.length) mountOptions("opts-result", scene.options);
   $("rerender").disabled = false;
 }
 
 $("rerender").onclick = async () => {
   $("rerender").disabled = true;
-  try { await api(`/jobs/${state.job}/rallies/${state.rally}/rerender`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(readOptions($("opts-result"))) }); }
+  try { await postJson(`/jobs/${state.job}/rallies/${state.rally}/rerender`, readOptions($("opts-result"))); }
   catch (e) { setError(e.message); $("rerender").disabled = false; }
 };
 
+// 폰의 공유 시트로 영상 파일을 넘긴다. 안 되는 브라우저는 저장으로
+async function shareVideo(url, name) {
+  try {
+    const blob = await (await fetch(url)).blob();
+    const file = new File([blob], name, { type: "video/mp4" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Tap Me Volleyball" }); return; }
+  } catch (e) { if (e.name === "AbortError") return; }
+  const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+}
+$("share").onclick = () => shareVideo($("download").href, "highlight.mp4");
+$("reel-share").onclick = () => shareVideo($("reel-download").href, "reel.mp4");
+
 for (const id of ["back-rallies", "back-rallies2"]) {
-  $(id).onclick = () => { state.rally = null; $("opts-result").replaceChildren(); setHash(); startPolling(); };
+  $(id).onclick = () => { state.rally = null; $("opts-result").replaceChildren(); $("opts-tap").replaceChildren(); setHash(); startPolling(); };
 }
 
 // 업로드: 진행률을 보여 주려고 XHR을 쓴다
@@ -298,15 +422,20 @@ $("file").addEventListener("change", () => {
   const form = new FormData(); form.append("file", f);
   const xhr = new XMLHttpRequest();
   $("up-progress").hidden = false; setError("");
-  xhr.upload.onprogress = (e) => { if (e.lengthComputable) { $("up-progress").firstElementChild.style.width = `${100 * e.loaded / e.total}%`; $("up-status").textContent = `올리는 중… ${Math.round(100 * e.loaded / e.total)}%`; } };
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const p = Math.round(100 * e.loaded / e.total);
+    $("up-progress").firstElementChild.style.width = `${p}%`; $("up-status").textContent = t("uploading", { p });
+  };
   xhr.onload = () => {
-    if (xhr.status !== 200) { setError(`업로드 실패 (${xhr.status})`); return; }
+    if (xhr.status !== 200) { setError(t("uploadFail", { c: xhr.status })); return; }
     state.job = JSON.parse(xhr.responseText).id; state.rally = null; setHash(); startPolling();
   };
-  xhr.onerror = () => setError("업로드 실패 (연결)");
+  xhr.onerror = () => setError(t("uploadFail", { c: "network" }));
   xhr.open("POST", "/jobs"); xhr.send(form);
 });
 
+initLang();
 // 새로고침해도 이어서 한다
 const params = new URLSearchParams(location.hash.slice(1));
 if (params.get("job")) {

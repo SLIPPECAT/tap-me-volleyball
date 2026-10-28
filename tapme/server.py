@@ -16,6 +16,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from tapme import jobs, muse, render, score
@@ -25,6 +26,7 @@ app = FastAPI(title="tap-me-volleyball")
 client_factory: Callable[[], Any] = muse.client_from_env
 _step_lock = threading.Lock()
 STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")  # 아이콘·홈 화면 설정
 
 
 class RenderOptions(BaseModel):
