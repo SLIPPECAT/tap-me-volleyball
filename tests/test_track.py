@@ -58,3 +58,7 @@ def test_track_players_streams_concept_prompt(tmp_path: Path) -> None:
     assert wire == WIRE and usage == {"frames": 2}
     assert sent["model"] == "sam-3.1"
     assert sent["input"][0]["content"][0] == {"type": "input_text", "text": "volleyball player"}
+
+
+def test_tap_prompt_marks_the_tapped_player() -> None:
+    assert track.tap_prompt((1080, 1920), 958.4, 1047.6) == "<0f>0<|point;x=958;y=1048;w=1080;h=1920|>"

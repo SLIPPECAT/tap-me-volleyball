@@ -12,9 +12,13 @@ from typing import Any
 
 from meta_sam_parser import (
     CompletedOutcome,
+    FramePrompt,
+    PromptObject,
+    PromptPoint,
     SegmentationBoxRecord,
     SegmentationMaskRecord,
     VideoSegmentationResult,
+    build_object_prompt,
     decode_mask_to_raster,
     video_segmentation_format,
 )
@@ -47,8 +51,20 @@ def parse(wire_text: str) -> VideoSegmentationResult:
     return parser.finish(CompletedOutcome()).result
 
 
+TAPPED_ID = "0"  # 점 프롬프트로 추적한 '나'의 object_id
+
+
+def tap_prompt(size: tuple[int, int], x: float, y: float, frame: int = 0) -> str:
+    """탭한 점을 그 선수의 표시로 주는 SAM 프롬프트. SAM은 그 한 사람만 따라간다."""
+    point = PromptPoint(x=round(x), y=round(y), label="positive")
+    return build_object_prompt(size=size, objects=[PromptObject(id=TAPPED_ID, prompts=[FramePrompt(frame=frame, points=[point])])])
+
+
 def track_players(client: Any, clip: Path, concept: str = CONCEPT) -> tuple[str, dict[str, Any], float]:
-    """(SAM 원문, usage, 걸린 초). 원문은 파일로 남겨 다시 돈 쓰지 않고 렌더할 수 있게 한다."""
+    """(SAM 원문, usage, 걸린 초). 원문은 파일로 남겨 다시 돈 쓰지 않고 렌더할 수 있게 한다.
+
+    concept에는 "volleyball player" 같은 말이나 tap_prompt()가 만든 점 프롬프트를 준다.
+    """
     with clip.open("rb") as f:
         file_id = client.files.create(purpose="user_data", file=f).id
     t0 = time.perf_counter()
