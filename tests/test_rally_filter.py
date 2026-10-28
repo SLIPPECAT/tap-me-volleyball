@@ -53,5 +53,6 @@ def test_only_blurred_clip_is_sent(tmp_path: Path, monkeypatch) -> None:
     results = rally_filter.check_candidates(client, src, [rally.RallyCandidate(1.0, 4.0)], tmp_path / "work")
     assert sent == [str(blurred[0])]
     assert results[0]["is_rally"] is False
+    assert results[0]["clip_start_sec"] == 0.0  # 1.0초에서 1초 앞으로 넓힘
     # 얼굴이 그대로인 자른 원본은 남기지 않는다
     assert not any("raw" in p.name for p in (tmp_path / "work").iterdir())

@@ -54,6 +54,7 @@ def check_candidates(
         results.append({
             **asdict(c),
             "clip": str(blurred),
+            "clip_start_sec": max(0.0, c.start_sec - PAD_SEC),  # 클립 안 시각 + 이 값 = 원본 시각
             "is_rally": bool(answer.get("is_rally")),
             "confidence": answer.get("confidence"),
             "reason": answer.get("reason"),
