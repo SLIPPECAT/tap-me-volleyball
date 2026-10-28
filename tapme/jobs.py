@@ -27,6 +27,8 @@ MAX_USD_PER_JOB = float(os.environ.get("TAPME_MAX_USD_PER_JOB", "1.0"))
 WINDOW_BEFORE_SEC = 7.0  # SAM은 5fps 50프레임(10초)보다 짧아도 50으로 과금된다(비용 원장 R-10·R-17)
 WINDOW_AFTER_SEC = 3.0
 SAM_FPS = 5
+REEL_BEFORE_SEC = 5.0  # 모음 영상에는 장면마다 득점 5초 전~2초 뒤만. 3장면이면 약 20초
+REEL_AFTER_SEC = 2.0
 _lock = threading.Lock()
 
 
@@ -45,6 +47,7 @@ class Job:
     status: str = "uploaded"
     rallies: list[dict[str, Any]] = field(default_factory=list)
     scenes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    reel: dict[str, Any] = field(default_factory=dict)
     spent_usd: float = 0.0
     error: str | None = None
 
@@ -183,3 +186,40 @@ def rerender(job: Job, index: int, languages: list[str], privacy: str, zoom: flo
     scene.update(status="done", options={"languages": languages, "privacy": privacy, "zoom": zoom}, video=str(out))
     job.save()
     return scene
+
+
+def _has_audio(video: Path) -> bool:
+    out = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+                                   "-of", "csv=p=0", str(video)], text=True)
+    return bool(out.strip())
+
+
+def make_reel(job: Job, order: list[int]) -> dict[str, Any]:
+    """완성된 장면들을 고른 순서대로, 득점 앞뒤만 잘라 한 편으로 잇는다. 이미 렌더한 영상만 써서 API 비용이 없다."""
+    scenes = [job.scenes.get(str(i), {}) for i in order]
+    if not scenes or any(s.get("status") != "done" for s in scenes):
+        raise ValueError("완성된 장면만 모을 수 있다")
+    job.reel = {"status": "rendering", "order": order}
+    job.save()
+
+    # 소리 없는 영상이 하나라도 있으면 영상만 잇는다(concat은 모든 입력에 같은 스트림이 있어야 한다)
+    audio = all(_has_audio(Path(s["video"])) for s in scenes)
+    inputs: list[str] = []
+    parts: list[str] = []
+    for k, s in enumerate(scenes):
+        at = s["score_sec"] - s["window"][0]  # 장면 영상 안에서 득점 시각
+        start = max(0.0, at - REEL_BEFORE_SEC)
+        end = min(s["window"][1] - s["window"][0], at + REEL_AFTER_SEC)
+        inputs += ["-i", s["video"]]
+        parts.append(f"[{k}:v]trim={start:.3f}:{end:.3f},setpts=PTS-STARTPTS[v{k}];")
+        if audio:
+            parts.append(f"[{k}:a]atrim={start:.3f}:{end:.3f},asetpts=PTS-STARTPTS[a{k}];")
+    joined = "".join(f"[v{k}]" + (f"[a{k}]" if audio else "") for k in range(len(scenes)))
+    graph = "".join(parts) + f"{joined}concat=n={len(scenes)}:v=1:a={int(audio)}[v]" + ("[a]" if audio else "")
+    out = job.dir / "reel.mp4"
+    maps = ["-map", "[v]"] + (["-map", "[a]", "-c:a", "aac"] if audio else [])
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", graph, *maps,
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)], check=True)
+    job.reel = {"status": "done", "order": order, "video": str(out)}
+    job.save()
+    return job.reel

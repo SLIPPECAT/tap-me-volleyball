@@ -55,6 +55,14 @@
     <h2>우리 팀이 득점한 랠리를 고르세요</h2>
     <p class="muted">AI가 랠리인지 판정했지만 틀릴 수 있어요. 어느 후보든 고를 수 있습니다.</p>
     <div id="rally-list"></div>
+    <div id="reel-box" hidden>
+      <h2>완성된 장면 모아 보기</h2>
+      <p class="muted">고른 장면을 득점 앞뒤만 잘라 한 편으로 이어요. AI 비용은 들지 않아요.</p>
+      <div id="reel-pick"></div>
+      <button class="primary" id="make-reel">모아서 한 편 만들기</button>
+      <p class="muted" id="reel-status"></p>
+      <video id="reel" controls playsinline hidden></video>
+    </div>
   </section>
 
   <!-- 3. 나를 탭 -->
@@ -116,7 +124,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { job: null, rally: null, tap: null, poll: null };
+const state = { job: null, rally: null, tap: null, poll: null, last: null };
 
 function show(section) {
   for (const s of ["s-upload", "s-rallies", "s-tap", "s-result"]) $(s).hidden = s !== section;
@@ -146,7 +154,7 @@ function startPolling() {
   const tick = async () => {
     let s;
     try { s = await api(`/jobs/${state.job}`); } catch (e) { setError(e.message); return; }
-    setError(s.error);
+    setError(s.error); state.last = s;
     $("spent").textContent = `이 작업에 쓴 AI 비용 $${s.spent_usd.toFixed(3)}`;
     if (state.rally === null) return renderRallies(s);
     const scene = s.scenes[String(state.rally)];
@@ -170,6 +178,7 @@ function startPolling() {
 function renderRallies(s) {
   show(s.status === "rallies_ready" ? "s-rallies" : "s-upload");
   if (s.status !== "rallies_ready") { $("up-status").textContent = s.error ? "" : "랠리를 찾는 중… (영상 길이에 따라 몇 분)"; return; }
+  renderReel(s);
   const list = $("rally-list");
   if (list.dataset.job === state.job && list.children.length) return;
   list.dataset.job = state.job;
@@ -185,13 +194,50 @@ function renderRallies(s) {
     const pick = document.createElement("button"); pick.textContent = "이 랠리로 만들기";
     pick.onclick = async () => {
       state.rally = r.index; state.tap = null; setHash();
-      try { await api(`/jobs/${state.job}/rallies/${r.index}/prepare`, { method: "POST" }); } catch (e) { setError(e.message); }
+      // 이미 준비했거나 만든 장면은 그대로 연다. 다시 준비하면 돈이 또 들고 결과가 지워진다
+      const scene = state.last && state.last.scenes[String(r.index)];
+      if (!scene || (scene.status !== "awaiting_tap" && scene.status !== "done")) {
+        try { await api(`/jobs/${state.job}/rallies/${r.index}/prepare`, { method: "POST" }); } catch (e) { setError(e.message); }
+      }
       startPolling();
     };
     card.append(row, reason, pick);
     return card;
   }));
 }
+
+function renderReel(s) {
+  const done = Object.values(s.scenes).filter((sc) => sc.status === "done").sort((a, b) => a.score_sec - b.score_sec);
+  $("reel-box").hidden = done.length < 2;
+  if (done.length < 2) return;
+  const key = done.map((d) => d.index).join(",");
+  if ($("reel-pick").dataset.key !== key) {
+    $("reel-pick").dataset.key = key;
+    $("reel-pick").replaceChildren(...done.map((d) => {
+      const label = document.createElement("label"); label.style.display = "block";
+      const box = document.createElement("input"); box.type = "checkbox"; box.value = d.index; box.checked = true;
+      label.append(box, ` ${fmt(d.score_sec)} 득점`);
+      return label;
+    }));
+  }
+  const reel = s.reel || {};
+  $("make-reel").disabled = reel.status === "rendering";
+  $("reel-status").textContent = reel.status === "rendering" ? "모으는 중…" : "";
+  const v = $("reel");
+  if (reel.status === "done") {
+    const url = `/jobs/${state.job}/reel/video?v=${reel.order.join("-")}`;
+    if (v.dataset.src !== url) { v.src = url; v.dataset.src = url; }
+    v.hidden = false;
+  }
+}
+
+$("make-reel").onclick = async () => {
+  const order = [...$("reel-pick").querySelectorAll("input:checked")].map((c) => Number(c.value));
+  if (order.length < 1) { setError("모을 장면을 하나 이상 고르세요"); return; }
+  $("make-reel").disabled = true;
+  try { await api(`/jobs/${state.job}/reel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ order }) }); }
+  catch (e) { setError(e.message); $("make-reel").disabled = false; }
+};
 
 function renderTap() {
   $("tap-status").textContent = "선수 몸 위를 탭하면 그 선수를 따라가요.";

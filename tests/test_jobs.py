@@ -96,3 +96,41 @@ def test_find_rallies_keeps_rejected_candidates_for_the_user(job: jobs.Job, monk
     assert saved.status == "rallies_ready"
     assert [r["is_rally"] for r in saved.rallies] == [True, False]
     assert saved.spent_usd == pytest.approx(0.012)
+
+
+def _scene_video(path: Path, seconds: int, color: str) -> Path:
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c={color}:size=90x160:rate=30:duration={seconds}",
+         "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-shortest", str(path)], check=True)
+    return path
+
+
+def test_reel_joins_scenes_around_each_score(job: jobs.Job, tmp_path: Path) -> None:
+    # 장면 0: 창 5.5~15.5초, 득점 12.5초 → 창 안 7.0초 → 2.0~9.0초를 씀
+    # 장면 1: 창 0~6초(득점이 영상 앞쪽이라 앞이 잘림), 득점 3.0초 → 0~5.0초를 씀
+    job.scenes = {
+        "0": {"status": "done", "score_sec": 12.5, "window": [5.5, 15.5], "video": str(_scene_video(tmp_path / "a.mp4", 10, "red"))},
+        "1": {"status": "done", "score_sec": 3.0, "window": [0.0, 6.0], "video": str(_scene_video(tmp_path / "b.mp4", 6, "blue"))},
+    }
+    out = jobs.make_reel(job, [1, 0])
+    w, h, fps, n = __import__("tapme.render", fromlist=["probe"]).probe(Path(out["video"]))
+    assert (w, h, round(fps)) == (90, 160, 30)
+    assert abs(n / fps - 12.0) < 0.2  # 5초 + 7초
+    assert out["order"] == [1, 0]  # 사용자가 고른 순서
+    assert jobs.load_job(job.id).reel["status"] == "done"
+
+
+def test_reel_needs_finished_scenes(job: jobs.Job) -> None:
+    job.scenes = {"0": {"status": "awaiting_tap"}}
+    with pytest.raises(ValueError):
+        jobs.make_reel(job, [0])
+
+
+def test_reel_without_audio(job: jobs.Job, tmp_path: Path) -> None:
+    silent = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:size=90x160:rate=30:duration=4",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(silent)], check=True)
+    job.scenes = {"0": {"status": "done", "score_sec": 2.0, "window": [0.0, 4.0], "video": str(silent)},
+                  "1": {"status": "done", "score_sec": 2.0, "window": [0.0, 4.0], "video": str(silent)}}
+    assert Path(jobs.make_reel(job, [0, 1])["video"]).exists()

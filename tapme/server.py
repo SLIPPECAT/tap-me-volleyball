@@ -55,6 +55,10 @@ class RenderOptions(BaseModel):
         return v
 
 
+class ReelRequest(BaseModel):
+    order: list[int] = Field(min_length=1, max_length=10, description="모을 장면(랠리 번호)을 보여 줄 순서대로")
+
+
 class TapRequest(RenderOptions):
     x: float
     y: float
@@ -104,7 +108,8 @@ def status(job_id: str) -> dict[str, Any]:
                                                "uncertain")}
                         for r in job.rallies],
             "scenes": {k: {f: v for f, v in s.items() if f not in ("window5", "tap_frame", "window30", "video")}
-                       for k, s in job.scenes.items()}}
+                       for k, s in job.scenes.items()},
+            "reel": {k: v for k, v in job.reel.items() if k != "video"}}
 
 
 @app.post("/jobs/{job_id}/rallies/{index}/prepare")
@@ -112,6 +117,11 @@ def prepare(job_id: str, index: int, background: BackgroundTasks) -> dict[str, s
     job = _job(job_id)
     if not 0 <= index < len(job.rallies):
         raise HTTPException(404, "랠리가 없다")
+    scene = job.scenes.get(str(index))
+    failed_before = scene is not None and scene.get("status") == "preparing" and job.error
+    if scene is not None and not failed_before:
+        # 다시 준비하면 Muse 비용이 또 들고 만든 결과가 지워진다. 앞서 준비하다 실패했을 때만 다시 한다
+        raise HTTPException(409, "이미 준비했거나 준비 중인 장면이다")
     background.add_task(_run, job_id, jobs.prepare_scene, index, client_factory())
     return {"status": "preparing"}
 
@@ -149,3 +159,20 @@ def video(job_id: str, index: int) -> FileResponse:
     if not scene or "video" not in scene:
         raise HTTPException(404, "결과 영상이 아직 없다")
     return FileResponse(scene["video"], media_type="video/mp4")
+
+
+@app.post("/jobs/{job_id}/reel")
+def reel(job_id: str, req: ReelRequest, background: BackgroundTasks) -> dict[str, str]:
+    job = _job(job_id)
+    if any(job.scenes.get(str(i), {}).get("status") != "done" for i in req.order):
+        raise HTTPException(409, "완성된 장면만 모을 수 있다")
+    background.add_task(_run, job_id, jobs.make_reel, req.order)
+    return {"status": "rendering"}
+
+
+@app.get("/jobs/{job_id}/reel/video")
+def reel_video(job_id: str) -> FileResponse:
+    reel = _job(job_id).reel
+    if reel.get("status") != "done":
+        raise HTTPException(404, "모음 영상이 아직 없다")
+    return FileResponse(reel["video"], media_type="video/mp4")

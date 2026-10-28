@@ -60,3 +60,26 @@ def test_index_page_is_served(client: TestClient) -> None:
 def test_upload_streams_to_disk_with_safe_suffix(client: TestClient, tmp_path: Path) -> None:
     job_id = client.post("/jobs", files={"file": ("../../evil.sh", b"video")}).json()["id"]
     assert [p.name for p in (tmp_path / job_id).glob("source*")] == ["source.mp4"]
+
+
+def test_reel_only_from_finished_scenes(client: TestClient) -> None:
+    job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
+    assert client.post(f"/jobs/{job_id}/reel", json={"order": [0]}).status_code == 409
+    assert client.post(f"/jobs/{job_id}/reel", json={"order": []}).status_code == 422
+    assert client.get(f"/jobs/{job_id}/reel/video").status_code == 404
+    assert client.get(f"/jobs/{job_id}").json()["reel"] == {}
+
+
+def test_prepare_twice_is_refused(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def fake_prepare(job: jobs.Job, index: int, c) -> None:
+        calls.append(index)
+        job.scenes[str(index)] = {"index": index, "status": "awaiting_tap"}
+        job.save()
+
+    monkeypatch.setattr(jobs, "prepare_scene", fake_prepare)
+    job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
+    assert client.post(f"/jobs/{job_id}/rallies/0/prepare").status_code == 200
+    assert client.post(f"/jobs/{job_id}/rallies/0/prepare").status_code == 409
+    assert calls == [0]
