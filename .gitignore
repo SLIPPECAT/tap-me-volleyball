@@ -1,0 +1,32 @@
+# 시크릿
+.env
+.env.*
+!.env.example
+
+# 영상·결과물 (회원 얼굴 포함 — 커밋 금지)
+data/
+*.mp4
+*.mov
+*.m4v
+*.webm
+
+# 모델 가중치
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# Python
+__pycache__/
+.venv/
+*.pyc
+
+# OS
+.DS_Store
+
+# 내부 메모(공개하지 않음)
+internal/
+
+# 도구 캐시
+.pytest_cache/
+.ruff_cache/
