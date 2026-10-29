@@ -33,7 +33,7 @@ def test_upload_lists_rally_candidates(client: TestClient) -> None:
     assert "clip" not in body["rallies"][0]  # 서버 안 경로는 내보내지 않는다
 
 
-@pytest.mark.parametrize("bad", [{"privacy": "none"}, {"zoom": 3.0}, {"languages": ["zh"]}])
+@pytest.mark.parametrize("bad", [{"privacy": "none"}, {"zoom": 3.0}, {"languages": ["zh"]}, {"role": "captain"}])
 def test_invalid_options_are_rejected(client: TestClient, bad: dict) -> None:
     job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
     r = client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"x": 1, "y": 1, "team": "검정", **bad})

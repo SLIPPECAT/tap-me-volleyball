@@ -1,4 +1,4 @@
-"""하이라이트 렌더: '나' 중심 9:16 확대 + 다른 회원 가리기 + 자막(언어는 사용자가 고름, score.subtitle_text).
+"""하이라이트 렌더: '나' 중심 9:16 확대 + 다른 회원 가리기 + 장면에 맞춰 바뀌는 해설 자막(선택, score.subtitle_cues).
 
 SAM은 5fps로만 돌리고(비용), 박스를 프레임 사이에 직선으로 이어 원본 fps로 렌더한다.
 실험(실험 레포 H-18): 보간 오차 중앙값 6px, 2배 확대에서 '나'가 화면 높이의 21.5%.
@@ -195,10 +195,11 @@ def render_video(
     masks_by_sam: dict[int, dict[str, SegmentationMaskRecord]],
     me: str,
     sam_fps: float,
-    subtitle: str = "",
+    subtitles: list[tuple[float, float, str]] | None = None,
     zoom: float = DEFAULT_ZOOM,
     privacy: str = DEFAULT_PRIVACY,
 ) -> Path:
+    """subtitles = [(시작초, 끝초, 글자), ...]. 장면에 맞춰 바뀌는 해설 자막(score.subtitle_cues). 없으면 자막 없음."""
     width, height, fps, n = probe(src)
     out_h = height // 2 * 2
     out_w = min(width, int(out_h * 9 / 16)) // 2 * 2
@@ -221,9 +222,11 @@ def render_video(
         i = 0
         while len(buf := dec.stdout.read(size)) == size:
             k = min(i, n - 1)
+            now = i / fps
+            text = next((txt for start, end, txt in subtitles or [] if start <= now < end), "")
             img = compose(Image.frombytes("RGB", (width, height), buf), boxes[k],
                           masks_by_sam.get(round(i * sam_fps / fps), {}), me, crops[k], (out_w, out_h),
-                          subtitle, privacy)
+                          text, privacy)
             enc.stdin.write(img.tobytes())
             i += 1
     finally:

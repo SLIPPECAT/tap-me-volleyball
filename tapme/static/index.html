@@ -48,6 +48,8 @@
   .field { margin: 12px 0; }
   .field label { display: block; font-size: 14px; color: var(--muted); margin-bottom: 4px; }
   .sublangs label { display: inline-flex; gap: 6px; margin-right: 16px; color: var(--fg); font-size: 16px; }
+  .field label.switch { display: inline-flex; gap: 8px; align-items: center; color: var(--fg); font-size: 16px; }
+  .role { width: 100%; }
   .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .opts select { width: 100%; }
   video { width: 100%; border-radius: 10px; background: #000; }
@@ -144,11 +146,21 @@
 </template>
 
 <template id="opts-tpl">
-  <div class="field sublangs">
-    <label data-t="subLangs"></label>
-    <label><input type="checkbox" value="ko"> 한국어</label>
-    <label><input type="checkbox" value="ja"> 日本語</label>
-    <label><input type="checkbox" value="en"> English</label>
+  <div class="field"><label class="switch"><input type="checkbox" class="subs-on"> <span data-t="subsOn"></span></label></div>
+  <div class="subs-box" hidden>
+    <div class="field sublangs">
+      <label data-t="subLangs"></label>
+      <label><input type="checkbox" value="ko"> 한국어</label>
+      <label><input type="checkbox" value="ja"> 日本語</label>
+      <label><input type="checkbox" value="en"> English</label>
+    </div>
+    <div class="field"><label data-t="role"></label>
+      <select class="role">
+        <option value="" data-t="roleNone"></option>
+        <option value="score" data-t="roleScore"></option>
+        <option value="assist" data-t="roleAssist"></option>
+        <option value="defense" data-t="roleDefense"></option>
+      </select></div>
   </div>
   <div class="opts">
     <div class="field"><label data-t="privacy"></label>
@@ -180,9 +192,10 @@ const T = {
     tapStartTitle: "(선택) 구간 시작 장면에서도 탭하기", tapStartHint: "카메라가 공을 따라 움직인 영상이면 여기서도 탭하면 더 정확해요. 화면에 내가 없으면 비워 두세요.", clearTap: "이 장면 탭 지우기",
     zoomHint: "선수가 작으면 확대해서 탭하세요", rendering: "나를 따라가며 영상을 만드는 중… (2~3분)",
     teamLabel: "우리 팀 이름 (자막에 들어가요)", teamPh: "예: 검정", ourTeam: "우리 팀", make: "하이라이트 만들기", otherRally: "다른 랠리 고르기",
-    resultTitle: "내 하이라이트", captions: "자막: {c}", rerenderBusy: "다시 만드는 중…", share: "공유", save: "저장",
-    changeOptions: "옵션 바꾸기", rerenderHint: "다시 만들어도 AI 비용은 들지 않아요. (몸 실루엣을 처음 고를 때만 약 $0.01)", rerender: "다시 만들기",
-    subLangs: "자막 언어", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대",
+    resultTitle: "내 하이라이트", commentary: "해설: {c}", rerenderBusy: "다시 만드는 중…", share: "공유", save: "저장",
+    changeOptions: "옵션 바꾸기", rerenderHint: "대부분 AI 비용 없이 다시 만들어요. 자막을 처음 켜거나 역할을 바꿀 때, 몸 실루엣을 처음 고를 때만 약 $0.01씩 들어요.", rerender: "다시 만들기",
+    subsOn: "자막 넣기 (중계 해설처럼)", subLangs: "자막 언어", role: "이 득점에서 내 역할 (선택)",
+    roleNone: "고르지 않음", roleScore: "내가 직접 득점", roleAssist: "연결 (리시브·토스)", roleDefense: "수비로 살림", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대",
     spent: "이 작업에 쓴 AI 비용 ${u}", reqFail: "요청 실패 ({c})",
   },
   ja: {
@@ -198,9 +211,10 @@ const T = {
     tapStartTitle: "（任意）区間の最初のシーンでもタップ", tapStartHint: "ボールを追ってカメラが動いた動画なら、ここでもタップするとより正確です。自分が映っていなければ空けておいてください。", clearTap: "このシーンのタップを消す",
     zoomHint: "選手が小さいときは拡大してタップ", rendering: "自分を追いかけて動画を作っています…（2〜3分）",
     teamLabel: "自分のチーム名（字幕に入ります）", teamPh: "例：黒", ourTeam: "自分のチーム", make: "ハイライトを作る", otherRally: "ほかのラリーを選ぶ",
-    resultTitle: "自分のハイライト", captions: "字幕：{c}", rerenderBusy: "作り直しています…", share: "共有", save: "保存",
-    changeOptions: "オプションを変える", rerenderHint: "作り直してもAIの費用はかかりません。（体のシルエットを初めて選ぶときだけ約$0.01）", rerender: "作り直す",
-    subLangs: "字幕の言語", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大",
+    resultTitle: "自分のハイライト", commentary: "実況：{c}", rerenderBusy: "作り直しています…", share: "共有", save: "保存",
+    changeOptions: "オプションを変える", rerenderHint: "ほとんどAIの費用なしで作り直します。字幕を初めて入れる・役割を変える・体のシルエットを初めて選ぶときだけ約$0.01ずつかかります。", rerender: "作り直す",
+    subsOn: "字幕を入れる（実況風）", subLangs: "字幕の言語", role: "この得点での自分の役割（任意）",
+    roleNone: "選ばない", roleScore: "自分で得点", roleAssist: "つなぎ（レシーブ・トス）", roleDefense: "守備でつないだ", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大",
     spent: "この作業のAI費用 ${u}", reqFail: "リクエスト失敗 ({c})",
   },
   en: {
@@ -216,9 +230,10 @@ const T = {
     tapStartTitle: "(Optional) Also tap at the start of the clip", tapStartHint: "If the camera followed the ball, tapping here too makes tracking more accurate. Leave it empty if you are not in view.", clearTap: "Clear this tap",
     zoomHint: "Zoom in if players look small", rendering: "Following you and making the video… (2–3 min)",
     teamLabel: "Your team name (shown in subtitles)", teamPh: "e.g. Black", ourTeam: "Our team", make: "Make highlight", otherRally: "Pick another rally",
-    resultTitle: "Your highlight", captions: "Subtitles: {c}", rerenderBusy: "Re-rendering…", share: "Share", save: "Save",
-    changeOptions: "Change options", rerenderHint: "Re-rendering has no AI cost (except about $0.01 the first time you pick body silhouettes).", rerender: "Re-render",
-    subLangs: "Subtitle languages", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom",
+    resultTitle: "Your highlight", commentary: "Commentary: {c}", rerenderBusy: "Re-rendering…", share: "Share", save: "Save",
+    changeOptions: "Change options", rerenderHint: "Re-rendering is mostly free. About $0.01 only when you first turn on subtitles, change your role, or first pick body silhouettes.", rerender: "Re-render",
+    subsOn: "Add subtitles (like live commentary)", subLangs: "Subtitle languages", role: "My role in this point (optional)",
+    roleNone: "Don't say", roleScore: "I scored it", roleAssist: "Set it up (pass/set)", roleDefense: "Saved it on defense", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom",
     spent: "AI cost for this job ${u}", reqFail: "Request failed ({c})",
   },
 };
@@ -257,8 +272,12 @@ async function api(path, opts) {
 const postJson = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 function readOptions(box) {
+  // 자막을 끄면 언어를 보내지 않는다 → 서버는 해설(Muse)을 묻지 않는다
+  const on = box.querySelector(".subs-on").checked;
+  const langs = [...box.querySelectorAll(".sublangs input:checked")].map((c) => c.value);
   return {
-    languages: [...box.querySelectorAll("input[type=checkbox]:checked")].map((c) => c.value),
+    languages: on ? (langs.length ? langs : [state.lang]) : [],
+    role: on ? box.querySelector(".role").value : "",
     privacy: box.querySelector(".privacy").value,
     zoom: parseFloat(box.querySelector(".zoom").value),
   };
@@ -267,9 +286,16 @@ function mountOptions(boxId, o) {
   const box = $(boxId);
   box.replaceChildren($("opts-tpl").content.cloneNode(true));
   box.querySelectorAll("[data-t]").forEach((el) => { el.textContent = t(el.dataset.t); });
-  const langs = o ? o.languages : [state.lang];
-  box.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = langs.includes(c.value); });
-  if (o) { box.querySelector(".privacy").value = o.privacy; box.querySelector(".zoom").value = String(o.zoom); }
+  const langs = o && o.languages.length ? o.languages : [state.lang];
+  box.querySelectorAll(".sublangs input").forEach((c) => { c.checked = langs.includes(c.value); });
+  const on = box.querySelector(".subs-on"), subsBox = box.querySelector(".subs-box");
+  on.checked = Boolean(o && o.languages.length);
+  subsBox.hidden = !on.checked;
+  on.onchange = () => { subsBox.hidden = !on.checked; };
+  if (o) {
+    box.querySelector(".privacy").value = o.privacy; box.querySelector(".zoom").value = String(o.zoom);
+    box.querySelector(".role").value = o.role || "";
+  }
 }
 
 // 상태를 2초마다 보고 지금 단계의 화면을 그린다
@@ -439,7 +465,8 @@ function renderResult(scene) {
   if ($("result").dataset.src !== url) { $("result").src = url; $("result").dataset.src = url; }
   $("result").hidden = $("result-actions").hidden = false;
   $("download").href = url;
-  $("result-status").textContent = scene.captions ? t("captions", { c: Object.values(scene.captions).join(" / ") }) : "";
+  const lines = (scene.options.languages.length && scene.commentary) || [];
+  $("result-status").textContent = lines.length ? t("commentary", { c: lines.map((l) => l[state.lang] || l.en).join(" → ") }) : "";
   if (!$("opts-result").children.length) mountOptions("opts-result", scene.options);
   $("rerender").disabled = false;
 }

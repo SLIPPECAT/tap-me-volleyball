@@ -205,16 +205,35 @@ def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy
     f0 = round((scene["clip"][0] - scene["window"][0]) * scene["sam_fps"])  # 렌더할 클립의 첫 SAM 프레임
     by = {k - f0: v for k, v in by.items() if k >= f0}
     masks = {k - f0: v for k, v in masks.items() if k >= f0}
+    cues = score.subtitle_cues(scene.get("commentary"), languages, offset=scene["clip"][0] - scene["window"][0],
+                               duration=scene["clip"][1] - scene["clip"][0])
     return render.render_video(Path(scene["clip_video"]), sam_clip.parent / "highlight.mp4", by, masks,
-                               track.TAPPED_ID, scene["sam_fps"], score.subtitle_text(scene["captions"], languages),
-                               zoom, privacy)
+                               track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy)
+
+
+def _ensure_commentary(job: Job, scene: dict[str, Any], languages: list[str], role: str, client: Any) -> None:
+    """자막을 켤 때만 해설을 묻는다(약 $0.01). 이미 같은 역할로 받아 뒀으면 다시 묻지 않는다."""
+    if not languages or (scene.get("commentary") is not None and scene.get("role", "") == role):
+        return
+    window = scene["window"][1] - scene["window"][0]
+    lines = None
+    for _ in range(2):  # 읽을 수 없는 답이면 한 번 더 묻는다
+        job.charge(muse.estimate_usd(window))
+        lines, reply = score.ask_commentary(client, Path(scene["sam_clip"]), scene["team"],
+                                            scene["score_sec"] - scene["window"][0], role, window)
+        job.spent_usd += reply.usd  # 실패한 답도 돈은 나갔다
+        if lines is not None:
+            break
+    # 그래도 못 받으면 자막 없이 만든다(영상 자체는 막지 않는다)
+    scene.update(commentary=lines or [], role=role, commentary_failed=lines is None)
 
 
 def make_highlight(
     job: Job, index: int, taps: list[tuple[str, float, float]], team_label: str,
-    languages: list[str], privacy: str, zoom: float, client: Any,
+    languages: list[str], role: str, privacy: str, zoom: float, client: Any,
 ) -> dict[str, Any]:
-    """taps = [(장면 종류, x, y), ...]. 장면 종류는 TAP_KINDS. 득점 순간 탭은 꼭 있어야 한다."""
+    """taps = [(장면 종류, x, y), ...]. 장면 종류는 TAP_KINDS. 득점 순간 탭은 꼭 있어야 한다.
+    languages가 비면 자막 없음(Muse 해설을 묻지 않는다). role은 score.ROLE_TEXT의 키(선택)."""
     scene = job.scenes[str(index)]
     if not any(kind == "score" for kind, _, _ in taps) or any(kind not in TAP_KINDS for kind, _, _ in taps):
         raise TapMissed("득점 순간 장면에서 나를 탭해 주세요")
@@ -223,7 +242,7 @@ def make_highlight(
     sam_clip = Path(scene["sam_clip"])
     w, h, _, frames = render.probe(sam_clip)
     silhouette = 2 if privacy == "silhouette" else 1
-    job.charge(track.estimate_usd(max(frames, 50)) * silhouette + muse.estimate_usd(scene["window"][1] - scene["window"][0]))
+    job.charge(track.estimate_usd(max(frames, 50)) * silhouette)
 
     points = [(scene["tap_frames"][kind], x, y) for kind, x, y in taps]
     wire, usage, _ = track.track_players(client, sam_clip, track.tap_prompt((w, h), points))
@@ -236,28 +255,32 @@ def make_highlight(
         job.save()
         raise TapMissed("탭한 곳에서 선수를 찾지 못했다. 선수 몸 위를 다시 탭해 주세요")
 
-    captions, reply = score.ask_caption(client, sam_clip, team_label, scene["score_sec"] - scene["window"][0])
-    job.spent_usd += reply.usd
+    scene["team"] = team_label
+    _ensure_commentary(job, scene, languages, role, client)
     win_start, win_end = scene["window"]
     clip_start = max(win_start, min(win_start + span[0] / fps, scene["score_sec"] - CLIP_MIN_BEFORE_SEC))
     clip_end = min(win_end, max(win_start + (span[1] + 1) / fps, scene["score_sec"] + CLIP_MIN_AFTER_SEC))
     clip_video = _cut_blurred(Path(job.video), clip_start, clip_end - clip_start, sam_clip.parent / "clip_blur.mp4", None)
-    scene.update(taps=[list(t) for t in taps], team=team_label, captions=captions, span_frames=list(span),
+    scene.update(taps=[list(t) for t in taps], span_frames=list(span),
                  clip=[round(clip_start, 2), round(clip_end, 2)], clip_video=str(clip_video))
     out = _render_scene(job, scene, languages, privacy, zoom, client)
-    scene.update(status="done", options={"languages": languages, "privacy": privacy, "zoom": zoom}, video=str(out))
+    scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom},
+                 video=str(out))
     job.save()
     return scene
 
 
-def rerender(job: Job, index: int, languages: list[str], privacy: str, zoom: float, client: Any = None) -> dict[str, Any]:
-    """자막 언어·가리기·확대만 바꿔 다시 렌더. 저장해 둔 SAM 결과와 자막을 써서 API 비용이 없다.
-    '몸 실루엣'을 처음 고를 때만 다른 선수 추적(SAM)을 한 번 부른다."""
+def rerender(job: Job, index: int, languages: list[str], role: str, privacy: str, zoom: float,
+             client: Any = None) -> dict[str, Any]:
+    """자막·가리기·확대만 바꿔 다시 렌더. 저장해 둔 SAM 결과와 해설을 써서 API 비용이 없다.
+    자막을 처음 켜거나 역할을 바꾸면 해설을, '몸 실루엣'을 처음 고르면 다른 선수 추적을 한 번 부른다."""
     scene = job.scenes[str(index)]
     scene["status"] = "rendering"
     job.save()
+    _ensure_commentary(job, scene, languages, role, client)
     out = _render_scene(job, scene, languages, privacy, zoom, client)
-    scene.update(status="done", options={"languages": languages, "privacy": privacy, "zoom": zoom}, video=str(out))
+    scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom},
+                 video=str(out))
     job.save()
     return scene
 

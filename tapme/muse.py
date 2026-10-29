@@ -51,7 +51,7 @@ def ask_about_video(client: Any, video: Path, prompt: str, model: str = MODEL) -
     t0 = time.perf_counter()
     resp = client.responses.create(
         model=model,
-        max_output_tokens=4000,
+        max_output_tokens=8000,  # 3개 언어 해설처럼 긴 답은 4000에서 잘려 빈 답이 왔다(10/29)
         input=[{
             "type": "message",
             "role": "user",

@@ -68,9 +68,19 @@ def test_render_video_keeps_fps_and_makes_9_16(tmp_path: Path) -> None:
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=1",
          "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
     by = {k: [Box("me", 140 + k, 40, 180 + k, 140)] for k in range(5)}
-    out = render.render_video(src, tmp_path / "o.mp4", by, {}, "me", sam_fps=5, subtitle="득점!", zoom=1.0)
+    out = render.render_video(src, tmp_path / "o.mp4", by, {}, "me", sam_fps=5,
+                              subtitles=[(0.5, 1.0, "블로킹! 득점!")], zoom=1.0)
     w, h, fps, n = render.probe(out)
     assert (w, h, round(fps), n) == (100, 180, 30, 30)
+
+    # 자막은 0.5초부터만: 앞 프레임엔 배너가 없고 뒤 프레임엔 있다(배너는 어두운 띠)
+    def bottom_dark(t: float) -> int:
+        raw = subprocess.check_output(["ffmpeg", "-loglevel", "error", "-ss", str(t), "-i", str(out), "-frames:v", "1",
+                                       "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+        row = raw[w * (h - 20): w * (h - 19)]
+        return sum(1 for v in row if v < 60)
+
+    assert bottom_dark(0.1) < bottom_dark(0.8)
 
 
 def test_background_mode_blurs_lighter_than_silhouette() -> None:
