@@ -127,10 +127,10 @@ def test_find_rallies_keeps_rejected_candidates_for_the_user(job: jobs.Job, monk
 
     monkeypatch.setattr(rally, "load_audio", lambda v: None)
     monkeypatch.setattr(rally, "find_whistles", lambda a: [])
-    monkeypatch.setattr(rally, "pair_rallies", lambda w: [rally.RallyCandidate(1, 9), rally.RallyCandidate(20, 28)])
+    monkeypatch.setattr(rally, "segments", lambda w: [rally.RallyCandidate(1, 9), rally.RallyCandidate(20, 28)])
     monkeypatch.setattr(rally_filter, "check_candidates", lambda c, v, cands, d: [
-        {"start_sec": 1, "end_sec": 9, "is_rally": True, "usd": 0.006},
-        {"start_sec": 20, "end_sec": 28, "is_rally": False, "usd": 0.006}])
+        {"start_sec": 1, "end_sec": 9, "is_rally": True, "usd": 0.006, "clip": "a", "input_tokens": 1, "output_tokens": 1},
+        {"start_sec": 20, "end_sec": 28, "is_rally": False, "usd": 0.006, "clip": "b", "input_tokens": 1, "output_tokens": 1}])
     made: list = []
     monkeypatch.setattr(jobs, "make_preview", lambda j, i: made.append(i))
     jobs.find_rallies(job, SimpleNamespace())
@@ -195,3 +195,23 @@ def test_preview_is_a_small_clip_and_middle_thumbnail(tmp_path: Path, monkeypatc
     # 두 번째 부를 때는 다시 만들지 않는다
     mtime = preview.stat().st_mtime
     assert jobs.make_preview(j, 0)[1].stat().st_mtime == mtime
+
+
+def test_find_rallies_merges_a_rally_split_by_a_middle_whistle(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tapme import rally, rally_filter
+
+    monkeypatch.setattr(rally, "load_audio", lambda v: None)
+    monkeypatch.setattr(rally, "find_whistles", lambda a: [])
+    monkeypatch.setattr(rally, "segments", lambda w: [rally.RallyCandidate(3.0, 16.75), rally.RallyCandidate(16.75, 26.5)])
+    monkeypatch.setattr(rally_filter, "check_candidates", lambda c, v, cands, d: [
+        {"start_sec": 3.0, "end_sec": 16.75, "is_rally": True, "confidence": 0.95, "usd": 0.006, "clip": "a",
+         "input_tokens": 1, "output_tokens": 1},
+        {"start_sec": 16.75, "end_sec": 26.5, "is_rally": True, "confidence": 0.9, "usd": 0.006, "clip": "b",
+         "input_tokens": 1, "output_tokens": 1}])
+    cut: list = []
+    monkeypatch.setattr(rally_filter, "blurred_clip", lambda v, s, e, out: cut.append((s, e)) or out)
+    monkeypatch.setattr(jobs, "make_preview", lambda j, i: None)
+    jobs.find_rallies(job, SimpleNamespace())
+    saved = jobs.load_job(job.id)
+    assert [(r["start_sec"], r["end_sec"], r["parts"]) for r in saved.rallies] == [(3.0, 26.5, [0, 1])]
+    assert cut == [(3.0, 26.5)] and saved.rallies[0]["clip_start_sec"] == 2.0  # 득점 시점은 랠리 전체에서 찾는다

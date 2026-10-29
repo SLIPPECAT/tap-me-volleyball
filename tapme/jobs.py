@@ -108,12 +108,18 @@ def _cut_blurred(video: Path, start: float, duration: float, out: Path, fps: int
 def find_rallies(job: Job, client: Any) -> None:
     job.status = "finding_rallies"
     job.save()
-    candidates = rally.pair_rallies(rally.find_whistles(rally.load_audio(Path(job.video))))
+    candidates = rally.segments(rally.find_whistles(rally.load_audio(Path(job.video))))
     job.charge(sum(muse.estimate_usd(c.end_sec - c.start_sec + 2 * rally_filter.PAD_SEC) for c in candidates))
     results = rally_filter.check_candidates(client, Path(job.video), candidates, job.dir / "rallies")
     job.spent_usd += sum(r["usd"] for r in results)
     # 사용자가 Muse 판정을 뒤집을 수 있게 랠리 아님으로 본 후보도 남긴다
-    job.rallies = [{"index": i, **r} for i, r in enumerate(results)]
+    merged = rally_filter.merge_rallies(results)
+    for m in merged:
+        if m["clip"] is None:  # 합친 랠리는 득점 시점을 물을 흐림 클립을 새로 만든다
+            out = job.dir / "rallies" / f"merged{m['parts'][0]:02d}_{m['parts'][-1]:02d}_blur.mp4"
+            m["clip"] = str(rally_filter.blurred_clip(Path(job.video), m["start_sec"], m["end_sec"], out))
+            m["clip_start_sec"] = max(0.0, m["start_sec"] - rally_filter.PAD_SEC)
+    job.rallies = [{**r, "index": i} for i, r in enumerate(merged)]
     for i in range(len(job.rallies)):
         make_preview(job, i)  # 사용자가 시간만 보고는 어떤 장면인지 모른다(10/29 사용자 피드백)
     job.status = "rallies_ready"

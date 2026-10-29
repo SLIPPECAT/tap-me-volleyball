@@ -46,15 +46,42 @@ def cut_clip(video: Path, start_sec: float, end_sec: float, out: Path) -> Path:
     return out
 
 
+def blurred_clip(video: Path, start_sec: float, end_sec: float, out: Path) -> Path:
+    """앞뒤로 넓혀 자르고 얼굴을 흐린 클립. 얼굴이 그대로인 잘린 사본은 남기지 않는다."""
+    raw = cut_clip(video, start_sec, end_sec, out.with_name(out.stem + "_raw.mp4"))
+    anonymize.anonymize_video(raw, out)
+    raw.unlink()
+    return out
+
+
+def merge_rallies(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """휘슬을 사이에 두고 이어진 '랠리' 판정 구간을 하나로 합친다(랠리 중간 휘슬로 잘린 랠리를 되살림).
+
+    합친 랠리는 'parts'에 원래 후보 번호를 담고 'clip'을 비워 둔다(호출하는 쪽이 새 흐림 클립을 만든다).
+    """
+    out: list[dict[str, Any]] = []
+    for i, r in enumerate(results):
+        prev = out[-1] if out else None
+        if prev and prev["is_rally"] and r["is_rally"] and abs(prev["end_sec"] - r["start_sec"]) < 0.01:
+            prev.update(
+                end_sec=r["end_sec"], parts=[*prev["parts"], i], clip=None,
+                confidence=min(float(prev.get("confidence") or 0), float(r.get("confidence") or 0)),
+                uncertain=bool(prev.get("uncertain") or r.get("uncertain")),
+                usd=round(prev["usd"] + r["usd"], 6),
+                input_tokens=prev["input_tokens"] + r["input_tokens"],
+                output_tokens=prev["output_tokens"] + r["output_tokens"],
+            )
+        else:
+            out.append({**r, "parts": [i]})
+    return out
+
+
 def check_candidates(
     client: Any, video: Path, candidates: list[rally.RallyCandidate], work_dir: Path
 ) -> list[dict[str, Any]]:
     results = []
     for i, c in enumerate(candidates):
-        raw = cut_clip(video, c.start_sec, c.end_sec, work_dir / f"cand{i:02d}_raw.mp4")
-        blurred = work_dir / f"cand{i:02d}_blur.mp4"
-        anonymize.anonymize_video(raw, blurred)
-        raw.unlink()  # 얼굴이 그대로인 사본은 남기지 않는다
+        blurred = blurred_clip(video, c.start_sec, c.end_sec, work_dir / f"cand{i:02d}_blur.mp4")
         replies, answer = [], {}
         for _ in range(MAX_ATTEMPTS):
             replies.append(muse.ask_about_video(client, blurred, RALLY_CHECK_PROMPT))
@@ -84,7 +111,7 @@ def main() -> None:
     parser.add_argument("--yes", action="store_true", help="예상 금액을 보고 실제로 호출")
     args = parser.parse_args()
 
-    candidates = rally.pair_rallies(rally.find_whistles(rally.load_audio(args.video)))
+    candidates = rally.segments(rally.find_whistles(rally.load_audio(args.video)))
     lengths = [c.end_sec - c.start_sec + 2 * PAD_SEC for c in candidates]
     print(f"후보 {len(candidates)}개, 약 {sum(lengths):.0f}초 → 예상 ${sum(map(muse.estimate_usd, lengths)):.3f}")
     if not args.yes:

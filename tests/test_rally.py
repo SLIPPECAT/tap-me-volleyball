@@ -27,19 +27,25 @@ def test_tonality_keeps_whistles_and_drops_cheers() -> None:
     audio = _clip(30, [("whistle", 1.0), ("whistle", 8.0), ("cheer", 14.0), ("cheer", 22.0)])
     whistles = rally.find_whistles(audio)
     assert [round(w.time_sec) for w in whistles] == [1, 8]
-    assert rally.pair_rallies(whistles) == [rally.RallyCandidate(start_sec=whistles[0].time_sec, end_sec=whistles[1].time_sec)]
+    assert rally.segments(whistles) == [rally.RallyCandidate(start_sec=whistles[0].time_sec, end_sec=whistles[1].time_sec)]
 
 
 def test_without_tonality_cheers_become_false_rallies() -> None:
     audio = _clip(30, [("whistle", 1.0), ("whistle", 8.0), ("cheer", 14.0), ("cheer", 22.0)])
     loud_only = rally.find_whistles(audio, tonality_min=0.0)
-    assert len(rally.pair_rallies(loud_only)) == 2
+    assert len(rally.segments(loud_only)) == 3  # 1→8, 8→14, 14→22
 
 
-def test_pairs_only_gaps_inside_rally_range() -> None:
-    w = [rally.Whistle(t, 30.0, 20.0) for t in (1.0, 2.0, 10.0, 60.0)]
-    # 1→2초는 너무 짧고, 10→60초는 너무 길다. 2→10초만 랠리
-    assert rally.pair_rallies(w) == [rally.RallyCandidate(2.0, 10.0)]
+def test_every_neighbouring_gap_in_range_is_a_candidate() -> None:
+    w = [rally.Whistle(t, 30.0, 20.0) for t in (1.0, 2.0, 10.0, 60.0, 65.0)]
+    # 1→2초는 너무 짧고 10→60초는 너무 길다. 2→10초, 60→65초가 후보
+    assert rally.segments(w) == [rally.RallyCandidate(2.0, 10.0), rally.RallyCandidate(60.0, 65.0)]
+
+
+def test_middle_whistle_does_not_shift_later_candidates() -> None:
+    # 10/29 27초 영상: 3.0(시작) · 16.75(랠리 중간) · 26.5(끝). 두 개씩 짝지으면 26.5가 남아 랠리가 잘렸다
+    w = [rally.Whistle(t, 20.0, 40.0) for t in (3.0, 16.75, 26.5)]
+    assert rally.segments(w) == [rally.RallyCandidate(3.0, 16.75), rally.RallyCandidate(16.75, 26.5)]
 
 
 def test_load_audio_from_video(tmp_path: Path) -> None:

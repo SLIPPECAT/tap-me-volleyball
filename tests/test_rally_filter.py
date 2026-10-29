@@ -74,3 +74,12 @@ def test_only_blurred_clip_is_sent(tmp_path: Path, monkeypatch) -> None:
     assert results[0]["clip_start_sec"] == 0.0  # 1.0초에서 1초 앞으로 넓힘
     # 얼굴이 그대로인 자른 원본은 남기지 않는다
     assert not any("raw" in p.name for p in (tmp_path / "work").iterdir())
+
+
+def test_merge_only_touching_rally_segments() -> None:
+    r = lambda s, e, ok: {"start_sec": s, "end_sec": e, "is_rally": ok, "confidence": 0.9, "usd": 0.006,
+                          "input_tokens": 10, "output_tokens": 5, "clip": f"{s}"}
+    merged = rally_filter.merge_rallies([r(3, 16.75, True), r(16.75, 26.5, True), r(26.5, 35, False), r(35, 44, True)])
+    assert [(m["start_sec"], m["end_sec"], m["parts"]) for m in merged] == [(3, 26.5, [0, 1]), (26.5, 35, [2]), (35, 44, [3])]
+    assert merged[0]["clip"] is None and merged[0]["usd"] == 0.012  # 합친 랠리는 클립을 새로 만든다
+    assert merged[2]["clip"] == "35"
