@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -215,6 +216,7 @@ def render_video(
     privacy: str = DEFAULT_PRIVACY,
     face_mosaic: bool = True,
     face_every: int = 1,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> Path:
     """subtitles = [(시작초, 끝초, 글자), ...]. 장면에 맞춰 바뀌는 해설 자막(score.subtitle_cues). 없으면 자막 없음.
     face_mosaic이면 '나'를 뺀 얼굴을 모자이크한다(src는 원본 클립). 얼굴은 face_every 프레임마다 찾고 사이는 이어 쓴다."""
@@ -259,6 +261,8 @@ def render_video(
                           text, privacy)
             enc.stdin.write(img.tobytes())
             i += 1
+            if on_progress and i % 30 == 0:
+                on_progress(i, n)
     finally:
         dec.stdout.close()
         dec.wait()

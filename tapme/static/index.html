@@ -80,6 +80,19 @@
   </header>
   <p class="error" id="error" role="alert" hidden></p>
 
+  <!-- 처리 중: 지금 단계 + 닫아도 됨 + 그동안 옵션 미리 정하기 -->
+  <section id="wait-box" class="card" hidden>
+    <p id="wait-step" aria-live="polite"></p>
+    <div class="progress" id="wait-progress"><div></div></div>
+    <p class="muted" data-t="canClose"></p>
+    <p><button id="copy-link" data-t="copyLink"></button></p>
+    <details id="prefs-box">
+      <summary data-t="prefsTitle"></summary>
+      <div class="field"><label for="team-pref" data-t="teamLabel"></label><input type="text" id="team-pref" maxlength="20"></div>
+      <div id="opts-prefs"></div>
+    </details>
+  </section>
+
   <!-- 1. 영상 올리기 -->
   <section id="s-upload">
     <p data-t="uploadIntro"></p>
@@ -87,6 +100,7 @@
     <label class="drop"><span data-t="pickVideo"></span><input type="file" id="file" accept="video/*"></label>
     <div class="progress" id="up-progress" hidden><div></div></div>
     <p class="muted" id="up-status" aria-live="polite"></p>
+    <p class="error" id="upload-warn" data-t="keepOpen" hidden></p>
   </section>
 
   <!-- 2. 랠리 후보 -->
@@ -190,6 +204,11 @@
 <script>
 const T = {
   ko: {
+    keepOpen: "업로드가 끝날 때까지 이 화면을 켜 두세요.", canClose: "화면을 닫아도 맥에서 계속 진행돼요. 이 링크로 다시 들어오면 이어서 볼 수 있어요.",
+    copyLink: "이 작업 링크 복사", copied: "복사했어요", prefsTitle: "기다리는 동안 옵션 미리 정하기",
+    stWhistles: "휘슬 소리를 찾는 중…", stRallies: "랠리 후보를 AI로 확인하는 중… {d}/{n}", stPreviews: "미리보기 만드는 중… {d}/{n}",
+    stScore_time: "득점 순간을 찾는 중…", stBlur: "AI로 보낼 장면의 얼굴을 흐리는 중…", stTracking: "나를 따라가는 중… (SAM)",
+    stCommentary: "해설 자막을 만드는 중…", stRender: "영상을 만드는 중… {p}%", stWorking: "처리하는 중…",
     uploadIntro: "정모 경기 영상을 올리면 랠리를 찾아 드려요. AI로 보내는 장면은 늘 얼굴을 흐린 뒤 보냅니다. 결과 영상의 모자이크는 직접 고를 수 있어요.",
     captureTip: "팁: 폰을 삼각대나 난간에 고정하고 코트 전체가 보이게 찍은 영상이 가장 잘 돼요. 공을 따라 카메라를 움직이면 화면 밖으로 나간 나를 놓칠 수 있어요.",
     pickVideo: "영상 고르기", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
@@ -210,6 +229,11 @@ const T = {
     spent: "이 작업에 쓴 AI 비용 ${u}", reqFail: "요청 실패 ({c})",
   },
   ja: {
+    keepOpen: "アップロードが終わるまでこの画面を開いたままにしてください。", canClose: "画面を閉じてもMacで処理は続きます。このリンクから戻れば続きが見られます。",
+    copyLink: "この作業のリンクをコピー", copied: "コピーしました", prefsTitle: "待っている間にオプションを決めておく",
+    stWhistles: "ホイッスルの音を探しています…", stRallies: "ラリー候補をAIで確認しています… {d}/{n}", stPreviews: "プレビューを作っています… {d}/{n}",
+    stScore_time: "得点の瞬間を探しています…", stBlur: "AIに送るシーンの顔をぼかしています…", stTracking: "自分を追いかけています…（SAM）",
+    stCommentary: "実況字幕を作っています…", stRender: "動画を作っています… {p}%", stWorking: "処理しています…",
     uploadIntro: "練習試合の動画をアップすると、ラリーを見つけます。AIに送るシーンは必ず顔をぼかしてから送ります。完成動画のモザイクは自分で選べます。",
     captureTip: "ヒント：スマホを三脚や手すりに固定して、コート全体が映るように撮った動画がいちばんうまくいきます。ボールを追ってカメラを動かすと、画面の外に出た自分を見失うことがあります。",
     pickVideo: "動画を選ぶ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
@@ -230,6 +254,11 @@ const T = {
     spent: "この作業のAI費用 ${u}", reqFail: "リクエスト失敗 ({c})",
   },
   en: {
+    keepOpen: "Keep this screen open until the upload finishes.", canClose: "You can close this screen; your Mac keeps working. Open this link again to continue.",
+    copyLink: "Copy link to this job", copied: "Copied", prefsTitle: "Set options while you wait",
+    stWhistles: "Finding whistles…", stRallies: "Checking rally candidates with AI… {d}/{n}", stPreviews: "Making previews… {d}/{n}",
+    stScore_time: "Finding the scoring moment…", stBlur: "Blurring faces before sending to AI…", stTracking: "Following you… (SAM)",
+    stCommentary: "Writing commentary subtitles…", stRender: "Making the video… {p}%", stWorking: "Working…",
     uploadIntro: "Upload a match video and we'll find the rallies. Anything sent to the AI is always face-blurred first. You choose whether the final video pixelates faces.",
     captureTip: "Tip: works best when the phone is fixed on a tripod or railing with the whole court in view. If the camera follows the ball, it can lose you when you leave the frame.",
     pickVideo: "Choose a video", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
@@ -255,6 +284,11 @@ const KINDS = ["score", "b1", "b2", "b3", "start"];
 const KIND_LABEL = { score: "mScore", b1: "mB1", b2: "mB2", b3: "mB3", start: "mStart" };
 const state = { job: null, rally: null, taps: {}, tappers: {}, moment: "score", poll: null, last: null, lang: "ko" };
 const anyTap = () => Object.values(state.taps).some(Boolean);
+const BASE_TITLE = document.title;
+// 기다리는 동안 정한 옵션(팀 이름·자막·가리기…). 이 폰에만 저장, 탭 화면에 미리 채운다
+state.prefs = (() => { try { return JSON.parse(localStorage.getItem("prefs") || "{}"); } catch { return {}; } })();
+function savePrefs() { try { localStorage.setItem("prefs", JSON.stringify(state.prefs)); } catch { /* 저장 못 해도 동작에는 지장 없음 */ } }
+state.busy = false;
 
 function storeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function storeSet(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 못 해도 동작에는 지장 없음 */ } }
@@ -327,8 +361,46 @@ function startPolling() {
   state.poll = setInterval(tick, 2000);
 }
 
+function busyOf(s) {
+  if (s.status === "uploaded" || s.status === "finding_rallies") return true;
+  const sc = state.rally !== null && s.scenes[String(state.rally)];
+  if (sc && (sc.status === "preparing" || sc.status === "rendering")) return true;
+  return Boolean(s.reel && s.reel.status === "rendering");
+}
+
+function renderWait(s) {
+  const busy = busyOf(s) && !s.error;
+  $("wait-box").hidden = !busy;
+  if (busy) {
+    const pr = s.progress || {};
+    const key = pr.step ? "st" + pr.step[0].toUpperCase() + pr.step.slice(1) : "stWorking";
+    const pct = pr.total ? Math.round(100 * pr.done / pr.total) : 0;
+    $("wait-step").textContent = t(T[state.lang][key] ? key : "stWorking", { d: pr.done || 0, n: pr.total || 0, p: pct });
+    $("wait-progress").hidden = !pr.total;
+    $("wait-progress").firstElementChild.style.width = `${pct}%`;
+    if (!$("opts-prefs").children.length) {
+      mountOptions("opts-prefs", state.prefs.options);
+      $("team-pref").value = state.prefs.team || "";
+    }
+  }
+  // 처리가 끝나면 진동, 화면을 안 보고 있으면 탭 제목에 ✓
+  if (state.busy && !busy && !s.error) {
+    if (navigator.vibrate) navigator.vibrate(200);
+    if (document.hidden) document.title = "✓ " + BASE_TITLE;
+  }
+  state.busy = busy;
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) document.title = BASE_TITLE; });
+$("team-pref").addEventListener("input", () => { state.prefs.team = $("team-pref").value; savePrefs(); });
+$("opts-prefs").addEventListener("change", () => { state.prefs.options = readOptions($("opts-prefs")); savePrefs(); });
+$("copy-link").onclick = async () => {
+  try { await navigator.clipboard.writeText(location.href); $("copy-link").textContent = t("copied"); }
+  catch { prompt("", location.href); }  // http 주소에서는 클립보드가 막힐 수 있다
+};
+
 function render(s) {
   setError(s.error);
+  renderWait(s);
   $("spent").textContent = t("spent", { u: s.spent_usd.toFixed(3) });
   if (state.rally === null) return renderRallies(s);
   const scene = s.scenes[String(state.rally)];
@@ -346,7 +418,8 @@ function render(s) {
 }
 
 function renderRallies(s) {
-  show(s.status === "rallies_ready" ? "s-rallies" : "s-upload");
+  // 처리 중에는 올리기 칸을 숨긴다(다시 올리는 실수 방지). 기다림 상자가 대신 보인다
+  show(s.status === "rallies_ready" ? "s-rallies" : busyOf(s) && !s.error ? null : "s-upload");
   if (s.status !== "rallies_ready") { $("up-status").textContent = s.error ? "" : t("findingRallies"); return; }
   renderReel(s);
   const list = $("rally-list");
@@ -518,7 +591,10 @@ function renderTap() {
     openMoment("score");
   }
   $("tap-box").hidden = false;
-  if (!$("opts-tap").children.length) mountOptions("opts-tap");
+  if (!$("opts-tap").children.length) {
+    mountOptions("opts-tap", state.prefs.options);
+    if (state.prefs.team && !$("team").value) $("team").value = state.prefs.team;
+  }
   $("make").disabled = !anyTap();
 }
 $("clear-tap").onclick = () => { const host = state.tappers[state.moment]; if (host && host.clear) host.clear(); markMoments(); $("make").disabled = !anyTap(); };
@@ -570,17 +646,18 @@ $("file").addEventListener("change", () => {
   const f = $("file").files[0]; if (!f) return;
   const form = new FormData(); form.append("file", f);
   const xhr = new XMLHttpRequest();
-  $("up-progress").hidden = false; setError("");
+  $("up-progress").hidden = false; $("upload-warn").hidden = false; setError("");
   xhr.upload.onprogress = (e) => {
     if (!e.lengthComputable) return;
     const p = Math.round(100 * e.loaded / e.total);
     $("up-progress").firstElementChild.style.width = `${p}%`; $("up-status").textContent = t("uploading", { p });
   };
   xhr.onload = () => {
+    $("upload-warn").hidden = true;
     if (xhr.status !== 200) { setError(t("uploadFail", { c: xhr.status })); return; }
     state.job = JSON.parse(xhr.responseText).id; state.rally = null; setHash(); startPolling();
   };
-  xhr.onerror = () => setError(t("uploadFail", { c: "network" }));
+  xhr.onerror = () => { $("upload-warn").hidden = true; setError(t("uploadFail", { c: "network" })); };
   xhr.open("POST", "/jobs"); xhr.send(form);
 });
 

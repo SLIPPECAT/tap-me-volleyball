@@ -58,6 +58,7 @@ class Job:
     rallies: list[dict[str, Any]] = field(default_factory=list)
     scenes: dict[str, dict[str, Any]] = field(default_factory=dict)
     reel: dict[str, Any] = field(default_factory=dict)
+    progress: dict[str, Any] = field(default_factory=dict)  # 화면에 보여 줄 지금 단계: {"step", "done", "total"}
     spent_usd: float = 0.0
     error: str | None = None
 
@@ -68,6 +69,10 @@ class Job:
     def save(self) -> None:
         with _lock:
             (self.dir / "job.json").write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2))
+
+    def step(self, name: str, done: int = 0, total: int = 0) -> None:
+        self.progress = {"step": name, "done": done, "total": total}
+        self.save()
 
     def charge(self, estimate_usd: float) -> None:
         if self.spent_usd + estimate_usd > MAX_USD_PER_JOB:
@@ -117,10 +122,12 @@ def _cut_blurred(video: Path, start: float, duration: float, out: Path, fps: int
 
 def find_rallies(job: Job, client: Any) -> None:
     job.status = "finding_rallies"
-    job.save()
+    job.step("whistles")
     candidates = rally.segments(rally.find_whistles(rally.load_audio(Path(job.video))))
+    job.step("rallies", 0, len(candidates))
     job.charge(sum(muse.estimate_usd(c.end_sec - c.start_sec + 2 * rally_filter.PAD_SEC) for c in candidates))
-    results = rally_filter.check_candidates(client, Path(job.video), candidates, job.dir / "rallies")
+    results = rally_filter.check_candidates(client, Path(job.video), candidates, job.dir / "rallies",
+                                            lambda d, n: job.step("rallies", d, n))
     job.spent_usd += sum(r["usd"] for r in results)
     # 사용자가 Muse 판정을 뒤집을 수 있게 랠리 아님으로 본 후보도 남긴다
     merged = rally_filter.merge_rallies(results)
@@ -131,7 +138,9 @@ def find_rallies(job: Job, client: Any) -> None:
             m["clip_start_sec"] = max(0.0, m["start_sec"] - rally_filter.PAD_SEC)
     job.rallies = [{**r, "index": i} for i, r in enumerate(merged)]
     for i in range(len(job.rallies)):
+        job.step("previews", i, len(job.rallies))
         make_preview(job, i)  # 사용자가 시간만 보고는 어떤 장면인지 모른다(10/29 사용자 피드백)
+    job.progress = {}
     job.status = "rallies_ready"
     job.save()
 
@@ -196,7 +205,7 @@ def player_cards(job: Job, index: int, kind: str, client: Any) -> list[list[floa
 def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
     r = job.rallies[index]
     job.scenes[str(index)] = {"index": index, "status": "preparing"}
-    job.save()
+    job.step("score_time")
     job.charge(muse.estimate_usd(r["end_sec"] - r["start_sec"] + 2 * rally_filter.PAD_SEC))
     answer, reply = score.ask_score_time(client, Path(r["clip"]))
     job.spent_usd += reply.usd
@@ -205,6 +214,7 @@ def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
     duration = score_sec + WINDOW_AFTER_SEC - start
     scene_dir = job.dir / f"scene{index:02d}"
     scene_dir.mkdir(exist_ok=True)
+    job.step("blur")
     sam_clip = _cut_blurred(Path(job.video), start, duration, scene_dir / "sam_blur.mp4", SAM_FPS)
     n = render.probe(sam_clip)[3]
     # 득점 근처 장면에서 탭하면 하이라이트의 핵심은 맞는 사람을 잡는다(실험 H-25). 장면 사진은 로컬, 무료
@@ -217,6 +227,7 @@ def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
              "window": [round(start, 2), round(start + duration, 2)], "score_answer": answer,
              "sam_clip": str(sam_clip), "sam_fps": SAM_FPS, "tap_frames": frames, "players": {}}
     job.scenes[str(index)] = scene
+    job.progress = {}
     job.save()
     return scene
 
@@ -251,8 +262,11 @@ def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy
     masks = {k - f0: v for k, v in masks.items() if k >= f0}
     cues = score.subtitle_cues(scene.get("commentary"), languages, offset=scene["clip"][0] - scene["window"][0],
                                duration=scene["clip"][1] - scene["clip"][0])
-    return render.render_video(Path(scene["clip_video"]), sam_clip.parent / "highlight.mp4", by, masks,
-                               track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy, face_mosaic)
+    out = render.render_video(Path(scene["clip_video"]), sam_clip.parent / "highlight.mp4", by, masks,
+                              track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy, face_mosaic,
+                              on_progress=lambda d, n: job.step("render", d, n))
+    job.progress = {}
+    return out
 
 
 def _ensure_commentary(job: Job, scene: dict[str, Any], languages: list[str], role: str, client: Any) -> None:
@@ -282,7 +296,7 @@ def make_highlight(
     if not taps or any(t[0] not in TAP_KINDS for t in taps):
         raise TapMissed("내가 보이는 장면을 하나 이상 골라 나를 탭해 주세요")
     scene["status"] = "rendering"
-    job.save()
+    job.step("tracking")
     sam_clip = Path(scene["sam_clip"])
     w, h, _, frames = render.probe(sam_clip)
     silhouette = 2 if privacy == "silhouette" else 1
@@ -312,6 +326,8 @@ def make_highlight(
         raise TapMissed("탭한 곳에서 선수를 찾지 못했다. 선수 몸 위를 다시 탭해 주세요")
 
     scene["team"] = team_label
+    if languages:
+        job.step("commentary")
     _ensure_commentary(job, scene, languages, role, client)
     win_start, win_end = scene["window"]
     clip_start = max(win_start, min(win_start + span[0] / fps, scene["score_sec"] - CLIP_MIN_BEFORE_SEC))

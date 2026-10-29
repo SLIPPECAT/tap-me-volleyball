@@ -162,13 +162,22 @@ def test_find_rallies_keeps_rejected_candidates_for_the_user(job: jobs.Job, monk
     monkeypatch.setattr(rally, "load_audio", lambda v: None)
     monkeypatch.setattr(rally, "find_whistles", lambda a: [])
     monkeypatch.setattr(rally, "segments", lambda w: [rally.RallyCandidate(1, 9), rally.RallyCandidate(20, 28)])
-    monkeypatch.setattr(rally_filter, "check_candidates", lambda c, v, cands, d: [
-        {"start_sec": 1, "end_sec": 9, "is_rally": True, "usd": 0.006, "clip": "a", "input_tokens": 1, "output_tokens": 1},
-        {"start_sec": 20, "end_sec": 28, "is_rally": False, "usd": 0.006, "clip": "b", "input_tokens": 1, "output_tokens": 1}])
+    seen: list = []
+
+    def fake_check(c, v, cands, d, progress):
+        progress(1, 2)  # 화면에 "랠리 1/2 확인 중" 같은 진행을 알린다
+        seen.append(jobs.load_job(job.id).progress)
+        return [
+            {"start_sec": 1, "end_sec": 9, "is_rally": True, "usd": 0.006, "clip": "a", "input_tokens": 1, "output_tokens": 1},
+            {"start_sec": 20, "end_sec": 28, "is_rally": False, "usd": 0.006, "clip": "b", "input_tokens": 1, "output_tokens": 1}]
+
+    monkeypatch.setattr(rally_filter, "check_candidates", fake_check)
     made: list = []
     monkeypatch.setattr(jobs, "make_preview", lambda j, i: made.append(i))
     jobs.find_rallies(job, SimpleNamespace())
     assert made == [0, 1]  # 후보마다 장면 사진·미리보기
+    assert seen == [{"step": "rallies", "done": 1, "total": 2}]
+    assert jobs.load_job(job.id).progress == {}  # 끝나면 비운다
     saved = jobs.load_job(job.id)
     assert saved.status == "rallies_ready"
     assert [r["is_rally"] for r in saved.rallies] == [True, False]
@@ -237,7 +246,7 @@ def test_find_rallies_merges_a_rally_split_by_a_middle_whistle(job: jobs.Job, mo
     monkeypatch.setattr(rally, "load_audio", lambda v: None)
     monkeypatch.setattr(rally, "find_whistles", lambda a: [])
     monkeypatch.setattr(rally, "segments", lambda w: [rally.RallyCandidate(3.0, 16.75), rally.RallyCandidate(16.75, 26.5)])
-    monkeypatch.setattr(rally_filter, "check_candidates", lambda c, v, cands, d: [
+    monkeypatch.setattr(rally_filter, "check_candidates", lambda c, v, cands, d, progress: [
         {"start_sec": 3.0, "end_sec": 16.75, "is_rally": True, "confidence": 0.95, "usd": 0.006, "clip": "a",
          "input_tokens": 1, "output_tokens": 1},
         {"start_sec": 16.75, "end_sec": 26.5, "is_rally": True, "confidence": 0.9, "usd": 0.006, "clip": "b",
