@@ -78,6 +78,18 @@ def detect_faces(
     return boxes
 
 
+def load_plain_detector() -> cv2.FaceDetectorYN:
+    """원래 크기로 돌리는 두 번째 YuNet. 2배로 키워 찾는 쪽과 놓치는 얼굴이 달라 결과 영상에서 함께 쓴다(H-29)."""
+    return cv2.FaceDetectorYN.create(str(MODEL_PATH), "", (320, 320), SCORE_THRESHOLD, NMS_THRESHOLD, MAX_FACES)
+
+
+def detect_faces_plain(frame: np.ndarray, detector: cv2.FaceDetectorYN) -> list[tuple[int, int, int, int]]:
+    h, w = frame.shape[:2]
+    detector.setInputSize((w, h))
+    _, faces = detector.detect(frame)
+    return [] if faces is None else [tuple(int(v) for v in f[:4]) for f in faces]
+
+
 def pixelate_boxes(
     frame: np.ndarray, boxes: list[tuple[int, int, int, int]]
 ) -> np.ndarray:

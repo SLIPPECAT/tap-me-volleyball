@@ -218,12 +218,14 @@ def render_video(
     face_every: int = 1,
     on_progress: Callable[[int, int], None] | None = None,
     keep_my_face: bool = True,
+    two_detectors: bool = True,
 ) -> Path:
     """subtitles = [(시작초, 끝초, 글자), ...]. 장면에 맞춰 바뀌는 해설 자막(score.subtitle_cues). 없으면 자막 없음.
     face_mosaic이면 '나'를 뺀 얼굴을 모자이크한다(src는 원본 클립). 얼굴은 face_every 프레임마다 찾고 사이는 이어 쓴다."""
-    detector = profile = None
+    detector = profile = plain = None
     if face_mosaic:
         detector, profile = anonymize.load_detector(), anonymize.load_profile_detector()
+        plain = anonymize.load_plain_detector() if two_detectors else None
     width, height, fps, n = probe(src)
     out_h = height // 2 * 2
     out_w = min(width, int(out_h * 9 / 16)) // 2 * 2
@@ -254,7 +256,10 @@ def render_video(
                 rgb = np.asarray(frame)
                 # 매 프레임 화면 전체에서 찾는다. 3프레임마다(실험 H-27)나 결과 화면 안만(H-28) 찾으면 놓치는 얼굴이 늘었다
                 if i % face_every == 0:
-                    faces = anonymize.detect_faces(np.ascontiguousarray(rgb[..., ::-1]), detector, profile)  # 검출기는 BGR
+                    bgr = np.ascontiguousarray(rgb[..., ::-1])  # 검출기는 BGR
+                    faces = anonymize.detect_faces(bgr, detector, profile)
+                    if plain is not None:  # 두 설정은 놓치는 얼굴이 달라 합친다(H-29)
+                        faces = faces + anonymize.detect_faces_plain(bgr, plain)
                 mine = next((b for b in boxes[k] if b.object_id == me), None)
                 # keep_my_face=False: 품질 확인용(qa.py). AI가 회원 얼굴을 보지 않도록 '나'까지 가린다
                 frame = Image.fromarray(mosaic_faces_except_me(rgb, faces, mine if keep_my_face else None))
