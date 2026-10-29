@@ -12,6 +12,9 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -76,32 +79,51 @@ def merge_rallies(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _check_one(client: Any, video: Path, c: rally.RallyCandidate, i: int, work_dir: Path) -> dict[str, Any]:
+    blurred = blurred_clip(video, c.start_sec, c.end_sec, work_dir / f"cand{i:02d}_blur.mp4")
+    replies, answer = [], {}
+    for _ in range(MAX_ATTEMPTS):
+        replies.append(muse.ask_about_video(client, blurred, RALLY_CHECK_PROMPT))
+        answer = muse.parse_json_reply(replies[-1].text)
+        if float(answer.get("confidence") or 0) >= MIN_CONFIDENCE:
+            break
+    return {
+        **asdict(c),
+        "clip": str(blurred),
+        "clip_start_sec": max(0.0, c.start_sec - PAD_SEC),  # 클립 안 시각 + 이 값 = 원본 시각
+        "is_rally": bool(answer.get("is_rally")),
+        "confidence": answer.get("confidence"),
+        "reason": answer.get("reason"),
+        "uncertain": float(answer.get("confidence") or 0) < MIN_CONFIDENCE,
+        "attempts": len(replies),
+        "input_tokens": sum(r.input_tokens for r in replies),
+        "output_tokens": sum(r.output_tokens for r in replies),
+        "usd": round(sum(r.usd for r in replies), 6),
+    }
+
+
+PARALLEL = 3  # 후보를 하나씩 묻느라 랠리 찾기가 오래 걸렸다(후보 3개 95초). 동시에 묻는다
+
+
 def check_candidates(
-    client: Any, video: Path, candidates: list[rally.RallyCandidate], work_dir: Path
+    client: Any, video: Path, candidates: list[rally.RallyCandidate], work_dir: Path,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
-    results = []
-    for i, c in enumerate(candidates):
-        blurred = blurred_clip(video, c.start_sec, c.end_sec, work_dir / f"cand{i:02d}_blur.mp4")
-        replies, answer = [], {}
-        for _ in range(MAX_ATTEMPTS):
-            replies.append(muse.ask_about_video(client, blurred, RALLY_CHECK_PROMPT))
-            answer = muse.parse_json_reply(replies[-1].text)
-            if float(answer.get("confidence") or 0) >= MIN_CONFIDENCE:
-                break
-        results.append({
-            **asdict(c),
-            "clip": str(blurred),
-            "clip_start_sec": max(0.0, c.start_sec - PAD_SEC),  # 클립 안 시각 + 이 값 = 원본 시각
-            "is_rally": bool(answer.get("is_rally")),
-            "confidence": answer.get("confidence"),
-            "reason": answer.get("reason"),
-            "uncertain": float(answer.get("confidence") or 0) < MIN_CONFIDENCE,
-            "attempts": len(replies),
-            "input_tokens": sum(r.input_tokens for r in replies),
-            "output_tokens": sum(r.output_tokens for r in replies),
-            "usd": round(sum(r.usd for r in replies), 6),
-        })
-    return results
+    """후보마다 흐림 클립을 만들어 Muse에 묻는다. 결과는 후보 순서 그대로. on_progress(끝난 수, 전체)."""
+    done = 0
+    lock = threading.Lock()
+
+    def one(args: tuple[int, rally.RallyCandidate]) -> dict[str, Any]:
+        nonlocal done
+        result = _check_one(client, video, args[1], args[0], work_dir)
+        with lock:
+            done += 1
+            if on_progress:
+                on_progress(done, len(candidates))
+        return result
+
+    with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
+        return list(pool.map(one, enumerate(candidates)))
 
 
 def main() -> None:

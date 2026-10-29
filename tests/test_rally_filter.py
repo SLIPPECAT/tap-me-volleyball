@@ -83,3 +83,28 @@ def test_merge_only_touching_rally_segments() -> None:
     assert [(m["start_sec"], m["end_sec"], m["parts"]) for m in merged] == [(3, 26.5, [0, 1]), (26.5, 35, [2]), (35, 44, [3])]
     assert merged[0]["clip"] is None and merged[0]["usd"] == 0.012  # 합친 랠리는 클립을 새로 만든다
     assert merged[2]["clip"] == "35"
+
+
+def test_candidates_are_checked_in_parallel_but_kept_in_order(tmp_path: Path, monkeypatch) -> None:
+    import threading
+    import time
+
+    running, peak = [0], [0]
+    lock = threading.Lock()
+
+    def fake_one(client, video, c, i, work_dir):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        time.sleep(0.05)
+        with lock:
+            running[0] -= 1
+        return {"start_sec": c.start_sec}
+
+    monkeypatch.setattr(rally_filter, "_check_one", fake_one)
+    progress: list = []
+    cands = [rally.RallyCandidate(float(i), float(i) + 5) for i in range(6)]
+    out = rally_filter.check_candidates(None, tmp_path / "v.mp4", cands, tmp_path, lambda d, n: progress.append((d, n)))
+    assert [r["start_sec"] for r in out] == [float(i) for i in range(6)]
+    assert peak[0] == rally_filter.PARALLEL  # 동시에 묻는다
+    assert progress[-1] == (6, 6) and len(progress) == 6
