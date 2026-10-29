@@ -126,3 +126,21 @@ def test_rally_thumb_and_preview_are_served(client: TestClient, monkeypatch: pyt
     assert client.get(f"/jobs/{job_id}/rallies/0/thumb").headers["content-type"] == "image/jpeg"
     assert client.get(f"/jobs/{job_id}/rallies/0/preview").headers["content-type"] == "video/mp4"
     assert client.get(f"/jobs/{job_id}/rallies/9/thumb").status_code == 404
+
+
+def test_highlight_accepts_a_player_card_instead_of_a_tap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    job_id = _awaiting_tap(client, monkeypatch)
+    got: list = []
+    monkeypatch.setattr(jobs, "make_highlight", lambda job, i, taps, *a: got.append(taps))
+    assert client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"score_player": 2, "start_player": 0,
+                                                                     "team": "검정"}).status_code == 200
+    assert got == [[("score", 2), ("start", 0)]]
+    # 득점 순간을 고르지도 탭하지도 않으면 막는다
+    assert client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"start_x": 1, "start_y": 2,
+                                                                     "team": "검정"}).status_code == 422
+
+
+def test_player_card_needs_a_listed_player(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    job_id = _awaiting_tap(client, monkeypatch)
+    assert client.get(f"/jobs/{job_id}/rallies/0/player?which=score&n=0").status_code == 404  # 목록이 비어 있음
+    assert client.get(f"/jobs/{job_id}/rallies/0/player?which=../x&n=0").status_code == 422

@@ -43,6 +43,11 @@
   .tapwrap img { width: 100%; display: block; }
   .marker { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border: 3px solid var(--accent); border-radius: 50%; pointer-events: none; display: none; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
   .zoombar { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  .cards { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px; -webkit-overflow-scrolling: touch; }
+  .cards button { flex: 0 0 auto; width: 64px; height: 96px; padding: 0; border: 3px solid transparent; border-radius: 8px; overflow: hidden; background: #000; }
+  .cards button[aria-selected=true] { border-color: var(--accent); }
+  .cards img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pickbox { position: absolute; border: 3px solid var(--accent); border-radius: 4px; pointer-events: none; display: none; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
   details { margin: 12px 0; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; }
   summary { cursor: pointer; font-weight: 600; }
   .field { margin: 12px 0; }
@@ -137,12 +142,13 @@
 </main>
 
 <template id="tapper-tpl">
+  <div class="cards" role="listbox"></div>
   <div class="zoombar">
     <button class="zout" aria-label="zoom out">−</button>
     <button class="zin" aria-label="zoom in">+</button>
     <span class="muted" data-t="zoomHint"></span>
   </div>
-  <div class="tapzoom"><div class="tapwrap"><img alt=""><div class="marker"></div></div></div>
+  <div class="tapzoom"><div class="tapwrap"><img alt=""><div class="marker"></div><div class="pickbox"></div></div></div>
 </template>
 
 <template id="opts-tpl">
@@ -188,7 +194,7 @@ const T = {
     preview: "장면 보기", rally: "랠리", notRally: "랠리 아님", unsure: "판정 불확실", done: "완성", makeFromRally: "이 랠리로 만들기", open: "열기",
     reelTitle: "완성된 장면 모아 보기", reelHint: "고른 장면을 득점 앞뒤만 잘라 한 편으로 이어요. AI 비용은 들지 않아요.",
     makeReel: "모아서 한 편 만들기", reelBusy: "모으는 중…", pickOne: "모을 장면을 하나 이상 고르세요", scoreAt: "{t} 득점",
-    tapTitle: "득점 순간에서 나를 탭하세요", preparing: "득점 장면을 찾는 중… (1분 안팎)", tapHint: "득점 순간 장면이에요. 내 몸 위를 탭하면 나를 따라가요.",
+    tapTitle: "득점 순간에서 나를 탭하세요", preparing: "득점 장면을 찾는 중… (1분 안팎)", tapHint: "득점 순간 장면이에요. 아래 선수 중 나를 고르세요. 목록에 없으면 사진에서 내 몸을 탭하세요.",
     tapStartTitle: "(선택) 구간 시작 장면에서도 탭하기", tapStartHint: "카메라가 공을 따라 움직인 영상이면 여기서도 탭하면 더 정확해요. 화면에 내가 없으면 비워 두세요.", clearTap: "이 장면 탭 지우기",
     zoomHint: "선수가 작으면 확대해서 탭하세요", rendering: "나를 따라가며 영상을 만드는 중… (2~3분)",
     teamLabel: "우리 팀 이름 (자막에 들어가요)", teamPh: "예: 검정", ourTeam: "우리 팀", make: "하이라이트 만들기", otherRally: "다른 랠리 고르기",
@@ -207,7 +213,7 @@ const T = {
     preview: "シーンを見る", rally: "ラリー", notRally: "ラリーではない", unsure: "判定があいまい", done: "完成", makeFromRally: "このラリーで作る", open: "開く",
     reelTitle: "完成したシーンをまとめる", reelHint: "選んだシーンの得点前後だけを切り出してつなげます。AIの費用はかかりません。",
     makeReel: "まとめて1本にする", reelBusy: "まとめています…", pickOne: "シーンを1つ以上選んでください", scoreAt: "{t} 得点",
-    tapTitle: "得点の瞬間の自分をタップしてください", preparing: "得点シーンを探しています…（1分ほど）", tapHint: "得点の瞬間のシーンです。自分の体をタップすると追いかけます。",
+    tapTitle: "得点の瞬間の自分をタップしてください", preparing: "得点シーンを探しています…（1分ほど）", tapHint: "得点の瞬間のシーンです。下の選手から自分を選んでください。いなければ写真の自分の体をタップしてください。",
     tapStartTitle: "（任意）区間の最初のシーンでもタップ", tapStartHint: "ボールを追ってカメラが動いた動画なら、ここでもタップするとより正確です。自分が映っていなければ空けておいてください。", clearTap: "このシーンのタップを消す",
     zoomHint: "選手が小さいときは拡大してタップ", rendering: "自分を追いかけて動画を作っています…（2〜3分）",
     teamLabel: "自分のチーム名（字幕に入ります）", teamPh: "例：黒", ourTeam: "自分のチーム", make: "ハイライトを作る", otherRally: "ほかのラリーを選ぶ",
@@ -226,7 +232,7 @@ const T = {
     preview: "Watch scene", rally: "Rally", notRally: "Not a rally", unsure: "Unsure", done: "Done", makeFromRally: "Use this rally", open: "Open",
     reelTitle: "Combine finished scenes", reelHint: "Joins the moments around each point into one video. No AI cost.",
     makeReel: "Combine into one", reelBusy: "Combining…", pickOne: "Pick at least one scene", scoreAt: "Point at {t}",
-    tapTitle: "Tap yourself at the scoring moment", preparing: "Finding the scoring moment… (about a minute)", tapHint: "This is the moment the point was scored. Tap your body to follow you.",
+    tapTitle: "Tap yourself at the scoring moment", preparing: "Finding the scoring moment… (about a minute)", tapHint: "This is the scoring moment. Pick yourself from the players below, or tap your body in the photo if you are not listed.",
     tapStartTitle: "(Optional) Also tap at the start of the clip", tapStartHint: "If the camera followed the ball, tapping here too makes tracking more accurate. Leave it empty if you are not in view.", clearTap: "Clear this tap",
     zoomHint: "Zoom in if players look small", rendering: "Following you and making the video… (2–3 min)",
     teamLabel: "Your team name (shown in subtitles)", teamPh: "e.g. Black", ourTeam: "Our team", make: "Make highlight", otherRally: "Pick another rally",
@@ -407,12 +413,32 @@ $("make-reel").onclick = async () => {
 };
 
 // 탭할 장면 하나: 확대(1~4배) + 탭 위치 표시. 화면 위치를 원본 이미지 픽셀로 바꿔 둔다(확대해도 같은 계산)
-function makeTapper(boxId, which) {
+function makeTapper(boxId, which, players) {
   const box = $(boxId);
   box.replaceChildren($("tapper-tpl").content.cloneNode(true));
   box.querySelectorAll("[data-t]").forEach((el) => { el.textContent = t(el.dataset.t); });
   const zoomBox = box.querySelector(".tapzoom"), wrap = box.querySelector(".tapwrap");
-  const img = box.querySelector("img"), marker = box.querySelector(".marker");
+  const img = box.querySelector(".tapwrap img"), marker = box.querySelector(".marker"), pickbox = box.querySelector(".pickbox");
+  const cards = box.querySelector(".cards");
+  const unpick = () => { cards.querySelectorAll("button").forEach((b) => b.setAttribute("aria-selected", "false")); pickbox.style.display = "none"; };
+  // 선수 카드: 고르면 사진 위 그 선수에 테두리. 박스는 원본 이미지 픽셀 → 비율로 그린다
+  cards.hidden = !players.length;
+  players.forEach(([l, tp, r, b], n) => {
+    const btn = document.createElement("button");
+    btn.setAttribute("role", "option"); btn.setAttribute("aria-selected", "false"); btn.setAttribute("aria-label", `#${n + 1}`);
+    const im = document.createElement("img"); im.alt = ""; im.loading = "lazy";
+    im.src = `/jobs/${state.job}/rallies/${state.rally}/player?which=${which}&n=${n}`;
+    btn.append(im);
+    btn.onclick = () => {
+      unpick(); btn.setAttribute("aria-selected", "true"); marker.style.display = "none";
+      state.taps[which] = { player: n };
+      const W = img.naturalWidth || 1080, H = img.naturalHeight || 1920;
+      Object.assign(pickbox.style, { left: `${100 * l / W}%`, top: `${100 * tp / H}%`, width: `${100 * (r - l) / W}%`,
+                                     height: `${100 * (b - tp) / H}%`, display: "block" });
+      $("make").disabled = !state.taps.score;
+    };
+    cards.append(btn);
+  });
   let zoom = 1;
   const setZoom = (z) => {
     zoom = Math.min(4, Math.max(1, z));
@@ -431,10 +457,10 @@ function makeTapper(boxId, which) {
                           y: Math.round((ev.clientY - rect.top) * img.naturalHeight / rect.height) };
     marker.style.left = `${100 * (ev.clientX - rect.left) / rect.width}%`;
     marker.style.top = `${100 * (ev.clientY - rect.top) / rect.height}%`;
-    marker.style.display = "block";
+    marker.style.display = "block"; unpick();
     $("make").disabled = !state.taps.score;
   });
-  return { clear: () => { state.taps[which] = null; marker.style.display = "none"; } };
+  return { clear: () => { state.taps[which] = null; marker.style.display = "none"; unpick(); } };
 }
 
 function renderTap() {
@@ -443,7 +469,9 @@ function renderTap() {
   if ($("tap-box").dataset.key !== key) {
     $("tap-box").dataset.key = key;
     state.taps = { score: null, start: null };
-    state.tappers = { score: makeTapper("tapper-score", "score"), start: makeTapper("tapper-start", "start") };
+    const sc = state.last.scenes[String(state.rally)] || {}, players = sc.players || {};
+    state.tappers = { score: makeTapper("tapper-score", "score", players.score || []),
+                      start: makeTapper("tapper-start", "start", players.start || []) };
     $("start-box").open = false;
   }
   $("tap-box").hidden = false;
@@ -453,8 +481,13 @@ function renderTap() {
 $("clear-start").onclick = () => state.tappers.start && state.tappers.start.clear();
 
 $("make").onclick = async () => {
-  const body = { ...state.taps.score, team: $("team").value.trim() || t("ourTeam"), ...readOptions($("opts-tap")) };
-  if (state.taps.start) { body.start_x = state.taps.start.x; body.start_y = state.taps.start.y; }
+  const body = { team: $("team").value.trim() || t("ourTeam"), ...readOptions($("opts-tap")) };
+  const put = (tap, prefix) => {
+    if (!tap) return;
+    if (tap.player !== undefined) body[`${prefix}_player`] = tap.player;
+    else if (prefix === "score") { body.x = tap.x; body.y = tap.y; } else { body.start_x = tap.x; body.start_y = tap.y; }
+  };
+  put(state.taps.score, "score"); put(state.taps.start, "start");
   $("make").disabled = true;
   try { await postJson(`/jobs/${state.job}/rallies/${state.rally}/highlight`, body); } catch (e) { setError(e.message); $("make").disabled = false; }
 };

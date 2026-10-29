@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from PIL import Image
+
 from tapme import anonymize, muse, rally, rally_filter, render, score, track
 
 JOBS_DIR = Path(os.environ.get("TAPME_JOBS_DIR", "data/jobs"))
@@ -154,6 +156,27 @@ def make_preview(job: Job, index: int) -> tuple[Path, Path]:
     return thumb, preview
 
 
+MAX_PLAYER_CARDS = 20
+
+
+def _player_cards(job: Job, client: Any, scene_dir: Path, kind: str) -> list[list[float]]:
+    """탭할 장면의 선수를 모두 찾아 카드 사진(흐림본에서 자름)을 만든다. 왼쪽에서 오른쪽 순서.
+    폰에서 작은 선수를 탭하기 어려워(10/29 사용자 제안) 목록에서 고르게 한다. 장면당 약 $0.0025"""
+    job.charge(track.USD_PER_IMAGE)
+    frame = scene_dir / f"tap_{kind}.jpg"
+    boxes = track.detect_players(client, frame)
+    job.spent_usd += track.USD_PER_IMAGE
+    boxes = sorted(boxes, key=lambda b: b.center[0])[:MAX_PLAYER_CARDS]
+    img = Image.open(frame)
+    for n, b in enumerate(boxes):
+        pad_w, pad_h = (b.right - b.left) * 0.15, (b.bottom - b.top) * 0.08
+        card = img.crop((max(0, b.left - pad_w), max(0, b.top - pad_h),
+                         min(img.width, b.right + pad_w), min(img.height, b.bottom + pad_h)))
+        card.thumbnail((160, 240))
+        card.save(scene_dir / f"player_{kind}_{n:02d}.jpg")
+    return [[round(b.left, 1), round(b.top, 1), round(b.right, 1), round(b.bottom, 1)] for b in boxes]
+
+
 def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
     r = job.rallies[index]
     job.scenes[str(index)] = {"index": index, "status": "preparing"}
@@ -173,9 +196,10 @@ def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
     for kind, k in frames.items():
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(sam_clip), "-vf", f"select=eq(n\\,{k})",
                         "-frames:v", "1", str(scene_dir / f"tap_{kind}.jpg")], check=True)
+    players = {kind: _player_cards(job, client, scene_dir, kind) for kind in frames}
     scene = {"index": index, "status": "awaiting_tap", "score_sec": round(score_sec, 2),
              "window": [round(start, 2), round(start + duration, 2)], "score_answer": answer,
-             "sam_clip": str(sam_clip), "sam_fps": SAM_FPS, "tap_frames": frames}
+             "sam_clip": str(sam_clip), "sam_fps": SAM_FPS, "tap_frames": frames, "players": players}
     job.scenes[str(index)] = scene
     job.save()
     return scene
@@ -232,10 +256,10 @@ def make_highlight(
     job: Job, index: int, taps: list[tuple[str, float, float]], team_label: str,
     languages: list[str], role: str, privacy: str, zoom: float, client: Any,
 ) -> dict[str, Any]:
-    """taps = [(장면 종류, x, y), ...]. 장면 종류는 TAP_KINDS. 득점 순간 탭은 꼭 있어야 한다.
+    """taps = [(장면 종류, x, y) 또는 (장면 종류, 고른 선수 번호), ...]. 장면 종류는 TAP_KINDS. 득점 순간은 꼭 있어야 한다.
     languages가 비면 자막 없음(Muse 해설을 묻지 않는다). role은 score.ROLE_TEXT의 키(선택)."""
     scene = job.scenes[str(index)]
-    if not any(kind == "score" for kind, _, _ in taps) or any(kind not in TAP_KINDS for kind, _, _ in taps):
+    if not any(t[0] == "score" for t in taps) or any(t[0] not in TAP_KINDS for t in taps):
         raise TapMissed("득점 순간 장면에서 나를 탭해 주세요")
     scene["status"] = "rendering"
     job.save()
@@ -244,7 +268,16 @@ def make_highlight(
     silhouette = 2 if privacy == "silhouette" else 1
     job.charge(track.estimate_usd(max(frames, 50)) * silhouette)
 
-    points = [(scene["tap_frames"][kind], x, y) for kind, x, y in taps]
+    points: list = []
+    for tap in taps:
+        frame = scene["tap_frames"][tap[0]]
+        if len(tap) == 2:  # 선수 목록에서 고름 → 그 선수의 박스
+            cards = scene.get("players", {}).get(tap[0], [])
+            if not 0 <= tap[1] < len(cards):
+                raise TapMissed("고른 선수가 목록에 없다. 다시 골라 주세요")
+            points.append((frame, track.Box(track.TAPPED_ID, *cards[tap[1]])))
+        else:
+            points.append((frame, tap[1], tap[2]))
     wire, usage, _ = track.track_players(client, sam_clip, track.tap_prompt((w, h), points))
     job.spent_usd += track.estimate_usd(int(usage.get("video_frames_processed") or frames))
     (sam_clip.parent / "me_wire.txt").write_text(wire)  # 옵션만 바꿔 다시 렌더할 때 SAM을 또 부르지 않는다

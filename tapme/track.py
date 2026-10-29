@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import base64
 import time
 from dataclasses import dataclass
 from itertools import pairwise
@@ -14,6 +15,7 @@ from typing import Any
 from meta_sam_parser import (
     CompletedOutcome,
     FramePrompt,
+    PromptBox,
     PromptObject,
     PromptPoint,
     SegmentationBoxRecord,
@@ -25,7 +27,8 @@ from meta_sam_parser import (
 
 MODEL = "sam-3.1"
 CONCEPT = "volleyball player"  # 실험 H-02: "person"보다 선심·관중이 덜 잡힘
-USD_PER_FRAME = 0.20 / 1000
+USD_PER_FRAME = 0.20 / 1000  # 영상은 50프레임보다 짧아도 50으로 과금(공식 문서)
+USD_PER_IMAGE = 2.50 / 1000
 
 
 @dataclass(frozen=True)
@@ -54,14 +57,46 @@ def parse(wire_text: str) -> VideoSegmentationResult:
 TAPPED_ID = "0"  # 점 프롬프트로 추적한 '나'의 object_id
 
 
-def tap_prompt(size: tuple[int, int], taps: list[tuple[int, float, float]]) -> str:
-    """탭한 점들을 한 선수의 표시로 주는 SAM 프롬프트. taps = [(프레임, x, y), ...].
+def tap_prompt(size: tuple[int, int], taps: list[tuple[int, float, float] | tuple[int, Box]]) -> str:
+    """사용자가 고른 선수를 표시하는 SAM 프롬프트. taps = [(프레임, x, y) 또는 (프레임, 고른 선수 박스), ...].
 
     점이 하나면 그 선수가 화면 밖에 나갔다 들어올 때 비슷한 선수(같은 색 유니폼)에게 붙었다(실험 H-24).
-    여러 장면에서 탭하면 다시 들어온 뒤에도 같은 사람을 잡게 한다(H-25).
+    여러 장면에서 고르면 다시 들어온 뒤에도 같은 사람을 잡게 한다(H-25). 선수 목록에서 고르면 박스를 준다.
     """
-    prompts = [FramePrompt(frame=f, points=[PromptPoint(x=round(x), y=round(y), label="positive")]) for f, x, y in taps]
+    prompts = []
+    for tap in taps:
+        if len(tap) == 2:
+            f, b = tap
+            prompts.append(FramePrompt(frame=f, box=PromptBox(left=round(b.left), top=round(b.top),
+                                                              right=round(b.right), bottom=round(b.bottom))))
+        else:
+            f, x, y = tap
+            prompts.append(FramePrompt(frame=f, points=[PromptPoint(x=round(x), y=round(y), label="positive")]))
     return build_object_prompt(size=size, objects=[PromptObject(id=TAPPED_ID, prompts=prompts)])
+
+
+def _stream_text(client: Any, content: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    chunks: list[str] = []
+    usage: dict[str, Any] = {}
+    with client.responses.stream(
+        model=MODEL, input=[{"type": "message", "role": "user", "content": content}],
+        metadata={"mask_encoding": "one_bit"},
+    ) as stream:
+        for event in stream:
+            if event.type == "response.output_text.delta":
+                chunks.append(event.delta)
+            elif event.type == "response.completed" and getattr(event.response, "usage", None):
+                usage = event.response.usage.model_dump()
+    return "".join(chunks), usage
+
+
+def detect_players(client: Any, image: Path, concept: str = CONCEPT) -> list[Box]:
+    """사진 한 장(얼굴 흐림본에서 뽑은 장면)의 선수를 모두 찾는다. 약 $0.0025.
+    사용자가 화면을 직접 탭하는 대신 선수 목록에서 고르게 한다(10/29 사용자 제안)."""
+    data = base64.b64encode(image.read_bytes()).decode()
+    wire, _ = _stream_text(client, [{"type": "input_text", "text": concept},
+                                    {"type": "input_image", "image_url": f"data:image/jpeg;base64,{data}"}])
+    return boxes_by_frame(parse(wire)).get(0, []) if wire else []
 
 
 def track_players(client: Any, clip: Path, concept: str = CONCEPT) -> tuple[str, dict[str, Any], float]:
@@ -72,23 +107,9 @@ def track_players(client: Any, clip: Path, concept: str = CONCEPT) -> tuple[str,
     with clip.open("rb") as f:
         file_id = client.files.create(purpose="user_data", file=f).id
     t0 = time.perf_counter()
-    chunks: list[str] = []
-    usage: dict[str, Any] = {}
-    with client.responses.stream(
-        model=MODEL,
-        input=[{
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": concept}, {"type": "input_video", "file_id": file_id}],
-        }],
-        metadata={"mask_encoding": "one_bit"},
-    ) as stream:
-        for event in stream:
-            if event.type == "response.output_text.delta":
-                chunks.append(event.delta)
-            elif event.type == "response.completed" and getattr(event.response, "usage", None):
-                usage = event.response.usage.model_dump()
-    return "".join(chunks), usage, round(time.perf_counter() - t0, 2)
+    wire, usage = _stream_text(client, [{"type": "input_text", "text": concept},
+                                        {"type": "input_video", "file_id": file_id}])
+    return wire, usage, round(time.perf_counter() - t0, 2)
 
 
 def boxes_by_frame(result: VideoSegmentationResult) -> dict[int, list[Box]]:

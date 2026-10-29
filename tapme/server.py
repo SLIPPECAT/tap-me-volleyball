@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from tapme import jobs, muse, render, score
 
@@ -72,10 +72,28 @@ class ReelRequest(BaseModel):
 
 
 class TapRequest(RenderOptions):
-    x: float = Field(description="득점 순간 장면에서 탭한 위치")
-    y: float
+    """득점 순간은 선수 카드 번호(score_player) 또는 탭 위치(x, y) 중 하나가 꼭 있어야 한다. 구간 시작은 선택."""
+
+    x: float | None = Field(default=None, description="득점 순간 장면에서 탭한 위치")
+    y: float | None = None
+    score_player: int | None = Field(default=None, ge=0, description="득점 순간 장면의 선수 카드 번호")
     start_x: float | None = Field(default=None, description="(선택) 구간 시작 장면에서 탭한 위치")
     start_y: float | None = None
+    start_player: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _score_pick(self) -> TapRequest:
+        if self.score_player is None and (self.x is None or self.y is None):
+            raise ValueError("득점 순간 장면에서 선수를 고르거나 탭해야 한다")
+        return self
+
+    def taps(self) -> list[tuple]:
+        def one(kind: str, player: int | None, x: float | None, y: float | None) -> list[tuple]:
+            if player is not None:
+                return [(kind, player)]
+            return [(kind, x, y)] if x is not None and y is not None else []
+
+        return one("score", self.score_player, self.x, self.y) + one("start", self.start_player, self.start_x, self.start_y)
     team: str = Field(min_length=1, max_length=20, description="사용자가 부르는 우리 팀 이름(예: 검정)")
 
 
@@ -167,15 +185,22 @@ def tap_frame(job_id: str, index: int, which: str = "score") -> FileResponse:
     return FileResponse(Path(scene["sam_clip"]).parent / f"tap_{which}.jpg", media_type="image/jpeg")
 
 
+@app.get("/jobs/{job_id}/rallies/{index}/player")
+def player_card(job_id: str, index: int, which: str = "score", n: int = 0) -> FileResponse:
+    scene = _job(job_id).scenes.get(str(index))
+    if which not in jobs.TAP_KINDS:
+        raise HTTPException(422, f"which는 {jobs.TAP_KINDS} 중 하나")
+    if not scene or not 0 <= n < len(scene.get("players", {}).get(which, [])):
+        raise HTTPException(404, "그 선수 카드가 없다")
+    return FileResponse(Path(scene["sam_clip"]).parent / f"player_{which}_{n:02d}.jpg", media_type="image/jpeg")
+
+
 @app.post("/jobs/{job_id}/rallies/{index}/highlight")
 def highlight(job_id: str, index: int, req: TapRequest, background: BackgroundTasks) -> dict[str, str]:
     scene = _job(job_id).scenes.get(str(index))
     if not scene or scene.get("status") not in ("awaiting_tap", "done"):
         raise HTTPException(409, "먼저 prepare로 탭할 장면을 만든다")
-    taps = [("score", req.x, req.y)]
-    if req.start_x is not None and req.start_y is not None:
-        taps.append(("start", req.start_x, req.start_y))
-    background.add_task(_run, job_id, jobs.make_highlight, index, taps, req.team, req.languages, req.role,
+    background.add_task(_run, job_id, jobs.make_highlight, index, req.taps(), req.team, req.languages, req.role,
                         req.privacy, req.zoom, client_factory())
     return {"status": "rendering"}
 

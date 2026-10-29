@@ -81,3 +81,46 @@ def test_tap_prompt_marks_the_tapped_player() -> None:
 def test_tap_prompt_puts_taps_from_several_frames_on_one_player() -> None:
     p = track.tap_prompt((1080, 1920), [(0, 958, 1048), (55, 940, 1060)])
     assert "<0f>0<|point;x=958;y=1048" in p and "<55f>0<|point;x=940;y=1060" in p
+
+
+def test_tap_prompt_can_mark_a_picked_player_box() -> None:
+    b = track.Box("3", 10, 20, 110, 320)
+    p = track.tap_prompt((1080, 1920), [(0, 958, 1048), (70, b)])
+    assert "<0f>0<|point;x=958;y=1048" in p and "<70f>0<|box;x1=10;y1=20" in p
+
+
+def test_detect_players_sends_one_image_and_returns_boxes(tmp_path: Path) -> None:
+    img = tmp_path / "f.jpg"
+    img.write_bytes(b"\xff\xd8jpeg")
+    sent: dict = {}
+    image_wire = WIRE.split("\n")[0]  # 사진 결과는 프레임 0 한 줄
+
+    class Stream:
+        def __enter__(self):
+            return iter([SimpleNamespace(type="response.output_text.delta", delta=image_wire)])
+
+        def __exit__(self, *a):
+            return False
+
+    def stream(**kw):
+        sent.update(kw)
+        return Stream()
+
+    boxes = track.detect_players(SimpleNamespace(responses=SimpleNamespace(stream=stream)), img)
+    assert sorted(b.object_id for b in boxes) == ["0", "1"]
+    part = sent["input"][0]["content"][1]
+    assert part["type"] == "input_image" and part["image_url"].startswith("data:image/jpeg;base64,")
+
+
+def test_no_players_found_is_an_empty_list(tmp_path: Path) -> None:
+    img = tmp_path / "f.jpg"
+    img.write_bytes(b"x")
+
+    class Stream:
+        def __enter__(self):
+            return iter([])
+
+        def __exit__(self, *a):
+            return False
+
+    assert track.detect_players(SimpleNamespace(responses=SimpleNamespace(stream=lambda **kw: Stream())), img) == []

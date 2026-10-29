@@ -28,6 +28,9 @@ def job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> jobs.Job:
         return out
 
     monkeypatch.setattr(jobs, "_cut_blurred", fake_cut)
+    # 탭할 장면의 선수 찾기(SAM 사진): 오른쪽·왼쪽 선수 둘
+    monkeypatch.setattr(track, "detect_players", lambda c, img: [track.Box("7", 211, 228, 271, 255),
+                                                                 track.Box("2", 155, 228, 203, 255)])
     j = jobs.create_job("m.mp4", b"x")
     j.rallies = [{"index": 0, "start_sec": 5.0, "end_sec": 13.0, "clip": str(src5), "clip_start_sec": 4.0}]
     return j
@@ -53,7 +56,11 @@ def test_prepare_scene_window_is_in_source_time(job: jobs.Job, monkeypatch: pyte
     # 탭할 장면 2장: 득점 순간(가짜 클립이 짧아 마지막 프레임)·구간 시작
     assert scene["tap_frames"] == {"score": 4, "start": 0}
     assert all((Path(scene["sam_clip"]).parent / f"tap_{k}.jpg").exists() for k in ("score", "start"))
-    assert jobs.load_job(job.id).spent_usd == pytest.approx(0.01)
+    # 장면마다 선수 목록(왼쪽부터)과 카드 사진
+    assert scene["players"]["score"] == [[155, 228, 203, 255], [211, 228, 271, 255]]
+    assert (Path(scene["sam_clip"]).parent / "player_score_01.jpg").exists()
+    # 득점 시점(Muse $0.01) + 선수 찾기 사진 2장
+    assert jobs.load_job(job.id).spent_usd == pytest.approx(0.01 + 2 * track.USD_PER_IMAGE)
 
 
 # '나'(점 프롬프트 결과, id 0)가 프레임 0·1에 있다. WIRE의 1번은 다른 선수
@@ -233,3 +240,13 @@ def test_unreadable_commentary_is_retried_then_skipped(job: jobs.Job, monkeypatc
     assert scene["status"] == "done" and scene["commentary"] == [] and scene["commentary_failed"]
     # 두 번 다 실패해도 낸 돈(SAM 0.01 + Muse 2회)은 센다
     assert jobs.load_job(job.id).spent_usd == pytest.approx(spent + 0.01 + 0.02)
+
+
+def test_picking_a_player_card_sends_that_players_box(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    sam: list = []
+    _prepared(job, monkeypatch, sam)
+    jobs.make_highlight(job, 0, [("score", 1)], "검정", [], "", "face", 2.0, client=None)
+    # 득점 순간(SAM 프레임 4)의 1번 카드 = 오른쪽 선수 박스
+    assert "<4f>0<|box;x1=211;y1=228" in sam[0]
+    with pytest.raises(jobs.TapMissed):
+        jobs.make_highlight(job, 0, [("score", 9)], "검정", [], "", "face", 2.0, client=None)
