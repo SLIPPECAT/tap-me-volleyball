@@ -25,6 +25,7 @@ app = FastAPI(title="tap-me-volleyball")
 # 테스트에서 가짜 API 클라이언트로 바꾼다
 client_factory: Callable[[], Any] = muse.client_from_env
 _step_lock = threading.Lock()
+_SERVER_PATHS = ("sam_clip", "clip_video", "video")  # 서버 안 경로는 화면에 내보내지 않는다
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")  # 아이콘·홈 화면 설정
 
@@ -62,8 +63,10 @@ class ReelRequest(BaseModel):
 
 
 class TapRequest(RenderOptions):
-    x: float
+    x: float = Field(description="득점 순간 장면에서 탭한 위치")
     y: float
+    start_x: float | None = Field(default=None, description="(선택) 구간 시작 장면에서 탭한 위치")
+    start_y: float | None = None
     team: str = Field(min_length=1, max_length=20, description="사용자가 부르는 우리 팀 이름(예: 검정)")
 
 
@@ -109,7 +112,7 @@ def status(job_id: str) -> dict[str, Any]:
             "rallies": [{k: r.get(k) for k in ("index", "start_sec", "end_sec", "is_rally", "confidence", "reason",
                                                "uncertain")}
                         for r in job.rallies],
-            "scenes": {k: {f: v for f, v in s.items() if f not in ("window5", "tap_frame", "window30", "video")}
+            "scenes": {k: {f: v for f, v in s.items() if f not in _SERVER_PATHS}
                        for k, s in job.scenes.items()},
             "reel": {k: v for k, v in job.reel.items() if k != "video"}}
 
@@ -129,11 +132,13 @@ def prepare(job_id: str, index: int, background: BackgroundTasks) -> dict[str, s
 
 
 @app.get("/jobs/{job_id}/rallies/{index}/tap-frame")
-def tap_frame(job_id: str, index: int) -> FileResponse:
+def tap_frame(job_id: str, index: int, which: str = "score") -> FileResponse:
     scene = _job(job_id).scenes.get(str(index))
-    if not scene or "tap_frame" not in scene:
+    if which not in jobs.TAP_KINDS:
+        raise HTTPException(422, f"which는 {jobs.TAP_KINDS} 중 하나")
+    if not scene or "tap_frames" not in scene:
         raise HTTPException(404, "아직 준비되지 않았다")
-    return FileResponse(scene["tap_frame"], media_type="image/jpeg")
+    return FileResponse(Path(scene["sam_clip"]).parent / f"tap_{which}.jpg", media_type="image/jpeg")
 
 
 @app.post("/jobs/{job_id}/rallies/{index}/highlight")
@@ -141,7 +146,10 @@ def highlight(job_id: str, index: int, req: TapRequest, background: BackgroundTa
     scene = _job(job_id).scenes.get(str(index))
     if not scene or scene.get("status") not in ("awaiting_tap", "done"):
         raise HTTPException(409, "먼저 prepare로 탭할 장면을 만든다")
-    background.add_task(_run, job_id, jobs.make_highlight, index, req.x, req.y, req.team, req.languages,
+    taps = [("score", req.x, req.y)]
+    if req.start_x is not None and req.start_y is not None:
+        taps.append(("start", req.start_x, req.start_y))
+    background.add_task(_run, job_id, jobs.make_highlight, index, taps, req.team, req.languages,
                         req.privacy, req.zoom, client_factory())
     return {"status": "rendering"}
 
@@ -151,7 +159,8 @@ def rerender(job_id: str, index: int, req: RenderOptions, background: Background
     scene = _job(job_id).scenes.get(str(index))
     if not scene or scene.get("status") != "done":
         raise HTTPException(409, "하이라이트를 먼저 만든다")
-    background.add_task(_run, job_id, jobs.rerender, index, req.languages, req.privacy, req.zoom)
+    # '몸 실루엣'을 처음 고르면 다른 선수 추적(SAM)이 한 번 필요하다
+    background.add_task(_run, job_id, jobs.rerender, index, req.languages, req.privacy, req.zoom, client_factory())
     return {"status": "rendering"}
 
 

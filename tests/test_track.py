@@ -24,11 +24,25 @@ def test_boxes_by_frame() -> None:
     assert b.center == ((b.left + b.right) / 2, (b.top + b.bottom) / 2)
 
 
-def test_find_tapped_picks_player_under_finger() -> None:
-    result = track.parse(WIRE)
-    assert track.find_tapped(result, 175, 240) == "1"
-    assert track.find_tapped(result, 240, 240) == "0"
-    assert track.find_tapped(result, 10, 10) is None
+def test_merge_keeps_me_and_renames_others_without_my_double() -> None:
+    me = track.parse("<0f>0<|box;x1=211;y1=228;x2=270;y2=254;w=320;h=334|>" + _MASK_A)
+    # 모든 선수 추적: 0번은 '나'와 같은 사람(같은 박스), 1번은 다른 선수
+    merged, masks = track.merge_me_and_others(me, track.parse(WIRE))
+    assert sorted(b.object_id for b in merged[0]) == ["0", "o1"]
+    assert set(masks[0]) == {"0", "o1"}
+    # 1프레임에는 '나'가 안 잡혀 같은 사람인지 알 수 없다 → 다른 선수로 둔다
+    assert [b.object_id for b in merged[1]] == ["o0"]
+
+
+def test_visible_span_takes_the_run_around_the_score() -> None:
+    b = track.Box(track.TAPPED_ID, 0, 0, 1, 1)
+    by = {k: [b] for k in [*range(15), *range(35, 100)]}  # 15~34 화면 밖
+    assert track.visible_span(by, around=70) == (35, 99)
+    assert track.visible_span(by, around=5) == (0, 14)
+    assert track.visible_span(by, around=20) == (0, 14)  # 화면 밖이면 가까운 구간
+    by[50] = []  # 한두 프레임 놓친 것은 잇는다
+    assert track.visible_span(by, around=70) == (35, 99)
+    assert track.visible_span({}, around=0) is None
 
 
 def test_track_players_streams_concept_prompt(tmp_path: Path) -> None:

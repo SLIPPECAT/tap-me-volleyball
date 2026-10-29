@@ -90,3 +90,28 @@ def test_home_screen_files_are_served(client: TestClient) -> None:
     assert manifest["display"] == "standalone"
     for icon in manifest["icons"]:
         assert client.get(icon["src"]).headers["content-type"] == "image/png"
+
+
+def _awaiting_tap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> str:
+    def fake_prepare(job: jobs.Job, index: int, c) -> None:
+        job.scenes[str(index)] = {"index": index, "status": "awaiting_tap", "tap_frames": {"score": 4, "start": 0}}
+        job.save()
+
+    monkeypatch.setattr(jobs, "prepare_scene", fake_prepare)
+    job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
+    client.post(f"/jobs/{job_id}/rallies/0/prepare")
+    return job_id
+
+
+def test_highlight_sends_score_tap_and_optional_start_tap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    job_id = _awaiting_tap(client, monkeypatch)
+    got: list = []
+    monkeypatch.setattr(jobs, "make_highlight", lambda job, i, taps, *a: got.append(taps))
+    client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"x": 1, "y": 2, "team": "검정"})
+    client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"x": 1, "y": 2, "start_x": 3, "start_y": 4, "team": "검정"})
+    assert got == [[("score", 1, 2)], [("score", 1, 2), ("start", 3, 4)]]
+
+
+def test_tap_frame_kind_is_checked(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    job_id = _awaiting_tap(client, monkeypatch)
+    assert client.get(f"/jobs/{job_id}/rallies/0/tap-frame?which=../../x").status_code == 422

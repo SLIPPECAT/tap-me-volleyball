@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,6 @@ from meta_sam_parser import (
     SegmentationMaskRecord,
     VideoSegmentationResult,
     build_object_prompt,
-    decode_mask_to_raster,
     video_segmentation_format,
 )
 
@@ -107,24 +107,51 @@ def masks_by_frame(result: VideoSegmentationResult) -> dict[int, dict[str, Segme
     return out
 
 
-def _mask_hit(rec: SegmentationMaskRecord, x: float, y: float) -> bool:
-    b = rec.bounds
-    if not (b.left <= x < b.right and b.top <= y < b.bottom):
-        return False
-    w, h = rec.mask.width, rec.mask.height
-    # 마스크는 박스 크기로 오는 경우가 많다. 박스 안 상대 위치를 마스크 크기에 맞춘다
-    mx = int((x - b.left) * w / max(1.0, b.right - b.left))
-    my = int((y - b.top) * h / max(1.0, b.bottom - b.top))
-    raster = decode_mask_to_raster(rec.mask)
-    return 0 <= mx < w and 0 <= my < h and raster[my * w + mx] > 0
+def _iou(a: Box, b: Box) -> float:
+    w = max(0.0, min(a.right, b.right) - max(a.left, b.left))
+    h = max(0.0, min(a.bottom, b.bottom) - max(a.top, b.top))
+    inter = w * h
+    union = (a.right - a.left) * (a.bottom - a.top) + (b.right - b.left) * (b.bottom - b.top) - inter
+    return inter / union if union > 0 else 0.0
 
 
-def find_tapped(result: VideoSegmentationResult, x: float, y: float, frame: int = 0) -> str | None:
-    """탭한 점이 마스크 안에 든 선수, 없으면 점을 품은 가장 작은 박스의 선수."""
-    for oid, rec in masks_by_frame(result).get(frame, {}).items():
-        if _mask_hit(rec, x, y):
-            return oid
-    hits = [b for b in boxes_by_frame(result).get(frame, []) if b.left <= x < b.right and b.top <= y < b.bottom]
-    if not hits:
+def merge_me_and_others(
+    me: VideoSegmentationResult, others: VideoSegmentationResult | None
+) -> tuple[dict[int, list[Box]], dict[int, dict[str, SegmentationMaskRecord]]]:
+    """점 프롬프트로 잡은 '나'(TAPPED_ID)와, 모든 선수 추적(others, '몸 실루엣'일 때만)을 합친다.
+
+    다른 선수 ID는 'o'를 붙여 '나'와 겹치지 않게 하고, 프레임마다 '나'와 크게 겹치는 박스(같은 사람)는 뺀다.
+    빼지 않으면 실루엣 흐림이 '나'를 덮는다.
+    """
+    by, masks = boxes_by_frame(me), masks_by_frame(me)
+    if others is None:
+        return by, masks
+    other_masks = masks_by_frame(others)
+    for k, boxes in boxes_by_frame(others).items():
+        mine = [b for b in by.get(k, []) if b.object_id == TAPPED_ID]
+        for b in boxes:
+            if any(_iou(b, m) > 0.5 for m in mine):
+                continue
+            oid = f"o{b.object_id}"
+            by.setdefault(k, []).append(Box(oid, b.left, b.top, b.right, b.bottom))
+            if b.object_id in other_masks.get(k, {}):
+                masks.setdefault(k, {})[oid] = other_masks[k][b.object_id]
+    return by, masks
+
+
+def visible_span(by: dict[int, list[Box]], around: int, max_gap: int = 2) -> tuple[int, int] | None:
+    """around 프레임을 품고 '나'가 이어서 보이는 구간 (첫, 끝 프레임). max_gap 프레임까지의 끊김은 잇는다.
+
+    카메라가 움직여 '나'가 화면 밖에 나갔다 들어오면 다른 선수에게 붙을 수 있어(실험 H-24·H-25),
+    하이라이트는 득점 순간과 이어진 구간만 쓴다.
+    """
+    seen = sorted(k for k, boxes in by.items() if any(b.object_id == TAPPED_ID for b in boxes))
+    if not seen:
         return None
-    return min(hits, key=lambda b: (b.right - b.left) * (b.bottom - b.top)).object_id
+    runs, start = [], seen[0]
+    for a, b in pairwise(seen):
+        if b - a > max_gap + 1:
+            runs.append((start, a))
+            start = b
+    runs.append((start, seen[-1]))
+    return min(runs, key=lambda r: 0 if r[0] <= around <= r[1] else min(abs(around - r[0]), abs(around - r[1])))

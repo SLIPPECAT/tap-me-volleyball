@@ -49,31 +49,71 @@ def test_prepare_scene_window_is_in_source_time(job: jobs.Job, monkeypatch: pyte
     # 클립은 원본 4.0초에서 시작 → 득점 12.5초 → 7초 전~3초 뒤
     assert scene["score_sec"] == 12.5
     assert scene["window"] == [5.5, 15.5]
-    assert scene["status"] == "awaiting_tap" and Path(scene["tap_frame"]).exists()
+    assert scene["status"] == "awaiting_tap"
+    # 탭할 장면 2장: 득점 순간(가짜 클립이 짧아 마지막 프레임)·구간 시작
+    assert scene["tap_frames"] == {"score": 4, "start": 0}
+    assert all((Path(scene["sam_clip"]).parent / f"tap_{k}.jpg").exists() for k in ("score", "start"))
     assert jobs.load_job(job.id).spent_usd == pytest.approx(0.01)
 
 
-def test_tap_then_rerender_without_paying_again(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+# '나'(점 프롬프트 결과, id 0)가 프레임 0·1에 있다. WIRE의 1번은 다른 선수
+_ME = "\n".join(line.split(",1<")[0] for line in WIRE.split("\n"))
+
+
+def _prepared(job: jobs.Job, monkeypatch: pytest.MonkeyPatch, sam: list) -> None:
     monkeypatch.setattr(score, "ask_score_time", lambda c, clip: ({"score_time_sec": 8.5}, _reply()))
     jobs.prepare_scene(job, 0, client=None)
-    monkeypatch.setattr(track, "track_players", lambda c, clip: (WIRE, {"video_frames_processed": 50}, 0.0))
+
+    def fake_track(c, clip, prompt="volleyball player"):
+        sam.append(prompt)
+        return (WIRE if prompt == "volleyball player" else _ME), {"video_frames_processed": 50}, 0.0
+
+    monkeypatch.setattr(track, "track_players", fake_track)
     monkeypatch.setattr(score, "ask_caption",
                         lambda c, clip, team, t: ({"ko": "검정 득점!", "ja": "黒得点!", "en": "Black scores!"}, _reply()))
 
+
+def test_tap_sends_points_from_both_scenes_and_keeps_visible_span(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    sam: list = []
+    _prepared(job, monkeypatch, sam)
+    scene = jobs.make_highlight(job, 0, [("score", 240, 240), ("start", 175, 240)], "검정", ["en", "ko"], "face", 2.0,
+                                client=None)
+    # 두 장면의 탭이 한 선수의 점으로 간다(득점 순간 = SAM 프레임 4, 시작 = 0)
+    assert "<4f>0<|point;x=240;y=240" in sam[0] and "<0f>0<|point;x=175;y=240" in sam[0]
+    assert len(sam) == 1  # 얼굴만 가리기는 다른 선수 추적이 필요 없다
+    # '나'는 SAM 프레임 0·1(5.5~5.7초)에만 있다. 영상은 그 구간과 최소 득점 4초 전~2초 뒤(8.5~14.5초)를 모두 담는다
+    assert scene["span_frames"] == [0, 1] and scene["clip"] == [5.5, 14.5]
+    assert scene["status"] == "done" and Path(scene["video"]).exists()
+
+
+def test_tap_must_include_the_score_scene(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    _prepared(job, monkeypatch, [])
     with pytest.raises(jobs.TapMissed):
-        jobs.make_highlight(job, 0, 5, 5, "검정", ["ko"], "face", 2.0, client=None)
+        jobs.make_highlight(job, 0, [("start", 175, 240)], "검정", ["ko"], "face", 2.0, client=None)
+
+
+def test_tap_on_nobody_asks_to_tap_again(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    _prepared(job, monkeypatch, [])
+    monkeypatch.setattr(track, "track_players", lambda c, clip, prompt="": ("", {}, 0.0))
+    with pytest.raises(jobs.TapMissed):
+        jobs.make_highlight(job, 0, [("score", 5, 5)], "검정", ["ko"], "face", 2.0, client=None)
     assert job.scenes["0"]["status"] == "awaiting_tap"
 
-    scene = jobs.make_highlight(job, 0, 175, 240, "검정", ["en", "ko"], "face", 2.0, client=None)
-    assert scene["me"] == "1" and scene["status"] == "done" and Path(scene["video"]).exists()
+
+def test_rerender_pays_only_for_first_silhouette(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    sam: list = []
+    _prepared(job, monkeypatch, sam)
+    jobs.make_highlight(job, 0, [("score", 240, 240)], "검정", ["ko"], "face", 2.0, client=None)
+    monkeypatch.setattr(score, "ask_caption", lambda *a: pytest.fail("Muse를 다시 부름"))
     spent = jobs.load_job(job.id).spent_usd
 
-    # 옵션만 바꾼 렌더는 API를 부르지 않는다
-    monkeypatch.setattr(track, "track_players", lambda *a: pytest.fail("SAM을 다시 부름"))
-    monkeypatch.setattr(score, "ask_caption", lambda *a: pytest.fail("Muse를 다시 부름"))
-    scene = jobs.rerender(job, 0, ["ja"], "background", 1.0)
-    assert scene["options"] == {"languages": ["ja"], "privacy": "background", "zoom": 1.0}
-    assert jobs.load_job(job.id).spent_usd == spent
+    jobs.rerender(job, 0, ["ja"], "background", 1.0)  # 비용 없음
+    assert len(sam) == 1 and jobs.load_job(job.id).spent_usd == spent
+    scene = jobs.rerender(job, 0, ["ko"], "silhouette", 2.0)  # 다른 선수 추적을 처음 한 번
+    assert sam[1:] == ["volleyball player"] and jobs.load_job(job.id).spent_usd > spent
+    scene = jobs.rerender(job, 0, ["en"], "silhouette", 1.5)  # 저장해 둔 것을 다시 씀
+    assert len(sam) == 2
+    assert scene["options"] == {"languages": ["en"], "privacy": "silhouette", "zoom": 1.5}
 
 
 def test_load_job_rejects_path_tricks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
