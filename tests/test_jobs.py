@@ -55,14 +55,25 @@ def test_prepare_scene_window_is_in_source_time(job: jobs.Job, monkeypatch: pyte
     assert scene["score_sec"] == 12.5
     assert scene["window"] == [5.5, 15.5]
     assert scene["status"] == "awaiting_tap"
-    # 탭할 장면 2장: 득점 순간(가짜 클립이 짧아 마지막 프레임)·구간 시작
-    assert scene["tap_frames"] == {"score": 4, "start": 0}
-    assert all((Path(scene["sam_clip"]).parent / f"tap_{k}.jpg").exists() for k in ("score", "start"))
-    # 장면마다 선수 목록(왼쪽부터)과 카드 사진
-    assert scene["players"]["score"] == [[155, 228, 203, 255], [211, 228, 271, 255]]
-    assert (Path(scene["sam_clip"]).parent / "player_score_01.jpg").exists()
-    # 득점 시점(Muse $0.01) + 선수 찾기 사진 2장
-    assert jobs.load_job(job.id).spent_usd == pytest.approx(0.01 + 2 * track.USD_PER_IMAGE)
+    # 탭할 장면 5장: 득점 순간·1.5/3/4.5초 전·구간 시작. 가짜 SAM 클립이 5프레임뿐이라 앞 셋은 마지막 프레임
+    assert scene["tap_frames"] == {"score": 4, "b1": 4, "b2": 4, "b3": 4, "start": 0}
+    assert all((Path(scene["sam_clip"]).parent / f"tap_{k}.jpg").exists() for k in jobs.TAP_KINDS)
+    # 선수 카드는 아직 안 만든다(사용자가 장면을 열 때). 득점 시점(Muse $0.01)만 썼다
+    assert scene["players"] == {}
+    assert jobs.load_job(job.id).spent_usd == pytest.approx(0.01)
+
+
+def test_player_cards_are_made_once_per_opened_scene(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(score, "ask_score_time", lambda c, clip: ({"score_time_sec": 8.5}, _reply()))
+    jobs.prepare_scene(job, 0, client=None)
+    calls: list = []
+    real = track.detect_players
+    monkeypatch.setattr(track, "detect_players", lambda c, img: calls.append(img.name) or real(c, img))
+    assert jobs.player_cards(job, 0, "b2", client=None) == [[155, 228, 203, 255], [211, 228, 271, 255]]
+    assert jobs.player_cards(job, 0, "b2", client=None) == [[155, 228, 203, 255], [211, 228, 271, 255]]
+    assert calls == ["tap_b2.jpg"]  # 두 번째는 다시 찾지 않는다
+    assert (Path(job.scenes["0"]["sam_clip"]).parent / "player_b2_01.jpg").exists()
+    assert jobs.load_job(job.id).spent_usd == pytest.approx(0.01 + track.USD_PER_IMAGE)
 
 
 # '나'(점 프롬프트 결과, id 0)가 프레임 0·1에 있다. WIRE의 1번은 다른 선수
@@ -100,10 +111,14 @@ def test_tap_sends_points_from_both_scenes_and_keeps_visible_span(job: jobs.Job,
     assert scene["clip_is_original"] and scene["options"]["face_mosaic"] is True
 
 
-def test_tap_must_include_the_score_scene(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
-    _prepared(job, monkeypatch, [])
+def test_any_scene_can_be_tapped_and_at_least_one_is_needed(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    sam: list = []
+    _prepared(job, monkeypatch, sam)
     with pytest.raises(jobs.TapMissed):
-        jobs.make_highlight(job, 0, [("start", 175, 240)], "검정", ["ko"], "", "face", 2.0, client=None)
+        jobs.make_highlight(job, 0, [], "검정", ["ko"], "", "face", 2.0, client=None)
+    # 득점 순간에 내가 안 보여도 구간 시작 장면만으로 만든다(10/30 사용자 피드백)
+    scene = jobs.make_highlight(job, 0, [("start", 175, 240)], "검정", [], "", "face", 2.0, client=None)
+    assert "<0f>0<|point;x=175;y=240" in sam[0] and scene["status"] == "done"
 
 
 def test_tap_on_nobody_asks_to_tap_again(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -251,6 +266,7 @@ def test_unreadable_commentary_is_retried_then_skipped(job: jobs.Job, monkeypatc
 def test_picking_a_player_card_sends_that_players_box(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
     sam: list = []
     _prepared(job, monkeypatch, sam)
+    jobs.player_cards(job, 0, "score", client=None)
     jobs.make_highlight(job, 0, [("score", 1)], "검정", [], "", "face", 2.0, client=None)
     # 득점 순간(SAM 프레임 4)의 1번 카드 = 오른쪽 선수 박스
     assert "<4f>0<|box;x1=211;y1=228" in sam[0]

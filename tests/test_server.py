@@ -36,13 +36,15 @@ def test_upload_lists_rally_candidates(client: TestClient) -> None:
 @pytest.mark.parametrize("bad", [{"privacy": "none"}, {"zoom": 3.0}, {"languages": ["zh"]}, {"role": "captain"}])
 def test_invalid_options_are_rejected(client: TestClient, bad: dict) -> None:
     job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
-    r = client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"x": 1, "y": 1, "team": "검정", **bad})
+    r = client.post(f"/jobs/{job_id}/rallies/0/highlight",
+                    json={"taps": [{"which": "score", "x": 1, "y": 1}], "team": "검정", **bad})
     assert r.status_code == 422
 
 
 def test_tap_before_prepare_is_refused(client: TestClient) -> None:
     job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
-    r = client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"x": 1, "y": 1, "team": "검정"})
+    r = client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"taps": [{"which": "score", "x": 1, "y": 1}],
+                                                                  "team": "검정"})
     assert r.status_code == 409
 
 
@@ -103,13 +105,17 @@ def _awaiting_tap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> str:
     return job_id
 
 
-def test_highlight_sends_score_tap_and_optional_start_tap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_highlight_sends_taps_from_any_scenes(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     job_id = _awaiting_tap(client, monkeypatch)
     got: list = []
     monkeypatch.setattr(jobs, "make_highlight", lambda job, i, taps, *a: got.append(taps))
-    client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"x": 1, "y": 2, "team": "검정"})
-    client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"x": 1, "y": 2, "start_x": 3, "start_y": 4, "team": "검정"})
-    assert got == [[("score", 1, 2)], [("score", 1, 2), ("start", 3, 4)]]
+    url = f"/jobs/{job_id}/rallies/0/highlight"
+    assert client.post(url, json={"taps": [{"which": "b2", "x": 1, "y": 2}], "team": "검정"}).status_code == 200
+    assert client.post(url, json={"taps": [{"which": "score", "player": 2}, {"which": "start", "x": 3, "y": 4}],
+                                  "team": "검정"}).status_code == 200
+    assert got == [[("b2", 1, 2)], [("score", 2), ("start", 3, 4)]]
+    for bad in ([], [{"which": "../x", "x": 1, "y": 1}], [{"which": "score"}]):
+        assert client.post(url, json={"taps": bad, "team": "검정"}).status_code == 422
 
 
 def test_tap_frame_kind_is_checked(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,16 +134,11 @@ def test_rally_thumb_and_preview_are_served(client: TestClient, monkeypatch: pyt
     assert client.get(f"/jobs/{job_id}/rallies/9/thumb").status_code == 404
 
 
-def test_highlight_accepts_a_player_card_instead_of_a_tap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_players_are_found_when_a_scene_is_opened(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     job_id = _awaiting_tap(client, monkeypatch)
-    got: list = []
-    monkeypatch.setattr(jobs, "make_highlight", lambda job, i, taps, *a: got.append(taps))
-    assert client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"score_player": 2, "start_player": 0,
-                                                                     "team": "검정"}).status_code == 200
-    assert got == [[("score", 2), ("start", 0)]]
-    # 득점 순간을 고르지도 탭하지도 않으면 막는다
-    assert client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"start_x": 1, "start_y": 2,
-                                                                     "team": "검정"}).status_code == 422
+    monkeypatch.setattr(jobs, "player_cards", lambda job, i, which, c: [[1, 2, 3, 4]])
+    assert client.post(f"/jobs/{job_id}/rallies/0/players?which=b1").json() == {"which": "b1", "players": [[1, 2, 3, 4]]}
+    assert client.post(f"/jobs/{job_id}/rallies/0/players?which=zz").status_code == 422
 
 
 def test_player_card_needs_a_listed_player(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -30,7 +30,10 @@ WINDOW_BEFORE_SEC = 7.0  # SAM은 50프레임보다 짧아도 50으로 과금된
 WINDOW_AFTER_SEC = 3.0
 # 10fps: 움직이는 카메라에서 5fps는 같은 사람을 더 자주 놓쳤다(실험 H-24 B<C). 장면당 SAM 약 $0.02
 SAM_FPS = 10
-TAP_KINDS = ("score", "start")  # 탭할 장면: 득점 순간(필수)·구간 시작(선택)
+# 탭할 장면: 득점 순간과 그 1.5·3·4.5초 전, 구간 시작. 내가 보이는 장면을 하나 이상 골라 탭한다
+# (득점 순간에 내가 화면에 없을 수 있다, 10/30 사용자 피드백). 값 = 득점 몇 초 전(None = 구간 시작)
+TAP_MOMENTS: dict[str, float | None] = {"score": 0.0, "b1": 1.5, "b2": 3.0, "b3": 4.5, "start": None}
+TAP_KINDS = tuple(TAP_MOMENTS)
 # 하이라이트 영상은 최소 득점 4초 전~2초 뒤. '나'를 확실히 잡은 구간이 이보다 짧으면 그 밖에서는 링·확대 따라가기를 하지 않는다
 CLIP_MIN_BEFORE_SEC = 4.0
 CLIP_MIN_AFTER_SEC = 2.0
@@ -164,9 +167,15 @@ def make_preview(job: Job, index: int) -> tuple[Path, Path]:
 MAX_PLAYER_CARDS = 20
 
 
-def _player_cards(job: Job, client: Any, scene_dir: Path, kind: str) -> list[list[float]]:
+def player_cards(job: Job, index: int, kind: str, client: Any) -> list[list[float]]:
     """탭할 장면의 선수를 모두 찾아 카드 사진(흐림본에서 자름)을 만든다. 왼쪽에서 오른쪽 순서.
-    폰에서 작은 선수를 탭하기 어려워(10/29 사용자 제안) 목록에서 고르게 한다. 장면당 약 $0.0025"""
+    폰에서 작은 선수를 탭하기 어려워(10/29 사용자 제안) 목록에서 고르게 한다.
+    사용자가 그 장면을 처음 열 때만 만든다(장면당 약 $0.0025). 한 번 만들면 다시 쓴다."""
+    scene = job.scenes[str(index)]
+    cached = scene.setdefault("players", {}).get(kind)
+    if cached is not None:
+        return cached
+    scene_dir = Path(scene["sam_clip"]).parent
     job.charge(track.USD_PER_IMAGE)
     frame = scene_dir / f"tap_{kind}.jpg"
     boxes = track.detect_players(client, frame)
@@ -179,7 +188,9 @@ def _player_cards(job: Job, client: Any, scene_dir: Path, kind: str) -> list[lis
                          min(img.width, b.right + pad_w), min(img.height, b.bottom + pad_h)))
         card.thumbnail((160, 240))
         card.save(scene_dir / f"player_{kind}_{n:02d}.jpg")
-    return [[round(b.left, 1), round(b.top, 1), round(b.right, 1), round(b.bottom, 1)] for b in boxes]
+    scene["players"][kind] = [[round(b.left, 1), round(b.top, 1), round(b.right, 1), round(b.bottom, 1)] for b in boxes]
+    job.save()
+    return scene["players"][kind]
 
 
 def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
@@ -196,15 +207,15 @@ def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
     scene_dir.mkdir(exist_ok=True)
     sam_clip = _cut_blurred(Path(job.video), start, duration, scene_dir / "sam_blur.mp4", SAM_FPS)
     n = render.probe(sam_clip)[3]
-    # 득점 순간 장면에서 탭하면 하이라이트의 핵심(득점 근처)은 맞는 사람을 잡는다(실험 H-25)
-    frames = {"score": min(n - 1, round((score_sec - start) * SAM_FPS)), "start": 0}
+    # 득점 근처 장면에서 탭하면 하이라이트의 핵심은 맞는 사람을 잡는다(실험 H-25). 장면 사진은 로컬, 무료
+    frames = {kind: 0 if before is None else max(0, min(n - 1, round((score_sec - before - start) * SAM_FPS)))
+              for kind, before in TAP_MOMENTS.items()}
     for kind, k in frames.items():
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(sam_clip), "-vf", f"select=eq(n\\,{k})",
                         "-frames:v", "1", str(scene_dir / f"tap_{kind}.jpg")], check=True)
-    players = {kind: _player_cards(job, client, scene_dir, kind) for kind in frames}
     scene = {"index": index, "status": "awaiting_tap", "score_sec": round(score_sec, 2),
              "window": [round(start, 2), round(start + duration, 2)], "score_answer": answer,
-             "sam_clip": str(sam_clip), "sam_fps": SAM_FPS, "tap_frames": frames, "players": players}
+             "sam_clip": str(sam_clip), "sam_fps": SAM_FPS, "tap_frames": frames, "players": {}}
     job.scenes[str(index)] = scene
     job.save()
     return scene
@@ -265,11 +276,11 @@ def make_highlight(
     job: Job, index: int, taps: list[tuple[str, float, float]], team_label: str,
     languages: list[str], role: str, privacy: str, zoom: float, client: Any, face_mosaic: bool = True,
 ) -> dict[str, Any]:
-    """taps = [(장면 종류, x, y) 또는 (장면 종류, 고른 선수 번호), ...]. 장면 종류는 TAP_KINDS. 득점 순간은 꼭 있어야 한다.
+    """taps = [(장면 종류, x, y) 또는 (장면 종류, 고른 선수 번호), ...]. 장면 종류는 TAP_KINDS, 하나 이상.
     languages가 비면 자막 없음(Muse 해설을 묻지 않는다). role은 score.ROLE_TEXT의 키(선택)."""
     scene = job.scenes[str(index)]
-    if not any(t[0] == "score" for t in taps) or any(t[0] not in TAP_KINDS for t in taps):
-        raise TapMissed("득점 순간 장면에서 나를 탭해 주세요")
+    if not taps or any(t[0] not in TAP_KINDS for t in taps):
+        raise TapMissed("내가 보이는 장면을 하나 이상 골라 나를 탭해 주세요")
     scene["status"] = "rendering"
     job.save()
     sam_clip = Path(scene["sam_clip"])
@@ -291,7 +302,10 @@ def make_highlight(
     job.spent_usd += track.estimate_usd(int(usage.get("video_frames_processed") or frames))
     (sam_clip.parent / "me_wire.txt").write_text(wire)  # 옵션만 바꿔 다시 렌더할 때 SAM을 또 부르지 않는다
     fps = scene["sam_fps"]
-    span = track.visible_span(track.boxes_by_frame(track.parse(wire)), around=scene["tap_frames"]["score"], max_gap=fps)
+    # 득점 순간에 가장 가까운 탭을 기준으로 이어서 보이는 구간을 잡는다
+    score_frame = scene["tap_frames"]["score"]
+    anchor = min((scene["tap_frames"][t[0]] for t in taps), key=lambda k: abs(k - score_frame))
+    span = track.visible_span(track.boxes_by_frame(track.parse(wire)), around=anchor, max_gap=fps)
     if span is None:
         scene["status"] = "awaiting_tap"
         job.save()

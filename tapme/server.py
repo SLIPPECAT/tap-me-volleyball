@@ -73,29 +73,30 @@ class ReelRequest(BaseModel):
     order: list[int] = Field(min_length=1, max_length=10, description="모을 장면(랠리 번호)을 보여 줄 순서대로")
 
 
-class TapRequest(RenderOptions):
-    """득점 순간은 선수 카드 번호(score_player) 또는 탭 위치(x, y) 중 하나가 꼭 있어야 한다. 구간 시작은 선택."""
+class Tap(BaseModel):
+    """한 장면에서 나를 고른 것: 선수 카드 번호(player) 또는 사진을 탭한 위치(x, y)."""
 
-    x: float | None = Field(default=None, description="득점 순간 장면에서 탭한 위치")
+    which: str
+    player: int | None = Field(default=None, ge=0)
+    x: float | None = None
     y: float | None = None
-    score_player: int | None = Field(default=None, ge=0, description="득점 순간 장면의 선수 카드 번호")
-    start_x: float | None = Field(default=None, description="(선택) 구간 시작 장면에서 탭한 위치")
-    start_y: float | None = None
-    start_player: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
-    def _score_pick(self) -> TapRequest:
-        if self.score_player is None and (self.x is None or self.y is None):
-            raise ValueError("득점 순간 장면에서 선수를 고르거나 탭해야 한다")
+    def _one(self) -> Tap:
+        if self.which not in jobs.TAP_KINDS:
+            raise ValueError(f"장면은 {jobs.TAP_KINDS} 중 하나")
+        if self.player is None and (self.x is None or self.y is None):
+            raise ValueError("선수 카드를 고르거나 사진을 탭해야 한다")
         return self
 
-    def taps(self) -> list[tuple]:
-        def one(kind: str, player: int | None, x: float | None, y: float | None) -> list[tuple]:
-            if player is not None:
-                return [(kind, player)]
-            return [(kind, x, y)] if x is not None and y is not None else []
+    def as_tuple(self) -> tuple:
+        return (self.which, self.player) if self.player is not None else (self.which, self.x, self.y)
 
-        return one("score", self.score_player, self.x, self.y) + one("start", self.start_player, self.start_x, self.start_y)
+
+class TapRequest(RenderOptions):
+    """내가 보이는 장면(득점 순간·1.5/3/4.5초 전·구간 시작) 중 하나 이상에서 나를 고른다."""
+
+    taps: list[Tap] = Field(min_length=1, max_length=len(jobs.TAP_KINDS))
     team: str = Field(min_length=1, max_length=20, description="사용자가 부르는 우리 팀 이름(예: 검정)")
 
 
@@ -187,6 +188,23 @@ def tap_frame(job_id: str, index: int, which: str = "score") -> FileResponse:
     return FileResponse(Path(scene["sam_clip"]).parent / f"tap_{which}.jpg", media_type="image/jpeg")
 
 
+@app.post("/jobs/{job_id}/rallies/{index}/players")
+def find_players(job_id: str, index: int, which: str = "score") -> dict[str, Any]:
+    """그 장면을 처음 열 때 선수를 찾아 카드를 만든다(약 $0.0025, 한 번 만들면 다시 씀). 몇 초 걸린다."""
+    if which not in jobs.TAP_KINDS:
+        raise HTTPException(422, f"which는 {jobs.TAP_KINDS} 중 하나")
+    with _step_lock:
+        job = _job(job_id)
+        scene = job.scenes.get(str(index))
+        if not scene or "tap_frames" not in scene:
+            raise HTTPException(404, "아직 준비되지 않았다")
+        try:
+            players = jobs.player_cards(job, index, which, client_factory())
+        except jobs.BudgetExceeded as e:
+            raise HTTPException(409, str(e)) from e
+    return {"which": which, "players": players}
+
+
 @app.get("/jobs/{job_id}/rallies/{index}/player")
 def player_card(job_id: str, index: int, which: str = "score", n: int = 0) -> FileResponse:
     scene = _job(job_id).scenes.get(str(index))
@@ -202,7 +220,7 @@ def highlight(job_id: str, index: int, req: TapRequest, background: BackgroundTa
     scene = _job(job_id).scenes.get(str(index))
     if not scene or scene.get("status") not in ("awaiting_tap", "done"):
         raise HTTPException(409, "먼저 prepare로 탭할 장면을 만든다")
-    background.add_task(_run, job_id, jobs.make_highlight, index, req.taps(), req.team, req.languages, req.role,
+    background.add_task(_run, job_id, jobs.make_highlight, index, [t.as_tuple() for t in req.taps], req.team, req.languages, req.role,
                         req.privacy, req.zoom, client_factory(), req.face_mosaic)
     return {"status": "rendering"}
 
