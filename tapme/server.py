@@ -117,6 +117,23 @@ def status(job_id: str) -> dict[str, Any]:
             "reel": {k: v for k, v in job.reel.items() if k != "video"}}
 
 
+def _rally_media(job_id: str, index: int) -> tuple[Path, Path]:
+    job = _job(job_id)
+    if not 0 <= index < len(job.rallies):
+        raise HTTPException(404, "랠리가 없다")
+    return jobs.make_preview(job, index)
+
+
+@app.get("/jobs/{job_id}/rallies/{index}/thumb")
+def rally_thumb(job_id: str, index: int) -> FileResponse:
+    return FileResponse(_rally_media(job_id, index)[0], media_type="image/jpeg")
+
+
+@app.get("/jobs/{job_id}/rallies/{index}/preview")
+def rally_preview(job_id: str, index: int) -> FileResponse:
+    return FileResponse(_rally_media(job_id, index)[1], media_type="video/mp4")
+
+
 @app.post("/jobs/{job_id}/rallies/{index}/prepare")
 def prepare(job_id: str, index: int, background: BackgroundTasks) -> dict[str, str]:
     job = _job(job_id)

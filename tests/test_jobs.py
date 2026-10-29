@@ -131,7 +131,10 @@ def test_find_rallies_keeps_rejected_candidates_for_the_user(job: jobs.Job, monk
     monkeypatch.setattr(rally_filter, "check_candidates", lambda c, v, cands, d: [
         {"start_sec": 1, "end_sec": 9, "is_rally": True, "usd": 0.006},
         {"start_sec": 20, "end_sec": 28, "is_rally": False, "usd": 0.006}])
+    made: list = []
+    monkeypatch.setattr(jobs, "make_preview", lambda j, i: made.append(i))
     jobs.find_rallies(job, SimpleNamespace())
+    assert made == [0, 1]  # 후보마다 장면 사진·미리보기
     saved = jobs.load_job(job.id)
     assert saved.status == "rallies_ready"
     assert [r["is_rally"] for r in saved.rallies] == [True, False]
@@ -174,3 +177,21 @@ def test_reel_without_audio(job: jobs.Job, tmp_path: Path) -> None:
     job.scenes = {"0": {"status": "done", "score_sec": 2.0, "window": [0.0, 4.0], "video": str(silent)},
                   "1": {"status": "done", "score_sec": 2.0, "window": [0.0, 4.0], "video": str(silent)}}
     assert Path(jobs.make_reel(job, [0, 1])["video"]).exists()
+
+
+def test_preview_is_a_small_clip_and_middle_thumbnail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(jobs, "JOBS_DIR", tmp_path / "jobs")
+    src = _video(tmp_path / "src.mp4", 30, seconds=6)  # 가로 320×334
+    with src.open("rb") as f:
+        j = jobs.create_job("m.mp4", f)
+    j.rallies = [{"index": 0, "start_sec": 2.0, "end_sec": 4.0}]
+    thumb, preview = jobs.make_preview(j, 0)
+    from tapme import render
+
+    w, h, _, n = render.probe(preview)
+    assert min(w, h) <= 360  # 짧은 변 360 이하(작은 영상은 키우지 않음)
+    assert abs(n / 30 - 4.0) < 0.2  # 앞뒤 1초를 붙인 1~5초
+    assert thumb.exists() and thumb.suffix == ".jpg"
+    # 두 번째 부를 때는 다시 만들지 않는다
+    mtime = preview.stat().st_mtime
+    assert jobs.make_preview(j, 0)[1].stat().st_mtime == mtime

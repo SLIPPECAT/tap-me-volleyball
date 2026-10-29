@@ -114,8 +114,38 @@ def find_rallies(job: Job, client: Any) -> None:
     job.spent_usd += sum(r["usd"] for r in results)
     # 사용자가 Muse 판정을 뒤집을 수 있게 랠리 아님으로 본 후보도 남긴다
     job.rallies = [{"index": i, **r} for i, r in enumerate(results)]
+    for i in range(len(job.rallies)):
+        make_preview(job, i)  # 사용자가 시간만 보고는 어떤 장면인지 모른다(10/29 사용자 피드백)
     job.status = "rallies_ready"
     job.save()
+
+
+PREVIEW_SHORT_SIDE = 360  # 랠리 후보 미리보기: 폰에서 고르기용 낮은 화질
+
+
+def make_preview(job: Job, index: int) -> tuple[Path, Path]:
+    """랠리 후보의 장면 사진(가운데)과 미리보기 영상(앞뒤 1초 포함). 로컬, API 비용 없음.
+
+    올린 사람의 폰에만 보여 주므로 원본에서 만든다. 외부(Meta)로는 여전히 흐림본만 보낸다.
+    이미 있으면 다시 만들지 않는다(예전 작업은 처음 볼 때 만들어진다).
+    """
+    r = job.rallies[index]
+    out_dir = job.dir / "rallies"
+    out_dir.mkdir(exist_ok=True)
+    thumb, preview = out_dir / f"cand{index:02d}_thumb.jpg", out_dir / f"cand{index:02d}_preview.mp4"
+    side = PREVIEW_SHORT_SIDE
+    scale = f"scale='if(gt(iw,ih),-2,min({side},iw))':'if(gt(iw,ih),min({side},ih),-2)'"
+    start = max(0.0, r["start_sec"] - rally_filter.PAD_SEC)
+    if not preview.exists():
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{start:.2f}", "-i", job.video,
+                        "-t", f"{r['end_sec'] + rally_filter.PAD_SEC - start:.2f}", "-vf", scale, "-r", "30",
+                        "-c:v", "libx264", "-crf", "30", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", str(preview)], check=True)
+    if not thumb.exists():
+        middle = (r["start_sec"] + r["end_sec"]) / 2
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{middle:.2f}", "-i", job.video,
+                        "-frames:v", "1", "-vf", scale, str(thumb)], check=True)
+    return thumb, preview
 
 
 def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:

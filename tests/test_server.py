@@ -115,3 +115,14 @@ def test_highlight_sends_score_tap_and_optional_start_tap(client: TestClient, mo
 def test_tap_frame_kind_is_checked(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     job_id = _awaiting_tap(client, monkeypatch)
     assert client.get(f"/jobs/{job_id}/rallies/0/tap-frame?which=../../x").status_code == 422
+
+
+def test_rally_thumb_and_preview_are_served(client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
+    thumb, preview = tmp_path / "t.jpg", tmp_path / "p.mp4"
+    thumb.write_bytes(b"jpg")
+    preview.write_bytes(b"mp4")
+    monkeypatch.setattr(jobs, "make_preview", lambda job, i: (thumb, preview))
+    assert client.get(f"/jobs/{job_id}/rallies/0/thumb").headers["content-type"] == "image/jpeg"
+    assert client.get(f"/jobs/{job_id}/rallies/0/preview").headers["content-type"] == "video/mp4"
+    assert client.get(f"/jobs/{job_id}/rallies/9/thumb").status_code == 404

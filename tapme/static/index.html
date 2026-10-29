@@ -29,6 +29,11 @@
   button:disabled { opacity: .5; }
   .card { border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 12px; margin: 8px 0; }
   .card .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .card.rally { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: start; }
+  .thumb { position: relative; padding: 0; border: 0; border-radius: 8px; overflow: hidden; width: 96px; aspect-ratio: 9 / 16; background: #000; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 28px; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.7); }
+  .card.rally video { grid-column: 1 / -1; max-height: 70vh; object-fit: contain; }
   .tag { font-size: 13px; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
   .tag.yes { color: var(--accent); } .tag.no { color: var(--muted); } .tag.unsure { color: var(--warn); } .tag.done { color: var(--fg); }
   .drop { display: block; border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center; cursor: pointer; }
@@ -168,7 +173,7 @@ const T = {
     pickVideo: "영상 고르기", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
     findingRallies: "랠리를 찾는 중… (영상 길이에 따라 몇 분)",
     pickRally: "우리 팀이 득점한 랠리를 고르세요", pickRallyHint: "AI 판정은 틀릴 수 있어요. 어느 후보든 고를 수 있습니다.",
-    rally: "랠리", notRally: "랠리 아님", unsure: "판정 불확실", done: "완성", makeFromRally: "이 랠리로 만들기", open: "열기",
+    preview: "장면 보기", rally: "랠리", notRally: "랠리 아님", unsure: "판정 불확실", done: "완성", makeFromRally: "이 랠리로 만들기", open: "열기",
     reelTitle: "완성된 장면 모아 보기", reelHint: "고른 장면을 득점 앞뒤만 잘라 한 편으로 이어요. AI 비용은 들지 않아요.",
     makeReel: "모아서 한 편 만들기", reelBusy: "모으는 중…", pickOne: "모을 장면을 하나 이상 고르세요", scoreAt: "{t} 득점",
     tapTitle: "득점 순간에서 나를 탭하세요", preparing: "득점 장면을 찾는 중… (1분 안팎)", tapHint: "득점 순간 장면이에요. 내 몸 위를 탭하면 나를 따라가요.",
@@ -186,7 +191,7 @@ const T = {
     pickVideo: "動画を選ぶ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
     findingRallies: "ラリーを探しています…（動画の長さにより数分）",
     pickRally: "自分のチームが得点したラリーを選んでください", pickRallyHint: "AIの判定は間違うことがあります。どの候補でも選べます。",
-    rally: "ラリー", notRally: "ラリーではない", unsure: "判定があいまい", done: "完成", makeFromRally: "このラリーで作る", open: "開く",
+    preview: "シーンを見る", rally: "ラリー", notRally: "ラリーではない", unsure: "判定があいまい", done: "完成", makeFromRally: "このラリーで作る", open: "開く",
     reelTitle: "完成したシーンをまとめる", reelHint: "選んだシーンの得点前後だけを切り出してつなげます。AIの費用はかかりません。",
     makeReel: "まとめて1本にする", reelBusy: "まとめています…", pickOne: "シーンを1つ以上選んでください", scoreAt: "{t} 得点",
     tapTitle: "得点の瞬間の自分をタップしてください", preparing: "得点シーンを探しています…（1分ほど）", tapHint: "得点の瞬間のシーンです。自分の体をタップすると追いかけます。",
@@ -204,7 +209,7 @@ const T = {
     pickVideo: "Choose a video", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
     findingRallies: "Finding rallies… (a few minutes, depending on length)",
     pickRally: "Pick a rally your team scored", pickRallyHint: "The AI can be wrong. You can pick any candidate.",
-    rally: "Rally", notRally: "Not a rally", unsure: "Unsure", done: "Done", makeFromRally: "Use this rally", open: "Open",
+    preview: "Watch scene", rally: "Rally", notRally: "Not a rally", unsure: "Unsure", done: "Done", makeFromRally: "Use this rally", open: "Open",
     reelTitle: "Combine finished scenes", reelHint: "Joins the moments around each point into one video. No AI cost.",
     makeReel: "Combine into one", reelBusy: "Combining…", pickOne: "Pick at least one scene", scoreAt: "Point at {t}",
     tapTitle: "Tap yourself at the scoring moment", preparing: "Finding the scoring moment… (about a minute)", tapHint: "This is the moment the point was scored. Tap your body to follow you.",
@@ -306,7 +311,19 @@ function renderRallies(s) {
   list.dataset.key = key;
   list.replaceChildren(...s.rallies.map((r) => {
     const scene = s.scenes[String(r.index)];
-    const card = document.createElement("div"); card.className = "card";
+    const card = document.createElement("div"); card.className = "card rally";
+    // 장면 사진. 누르면 그 구간 미리보기를 카드 안에서 재생한다(시간만으로는 어떤 장면인지 모른다)
+    const thumb = document.createElement("button"); thumb.className = "thumb"; thumb.setAttribute("aria-label", t("preview"));
+    const img = document.createElement("img"); img.loading = "lazy"; img.alt = "";
+    img.src = `/jobs/${state.job}/rallies/${r.index}/thumb`;
+    const play = document.createElement("span"); play.textContent = "▶";
+    thumb.append(img, play);
+    thumb.onclick = () => {
+      const v = document.createElement("video");
+      v.src = `/jobs/${state.job}/rallies/${r.index}/preview`; v.controls = true; v.autoplay = true; v.playsInline = true;
+      thumb.replaceWith(v);
+    };
+    const info = document.createElement("div");
     const row = document.createElement("div"); row.className = "row";
     const time = document.createElement("strong"); time.textContent = `${fmt(r.start_sec)} ~ ${fmt(r.end_sec)}`;
     const tag = document.createElement("span");
@@ -325,7 +342,8 @@ function renderRallies(s) {
       }
       startPolling();
     };
-    card.append(row, reason, pick);
+    info.append(row, reason, pick);
+    card.append(thumb, info);
     return card;
   }));
 }
