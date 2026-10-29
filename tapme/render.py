@@ -217,6 +217,7 @@ def render_video(
     face_mosaic: bool = True,
     face_every: int = 1,
     on_progress: Callable[[int, int], None] | None = None,
+    keep_my_face: bool = True,
 ) -> Path:
     """subtitles = [(시작초, 끝초, 글자), ...]. 장면에 맞춰 바뀌는 해설 자막(score.subtitle_cues). 없으면 자막 없음.
     face_mosaic이면 '나'를 뺀 얼굴을 모자이크한다(src는 원본 클립). 얼굴은 face_every 프레임마다 찾고 사이는 이어 쓴다."""
@@ -255,7 +256,8 @@ def render_video(
                 if i % face_every == 0:
                     faces = anonymize.detect_faces(np.ascontiguousarray(rgb[..., ::-1]), detector, profile)  # 검출기는 BGR
                 mine = next((b for b in boxes[k] if b.object_id == me), None)
-                frame = Image.fromarray(mosaic_faces_except_me(rgb, faces, mine))
+                # keep_my_face=False: 품질 확인용(qa.py). AI가 회원 얼굴을 보지 않도록 '나'까지 가린다
+                frame = Image.fromarray(mosaic_faces_except_me(rgb, faces, mine if keep_my_face else None))
             img = compose(frame, boxes[k],
                           masks_by_sam.get(round(i * sam_fps / fps), {}), me, crops[k], (out_w, out_h),
                           text, privacy)

@@ -244,8 +244,10 @@ def _track_others(job: Job, client: Any, sam_clip: Path) -> Path:
     return out
 
 
-def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy: str, zoom: float,
-                  face_mosaic: bool, client: Any) -> Path:
+def scene_render_inputs(job: Job, scene: dict[str, Any], languages: list[str], privacy: str, client: Any) -> tuple[
+    Path, dict[int, list[track.Box]], dict[int, dict[str, Any]], list[tuple[float, float, str]]
+]:
+    """렌더할 원본 클립, SAM 프레임별 박스·마스크(클립 기준), 자막. 렌더와 품질 확인(qa.py)이 같이 쓴다."""
     sam_clip = Path(scene["sam_clip"])
     if not scene.get("clip_is_original"):  # 10/29 이전 장면은 흐림본으로 잘라 둬서 '나'의 얼굴도 가려져 있다
         start, end = scene["clip"]
@@ -262,7 +264,13 @@ def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy
     masks = {k - f0: v for k, v in masks.items() if k >= f0}
     cues = score.subtitle_cues(scene.get("commentary"), languages, offset=scene["clip"][0] - scene["window"][0],
                                duration=scene["clip"][1] - scene["clip"][0])
-    out = render.render_video(Path(scene["clip_video"]), sam_clip.parent / "highlight.mp4", by, masks,
+    return Path(scene["clip_video"]), by, masks, cues
+
+
+def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy: str, zoom: float,
+                  face_mosaic: bool, client: Any) -> Path:
+    src, by, masks, cues = scene_render_inputs(job, scene, languages, privacy, client)
+    out = render.render_video(src, Path(scene["sam_clip"]).parent / "highlight.mp4", by, masks,
                               track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy, face_mosaic,
                               on_progress=lambda d, n: job.step("render", d, n))
     job.progress = {}
