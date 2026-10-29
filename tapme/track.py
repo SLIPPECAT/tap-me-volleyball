@@ -54,10 +54,14 @@ def parse(wire_text: str) -> VideoSegmentationResult:
 TAPPED_ID = "0"  # 점 프롬프트로 추적한 '나'의 object_id
 
 
-def tap_prompt(size: tuple[int, int], x: float, y: float, frame: int = 0) -> str:
-    """탭한 점을 그 선수의 표시로 주는 SAM 프롬프트. SAM은 그 한 사람만 따라간다."""
-    point = PromptPoint(x=round(x), y=round(y), label="positive")
-    return build_object_prompt(size=size, objects=[PromptObject(id=TAPPED_ID, prompts=[FramePrompt(frame=frame, points=[point])])])
+def tap_prompt(size: tuple[int, int], taps: list[tuple[int, float, float]]) -> str:
+    """탭한 점들을 한 선수의 표시로 주는 SAM 프롬프트. taps = [(프레임, x, y), ...].
+
+    점이 하나면 그 선수가 화면 밖에 나갔다 들어올 때 비슷한 선수(같은 색 유니폼)에게 붙었다(실험 H-24).
+    여러 장면에서 탭하면 다시 들어온 뒤에도 같은 사람을 잡게 한다(H-25).
+    """
+    prompts = [FramePrompt(frame=f, points=[PromptPoint(x=round(x), y=round(y), label="positive")]) for f, x, y in taps]
+    return build_object_prompt(size=size, objects=[PromptObject(id=TAPPED_ID, prompts=prompts)])
 
 
 def track_players(client: Any, clip: Path, concept: str = CONCEPT) -> tuple[str, dict[str, Any], float]:

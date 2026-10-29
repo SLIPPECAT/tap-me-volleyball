@@ -61,4 +61,9 @@ def test_track_players_streams_concept_prompt(tmp_path: Path) -> None:
 
 
 def test_tap_prompt_marks_the_tapped_player() -> None:
-    assert track.tap_prompt((1080, 1920), 958.4, 1047.6) == "<0f>0<|point;x=958;y=1048;w=1080;h=1920|>"
+    assert track.tap_prompt((1080, 1920), [(0, 958.4, 1047.6)]) == "<0f>0<|point;x=958;y=1048;w=1080;h=1920|>"
+
+
+def test_tap_prompt_puts_taps_from_several_frames_on_one_player() -> None:
+    p = track.tap_prompt((1080, 1920), [(0, 958, 1048), (55, 940, 1060)])
+    assert "<0f>0<|point;x=958;y=1048" in p and "<55f>0<|point;x=940;y=1060" in p
