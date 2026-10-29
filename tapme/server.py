@@ -34,6 +34,8 @@ class RenderOptions(BaseModel):
     # 자막은 기본으로 끈다(10/29 사용자: 자막이 꼭 필요하진 않음). 언어를 고르면 해설 자막이 켜진다
     languages: list[str] = Field(default_factory=list)
     role: str = Field(default="", description="'나'의 역할(선택): '', score, assist, defense")
+    # 결과 영상에서 '나'를 뺀 얼굴 모자이크(기본 켬). Meta로 보내는 클립은 이 값과 상관없이 늘 흐림본이다
+    face_mosaic: bool = True
     privacy: str = render.DEFAULT_PRIVACY
     zoom: float = render.DEFAULT_ZOOM
 
@@ -201,7 +203,7 @@ def highlight(job_id: str, index: int, req: TapRequest, background: BackgroundTa
     if not scene or scene.get("status") not in ("awaiting_tap", "done"):
         raise HTTPException(409, "먼저 prepare로 탭할 장면을 만든다")
     background.add_task(_run, job_id, jobs.make_highlight, index, req.taps(), req.team, req.languages, req.role,
-                        req.privacy, req.zoom, client_factory())
+                        req.privacy, req.zoom, client_factory(), req.face_mosaic)
     return {"status": "rendering"}
 
 
@@ -212,7 +214,7 @@ def rerender(job_id: str, index: int, req: RenderOptions, background: Background
         raise HTTPException(409, "하이라이트를 먼저 만든다")
     # 자막을 처음 켜거나 역할을 바꾸면 해설(Muse), '몸 실루엣'을 처음 고르면 다른 선수 추적(SAM)이 한 번 필요하다
     background.add_task(_run, job_id, jobs.rerender, index, req.languages, req.role, req.privacy, req.zoom,
-                        client_factory())
+                        client_factory(), req.face_mosaic)
     return {"status": "rendering"}
 
 

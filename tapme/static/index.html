@@ -168,6 +168,7 @@
         <option value="defense" data-t="roleDefense"></option>
       </select></div>
   </div>
+  <div class="field"><label class="switch"><input type="checkbox" class="face-mosaic" checked> <span data-t="faceMosaic"></span></label></div>
   <div class="opts">
     <div class="field"><label data-t="privacy"></label>
       <select class="privacy">
@@ -186,7 +187,7 @@
 <script>
 const T = {
   ko: {
-    uploadIntro: "정모 경기 영상을 올리면 랠리를 찾아 드려요. 다른 회원 얼굴은 AI로 보내기 전에 모자이크합니다.",
+    uploadIntro: "정모 경기 영상을 올리면 랠리를 찾아 드려요. AI로 보내는 장면은 늘 얼굴을 흐린 뒤 보냅니다. 결과 영상의 모자이크는 직접 고를 수 있어요.",
     captureTip: "팁: 폰을 삼각대나 난간에 고정하고 코트 전체가 보이게 찍은 영상이 가장 잘 돼요. 공을 따라 카메라를 움직이면 화면 밖으로 나간 나를 놓칠 수 있어요.",
     pickVideo: "영상 고르기", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
     findingRallies: "랠리를 찾는 중… (영상 길이에 따라 몇 분)",
@@ -200,12 +201,12 @@ const T = {
     teamLabel: "우리 팀 이름 (자막에 들어가요)", teamPh: "예: 검정", ourTeam: "우리 팀", make: "하이라이트 만들기", otherRally: "다른 랠리 고르기",
     resultTitle: "내 하이라이트", commentary: "해설: {c}", rerenderBusy: "다시 만드는 중…", share: "공유", save: "저장",
     changeOptions: "옵션 바꾸기", rerenderHint: "대부분 AI 비용 없이 다시 만들어요. 자막을 처음 켜거나 역할을 바꿀 때, 몸 실루엣을 처음 고를 때만 약 $0.01씩 들어요.", rerender: "다시 만들기",
-    subsOn: "자막 넣기 (중계 해설처럼)", subLangs: "자막 언어", role: "이 득점에서 내 역할 (선택)",
+    faceMosaic: "다른 회원 얼굴 모자이크 (내 얼굴은 그대로)", subsOn: "자막 넣기 (중계 해설처럼)", subLangs: "자막 언어", role: "이 득점에서 내 역할 (선택)",
     roleNone: "고르지 않음", roleScore: "내가 직접 득점", roleAssist: "연결 (리시브·토스)", roleDefense: "수비로 살림", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대",
     spent: "이 작업에 쓴 AI 비용 ${u}", reqFail: "요청 실패 ({c})",
   },
   ja: {
-    uploadIntro: "練習試合の動画をアップすると、ラリーを見つけます。ほかのメンバーの顔はAIに送る前にモザイクをかけます。",
+    uploadIntro: "練習試合の動画をアップすると、ラリーを見つけます。AIに送るシーンは必ず顔をぼかしてから送ります。完成動画のモザイクは自分で選べます。",
     captureTip: "ヒント：スマホを三脚や手すりに固定して、コート全体が映るように撮った動画がいちばんうまくいきます。ボールを追ってカメラを動かすと、画面の外に出た自分を見失うことがあります。",
     pickVideo: "動画を選ぶ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
     findingRallies: "ラリーを探しています…（動画の長さにより数分）",
@@ -219,12 +220,12 @@ const T = {
     teamLabel: "自分のチーム名（字幕に入ります）", teamPh: "例：黒", ourTeam: "自分のチーム", make: "ハイライトを作る", otherRally: "ほかのラリーを選ぶ",
     resultTitle: "自分のハイライト", commentary: "実況：{c}", rerenderBusy: "作り直しています…", share: "共有", save: "保存",
     changeOptions: "オプションを変える", rerenderHint: "ほとんどAIの費用なしで作り直します。字幕を初めて入れる・役割を変える・体のシルエットを初めて選ぶときだけ約$0.01ずつかかります。", rerender: "作り直す",
-    subsOn: "字幕を入れる（実況風）", subLangs: "字幕の言語", role: "この得点での自分の役割（任意）",
+    faceMosaic: "ほかのメンバーの顔にモザイク（自分の顔はそのまま）", subsOn: "字幕を入れる（実況風）", subLangs: "字幕の言語", role: "この得点での自分の役割（任意）",
     roleNone: "選ばない", roleScore: "自分で得点", roleAssist: "つなぎ（レシーブ・トス）", roleDefense: "守備でつないだ", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大",
     spent: "この作業のAI費用 ${u}", reqFail: "リクエスト失敗 ({c})",
   },
   en: {
-    uploadIntro: "Upload a match video and we'll find the rallies. Other members' faces are pixelated before anything goes to the AI.",
+    uploadIntro: "Upload a match video and we'll find the rallies. Anything sent to the AI is always face-blurred first. You choose whether the final video pixelates faces.",
     captureTip: "Tip: works best when the phone is fixed on a tripod or railing with the whole court in view. If the camera follows the ball, it can lose you when you leave the frame.",
     pickVideo: "Choose a video", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
     findingRallies: "Finding rallies… (a few minutes, depending on length)",
@@ -238,7 +239,7 @@ const T = {
     teamLabel: "Your team name (shown in subtitles)", teamPh: "e.g. Black", ourTeam: "Our team", make: "Make highlight", otherRally: "Pick another rally",
     resultTitle: "Your highlight", commentary: "Commentary: {c}", rerenderBusy: "Re-rendering…", share: "Share", save: "Save",
     changeOptions: "Change options", rerenderHint: "Re-rendering is mostly free. About $0.01 only when you first turn on subtitles, change your role, or first pick body silhouettes.", rerender: "Re-render",
-    subsOn: "Add subtitles (like live commentary)", subLangs: "Subtitle languages", role: "My role in this point (optional)",
+    faceMosaic: "Pixelate other members' faces (yours stays clear)", subsOn: "Add subtitles (like live commentary)", subLangs: "Subtitle languages", role: "My role in this point (optional)",
     roleNone: "Don't say", roleScore: "I scored it", roleAssist: "Set it up (pass/set)", roleDefense: "Saved it on defense", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom",
     spent: "AI cost for this job ${u}", reqFail: "Request failed ({c})",
   },
@@ -286,6 +287,7 @@ function readOptions(box) {
     role: on ? box.querySelector(".role").value : "",
     privacy: box.querySelector(".privacy").value,
     zoom: parseFloat(box.querySelector(".zoom").value),
+    face_mosaic: box.querySelector(".face-mosaic").checked,
   };
 }
 function mountOptions(boxId, o) {
@@ -301,6 +303,7 @@ function mountOptions(boxId, o) {
   if (o) {
     box.querySelector(".privacy").value = o.privacy; box.querySelector(".zoom").value = String(o.zoom);
     box.querySelector(".role").value = o.role || "";
+    box.querySelector(".face-mosaic").checked = o.face_mosaic !== false;
   }
 }
 

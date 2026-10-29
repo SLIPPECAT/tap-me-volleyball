@@ -87,3 +87,31 @@ def test_background_mode_blurs_lighter_than_silhouette() -> None:
     # 10/29 사용자 테스트: '나 빼고 전부'가 반지름 14면 경기가 안 보였다
     assert render.BACKGROUND_BLUR_RADIUS < render.SILHOUETTE_BLUR_RADIUS
     assert render.BACKGROUND_BLUR_RADIUS == 6
+
+
+def test_my_face_stays_clear_and_others_are_mosaicked() -> None:
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    frame = rng.integers(0, 255, (200, 300, 3), dtype=np.uint8)
+    me = Box("me", 180, 20, 260, 190)
+    faces = [(200, 30, 30, 30), (40, 30, 30, 30)]  # 첫째는 '나'의 박스 안, 둘째는 다른 회원
+    out = render.mosaic_faces_except_me(frame, faces, me)
+    assert np.array_equal(out[30:60, 200:230], frame[30:60, 200:230])
+    assert not np.array_equal(out[30:60, 40:70], frame[30:60, 40:70])
+    # '나'를 못 잡은 프레임은 모든 얼굴을 가린다
+    assert not np.array_equal(render.mosaic_faces_except_me(frame, faces, None)[30:60, 200:230], frame[30:60, 200:230])
+
+
+def test_face_mosaic_off_skips_face_detection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tapme import anonymize
+
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=0.5",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
+    calls: list = []
+    monkeypatch.setattr(anonymize, "detect_faces", lambda *a: calls.append(1) or [])
+    render.render_video(src, tmp_path / "a.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=False)
+    assert calls == []
+    render.render_video(src, tmp_path / "b.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=True)
+    assert len(calls) == 5  # 0.5초 × 10fps

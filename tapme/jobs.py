@@ -97,11 +97,16 @@ def load_job(job_id: str) -> Job:
     return Job(**json.loads(path.read_text()))
 
 
-def _cut_blurred(video: Path, start: float, duration: float, out: Path, fps: int | None) -> Path:
-    raw = out.with_name(out.stem + "_raw.mp4")
+def _cut(video: Path, start: float, duration: float, out: Path, fps: int | None) -> Path:
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{start:.2f}", "-i", str(video), "-t", f"{duration:.2f}"]
     cmd += ["-r", str(fps)] if fps else []
-    subprocess.run([*cmd, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(raw)], check=True)
+    subprocess.run([*cmd, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(out)], check=True)
+    return out
+
+
+def _cut_blurred(video: Path, start: float, duration: float, out: Path, fps: int | None) -> Path:
+    """SAM·Muse로 보낼 클립. 얼굴을 흐리고, 얼굴이 그대로인 잘린 사본은 남기지 않는다."""
+    raw = _cut(video, start, duration, out.with_name(out.stem + "_raw.mp4"), fps)
     anonymize.anonymize_video(raw, out)
     raw.unlink()
     return out
@@ -218,8 +223,12 @@ def _track_others(job: Job, client: Any, sam_clip: Path) -> Path:
 
 
 def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy: str, zoom: float,
-                  client: Any) -> Path:
+                  face_mosaic: bool, client: Any) -> Path:
     sam_clip = Path(scene["sam_clip"])
+    if not scene.get("clip_is_original"):  # 10/29 이전 장면은 흐림본으로 잘라 둬서 '나'의 얼굴도 가려져 있다
+        start, end = scene["clip"]
+        scene["clip_video"] = str(_cut(Path(job.video), start, end - start, sam_clip.parent / "clip.mp4", None))
+        scene["clip_is_original"] = True
     me = track.parse((sam_clip.parent / "me_wire.txt").read_text())
     others = track.parse(_track_others(job, client, sam_clip).read_text()) if privacy == "silhouette" else None
     by, masks = track.merge_me_and_others(me, others)
@@ -232,7 +241,7 @@ def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy
     cues = score.subtitle_cues(scene.get("commentary"), languages, offset=scene["clip"][0] - scene["window"][0],
                                duration=scene["clip"][1] - scene["clip"][0])
     return render.render_video(Path(scene["clip_video"]), sam_clip.parent / "highlight.mp4", by, masks,
-                               track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy)
+                               track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy, face_mosaic)
 
 
 def _ensure_commentary(job: Job, scene: dict[str, Any], languages: list[str], role: str, client: Any) -> None:
@@ -254,7 +263,7 @@ def _ensure_commentary(job: Job, scene: dict[str, Any], languages: list[str], ro
 
 def make_highlight(
     job: Job, index: int, taps: list[tuple[str, float, float]], team_label: str,
-    languages: list[str], role: str, privacy: str, zoom: float, client: Any,
+    languages: list[str], role: str, privacy: str, zoom: float, client: Any, face_mosaic: bool = True,
 ) -> dict[str, Any]:
     """taps = [(장면 종류, x, y) 또는 (장면 종류, 고른 선수 번호), ...]. 장면 종류는 TAP_KINDS. 득점 순간은 꼭 있어야 한다.
     languages가 비면 자막 없음(Muse 해설을 묻지 않는다). role은 score.ROLE_TEXT의 키(선택)."""
@@ -293,27 +302,28 @@ def make_highlight(
     win_start, win_end = scene["window"]
     clip_start = max(win_start, min(win_start + span[0] / fps, scene["score_sec"] - CLIP_MIN_BEFORE_SEC))
     clip_end = min(win_end, max(win_start + (span[1] + 1) / fps, scene["score_sec"] + CLIP_MIN_AFTER_SEC))
-    clip_video = _cut_blurred(Path(job.video), clip_start, clip_end - clip_start, sam_clip.parent / "clip_blur.mp4", None)
+    # 결과 영상은 원본에서 자르고(맥 안에서만 씀), 렌더할 때 '나'를 뺀 얼굴만 모자이크한다(선택)
+    clip_video = _cut(Path(job.video), clip_start, clip_end - clip_start, sam_clip.parent / "clip.mp4", None)
     scene.update(taps=[list(t) for t in taps], span_frames=list(span),
-                 clip=[round(clip_start, 2), round(clip_end, 2)], clip_video=str(clip_video))
-    out = _render_scene(job, scene, languages, privacy, zoom, client)
-    scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom},
-                 video=str(out))
+                 clip=[round(clip_start, 2), round(clip_end, 2)], clip_video=str(clip_video), clip_is_original=True)
+    out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client)
+    scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom,
+                                         "face_mosaic": face_mosaic}, video=str(out))
     job.save()
     return scene
 
 
 def rerender(job: Job, index: int, languages: list[str], role: str, privacy: str, zoom: float,
-             client: Any = None) -> dict[str, Any]:
+             client: Any = None, face_mosaic: bool = True) -> dict[str, Any]:
     """자막·가리기·확대만 바꿔 다시 렌더. 저장해 둔 SAM 결과와 해설을 써서 API 비용이 없다.
     자막을 처음 켜거나 역할을 바꾸면 해설을, '몸 실루엣'을 처음 고르면 다른 선수 추적을 한 번 부른다."""
     scene = job.scenes[str(index)]
     scene["status"] = "rendering"
     job.save()
     _ensure_commentary(job, scene, languages, role, client)
-    out = _render_scene(job, scene, languages, privacy, zoom, client)
-    scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom},
-                 video=str(out))
+    out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client)
+    scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom,
+                                         "face_mosaic": face_mosaic}, video=str(out))
     job.save()
     return scene
 

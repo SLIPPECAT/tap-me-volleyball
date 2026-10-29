@@ -28,6 +28,8 @@ def job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> jobs.Job:
         return out
 
     monkeypatch.setattr(jobs, "_cut_blurred", fake_cut)
+    # 결과 영상용 클립은 흐리지 않고 원본에서 자른다(얼굴은 렌더할 때 '나'만 빼고 가림)
+    monkeypatch.setattr(jobs, "_cut", fake_cut)
     # 탭할 장면의 선수 찾기(SAM 사진): 오른쪽·왼쪽 선수 둘
     monkeypatch.setattr(track, "detect_players", lambda c, img: [track.Box("7", 211, 228, 271, 255),
                                                                  track.Box("2", 155, 228, 203, 255)])
@@ -95,6 +97,7 @@ def test_tap_sends_points_from_both_scenes_and_keeps_visible_span(job: jobs.Job,
     # '나'는 SAM 프레임 0·1(5.5~5.7초)에만 있다. 영상은 그 구간과 최소 득점 4초 전~2초 뒤(8.5~14.5초)를 모두 담는다
     assert scene["span_frames"] == [0, 1] and scene["clip"] == [5.5, 14.5]
     assert scene["status"] == "done" and Path(scene["video"]).exists()
+    assert scene["clip_is_original"] and scene["options"]["face_mosaic"] is True
 
 
 def test_tap_must_include_the_score_scene(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -126,7 +129,10 @@ def test_rerender_pays_only_when_something_new_is_needed(job: jobs.Job, monkeypa
     scene = jobs.rerender(job, 0, ["ko"], "defense", "silhouette", 2.0)  # 다른 선수 추적을 처음 한 번
     jobs.rerender(job, 0, ["en"], "defense", "silhouette", 1.5)  # 저장해 둔 것을 다시 씀
     assert calls[1:] == ["muse:assist", "muse:defense", "volleyball player"]
-    assert scene["options"] == {"languages": ["en"], "role": "defense", "privacy": "silhouette", "zoom": 1.5}
+    assert scene["options"] == {"languages": ["en"], "role": "defense", "privacy": "silhouette", "zoom": 1.5,
+                                "face_mosaic": True}
+    scene = jobs.rerender(job, 0, ["en"], "defense", "face", 1.5, face_mosaic=False)  # 모자이크 끄기도 비용 없음
+    assert scene["options"]["face_mosaic"] is False and len(calls) == 4
 
 
 def test_load_job_rejects_path_tricks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -3,8 +3,11 @@
 SAM은 5fps로만 돌리고(비용), 박스를 프레임 사이에 직선으로 이어 원본 fps로 렌더한다.
 실험(실험 레포 H-18): 보간 오차 중앙값 6px, 2배 확대에서 '나'가 화면 높이의 21.5%.
 
+얼굴 모자이크(선택, 기본 켬): 입력은 원본 클립이고, 프레임마다 얼굴을 찾아 '나'의 박스 안 얼굴만 빼고 모자이크한다.
+'나'를 못 잡은 프레임은 모든 얼굴을 가린다.
+
 가리기 방식(사용자가 고른다):
-  face        입력 흐림본의 얼굴 모자이크만. 경기 흐름이 가장 잘 보인다 (기본)
+  face        얼굴 모자이크만. 경기 흐름이 가장 잘 보인다 (기본)
   silhouette  SAM이 찾은 다른 선수 몸도 흐림. SAM이 놓치거나 어긋나면 빈틈이 생긴다 (H-18)
   background  '나'만 빼고 전부 흐림. 빈틈은 없지만 공·네트까지 지워진다 (H-20)
 """
@@ -15,9 +18,11 @@ import json
 import subprocess
 from pathlib import Path
 
+import numpy as np
 from meta_sam_parser import SegmentationMaskRecord, decode_mask_to_raster
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from tapme import anonymize
 from tapme.track import Box
 
 PRIVACY_MODES = ("face", "silhouette", "background")
@@ -175,6 +180,16 @@ def compose(
     return out
 
 
+def mosaic_faces_except_me(frame: np.ndarray, faces: list[tuple[int, int, int, int]], me: Box | None) -> np.ndarray:
+    """얼굴 박스 (x, y, w, h) 중 가운데가 '나'의 박스 안에 있는 것만 빼고 모자이크한다."""
+    def mine(face: tuple[int, int, int, int]) -> bool:
+        x, y, w, h = face
+        cx, cy = x + w / 2, y + h / 2
+        return me is not None and me.left <= cx <= me.right and me.top <= cy <= me.bottom
+
+    return anonymize.pixelate_boxes(frame, [f for f in faces if not mine(f)])
+
+
 def probe(video: Path) -> tuple[int, int, float, int]:
     """(너비, 높이, fps, 프레임 수). 회전 정보가 있으면 화면에 보이는 방향 기준."""
     info = json.loads(subprocess.check_output(
@@ -198,8 +213,13 @@ def render_video(
     subtitles: list[tuple[float, float, str]] | None = None,
     zoom: float = DEFAULT_ZOOM,
     privacy: str = DEFAULT_PRIVACY,
+    face_mosaic: bool = True,
 ) -> Path:
-    """subtitles = [(시작초, 끝초, 글자), ...]. 장면에 맞춰 바뀌는 해설 자막(score.subtitle_cues). 없으면 자막 없음."""
+    """subtitles = [(시작초, 끝초, 글자), ...]. 장면에 맞춰 바뀌는 해설 자막(score.subtitle_cues). 없으면 자막 없음.
+    face_mosaic이면 '나'를 뺀 얼굴을 모자이크한다(src는 원본 클립)."""
+    detector = profile = None
+    if face_mosaic:
+        detector, profile = anonymize.load_detector(), anonymize.load_profile_detector()
     width, height, fps, n = probe(src)
     out_h = height // 2 * 2
     out_w = min(width, int(out_h * 9 / 16)) // 2 * 2
@@ -224,7 +244,13 @@ def render_video(
             k = min(i, n - 1)
             now = i / fps
             text = next((txt for start, end, txt in subtitles or [] if start <= now < end), "")
-            img = compose(Image.frombytes("RGB", (width, height), buf), boxes[k],
+            frame = Image.frombytes("RGB", (width, height), buf)
+            if face_mosaic:
+                rgb = np.asarray(frame)
+                faces = anonymize.detect_faces(np.ascontiguousarray(rgb[..., ::-1]), detector, profile)  # 검출기는 BGR
+                mine = next((b for b in boxes[k] if b.object_id == me), None)
+                frame = Image.fromarray(mosaic_faces_except_me(rgb, faces, mine))
+            img = compose(frame, boxes[k],
                           masks_by_sam.get(round(i * sam_fps / fps), {}), me, crops[k], (out_w, out_h),
                           text, privacy)
             enc.stdin.write(img.tobytes())
