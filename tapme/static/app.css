@@ -100,6 +100,13 @@ summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2
 .tag.unsure { color: var(--color-accent-2); }
 .tag.done { color: var(--color-ink); background: var(--color-paper-3); }
 #scan-note, #unread, #no-rallies { border-left: 2px solid var(--color-accent-2); }
+.tag.queued, .tag.rendering { color: var(--color-accent-2); }
+.tag.failed { color: var(--color-error); }
+.batch-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-md); }
+#batch-status { font-family: var(--font-outlier); font-variant-numeric: tabular-nums; }
+.pick-check { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: 44px; cursor: pointer; }
+.pick-check:has(input:disabled) { color: var(--color-muted-2); cursor: not-allowed; }
+.batch-go { position: sticky; bottom: 0; z-index: var(--z-sticky); padding: var(--space-sm) 0 calc(var(--space-sm) + env(safe-area-inset-bottom)); background: var(--color-paper); border-top: var(--rule-hair) solid var(--color-rule); }
 #reel-box { display: grid; gap: var(--space-sm); margin-top: var(--space-lg); padding-top: var(--space-lg); border-top: var(--rule-hair) solid var(--color-rule); }
 #reel-pick label { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: 44px; margin-right: var(--space-md); }
 

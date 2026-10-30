@@ -146,6 +146,24 @@ def _run_scan(job_id: str, client: Any) -> None:
     job.save()
 
 
+def _run_highlight(job_id: str, index: int, *args: Any) -> None:
+    """하이라이트는 장면 준비 줄(_step_lock)과 따로 돈다. 여러 장면을 예약하면 추적은 겹치고 렌더만
+    jobs.RENDER_LOCK으로 하나씩. 실패하면 그 장면을 'failed'로 남겨 화면이 '만드는 중'에 멈추지 않게 한다."""
+    job = jobs.load_job(job_id)
+    try:
+        jobs.make_highlight(job, index, *args)
+        job.error = None
+    except (jobs.BudgetExceeded, jobs.TapMissed) as e:
+        job.error = str(e)
+    except Exception as e:  # noqa: BLE001 - 서버가 죽지 않고 화면에 알린다
+        traceback.print_exc()
+        job.error = f"처리 중 오류: {e}"
+    scene = job.scenes.get(str(index), {})
+    if job.error and scene.get("status") in ("queued", "rendering"):
+        scene["status"] = "failed"
+    job.save()
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
@@ -249,12 +267,18 @@ def player_card(job_id: str, index: int, which: str = "score", n: int = 0) -> Fi
 
 @app.post("/jobs/{job_id}/rallies/{index}/highlight")
 def highlight(job_id: str, index: int, req: TapRequest, background: BackgroundTasks) -> dict[str, str]:
-    scene = _job(job_id).scenes.get(str(index))
-    if not scene or scene.get("status") not in ("awaiting_tap", "done"):
-        raise HTTPException(409, "먼저 prepare로 탭할 장면을 만든다")
-    background.add_task(_run, job_id, jobs.make_highlight, index, [t.as_tuple() for t in req.taps], req.team, req.languages, req.role,
+    job = _job(job_id)
+    scene = job.scenes.get(str(index))
+    if not scene or scene.get("status") not in ("awaiting_tap", "done", "failed"):
+        raise HTTPException(409, "먼저 prepare로 탭할 장면을 만든다(이미 만드는 중이면 기다린다)")
+    active = sum(sc.get("status") in ("queued", "rendering") for sc in job.scenes.values())
+    if active >= jobs.MAX_ACTIVE_SCENES:
+        raise HTTPException(429, f"한 번에 {jobs.MAX_ACTIVE_SCENES}개까지 만들 수 있어요. 앞의 장면이 끝나면 다시 예약해 주세요")
+    scene["status"] = "queued"  # 예약됨. 여러 장면을 이어서 예약할 수 있다(일괄 만들기)
+    job.save()
+    background.add_task(_run_highlight, job_id, index, [t.as_tuple() for t in req.taps], req.team, req.languages, req.role,
                         req.privacy, req.zoom, client_factory(), req.face_mosaic, req.fps)
-    return {"status": "rendering"}
+    return {"status": "queued"}
 
 
 @app.post("/jobs/{job_id}/rallies/{index}/rerender")

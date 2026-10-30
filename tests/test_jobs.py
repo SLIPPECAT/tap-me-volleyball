@@ -418,3 +418,61 @@ def test_readers_never_see_a_half_written_job_file(job: jobs.Job) -> None:
     stop.set()
     t.join()
     assert errors == []
+
+
+def test_renders_run_one_at_a_time_while_tracking_overlaps(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/30 일괄 만들기: 렌더(CPU)는 하나씩, 그 사이 다른 장면의 추적(네트워크)은 겹친다
+    import threading
+    import time
+
+    from tapme import render
+
+    running, peak = [0], [0]
+    lock = threading.Lock()
+
+    def fake_render(*a, **k):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        time.sleep(0.05)
+        with lock:
+            running[0] -= 1
+        return Path(a[1])
+
+    monkeypatch.setattr(render, "render_video", fake_render)
+    monkeypatch.setattr(jobs, "scene_render_inputs", lambda *a: (Path("src.mp4"), {}, {}, []))
+    scene = {"sam_clip": str(job.dir / "scene00" / "sam_blur.mp4"), "sam_fps": 10}
+    threads = [threading.Thread(target=jobs._render_scene, args=(job, scene, [], "face", 1.0, True, None)) for _ in range(3)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert peak[0] == 1
+
+
+def test_at_most_two_sam_trackings_run_at_once(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import time
+
+    running, peak = [0], [0]
+    lock = threading.Lock()
+
+    def fake_track(*a):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        time.sleep(0.05)
+        with lock:
+            running[0] -= 1
+
+    threads = []
+    for _ in range(4):
+        def go():
+            with jobs.TRACK_SLOTS:
+                fake_track()
+        threads.append(threading.Thread(target=go))
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert peak[0] == 2

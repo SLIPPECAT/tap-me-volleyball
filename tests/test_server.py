@@ -108,7 +108,11 @@ def _awaiting_tap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> str:
 def test_highlight_sends_taps_from_any_scenes(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     job_id = _awaiting_tap(client, monkeypatch)
     got: list = []
-    monkeypatch.setattr(jobs, "make_highlight", lambda job, i, taps, *a: got.append(taps))
+    def fake_make(job, i, taps, *a):
+        got.append(taps)
+        job.scenes[str(i)]["status"] = "done"
+
+    monkeypatch.setattr(jobs, "make_highlight", fake_make)
     url = f"/jobs/{job_id}/rallies/0/highlight"
     assert client.post(url, json={"taps": [{"which": "b2", "x": 1, "y": 2}], "team": "검정"}).status_code == 200
     assert client.post(url, json={"taps": [{"which": "score", "player": 2}, {"which": "start", "x": 3, "y": 4}],
@@ -193,3 +197,35 @@ def test_status_shows_scan_progress_while_finding_rallies(client: TestClient) ->
     job.status, job.scan = "finding_rallies", {"done": 30, "total": 84}
     job.save()
     assert client.get(f"/jobs/{job_id}").json()["scan"] == {"done": 30, "total": 84}
+
+
+def test_highlight_is_queued_and_a_failure_is_marked(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/30 일괄 만들기: 예약하면 바로 '대기', 만드는 중 다시 예약은 거절, 실패하면 '실패'로 남겨 화면이 멈추지 않게
+    job_id = _awaiting_tap(client, monkeypatch)
+    seen: list = []
+
+    def boom(job, i, *a):
+        seen.append(jobs.load_job(job.id).scenes[str(i)]["status"])
+        raise RuntimeError("SAM 연결 끊김")
+
+    monkeypatch.setattr(jobs, "make_highlight", boom)
+    url = f"/jobs/{job_id}/rallies/0/highlight"
+    assert client.post(url, json={"taps": [{"which": "score", "x": 1, "y": 2}], "team": "검정"}).json() == {"status": "queued"}
+    assert seen == ["queued"]
+    body = client.get(f"/jobs/{job_id}").json()
+    assert body["scenes"]["0"]["status"] == "failed" and "SAM" in body["error"]
+    # 실패한 장면은 다시 예약할 수 있다
+    monkeypatch.setattr(jobs, "make_highlight", lambda job, i, *a: job.scenes[str(i)].update(status="done"))
+    assert client.post(url, json={"taps": [{"which": "score", "x": 1, "y": 2}], "team": "검정"}).status_code == 200
+
+
+def test_one_job_queues_at_most_five_scenes(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/30 사용자 "제한 같은 걸 둬야": 한 작업에서 대기·만드는 중은 다섯 장면까지
+    job_id = _awaiting_tap(client, monkeypatch)
+    job = jobs.load_job(job_id)
+    for k in range(1, 6):
+        job.scenes[str(k)] = {"index": k, "status": "rendering" if k == 1 else "queued"}
+    job.save()
+    monkeypatch.setattr(jobs, "make_highlight", lambda *a: None)
+    r = client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"taps": [{"which": "score", "x": 1, "y": 2}], "team": "검정"})
+    assert r.status_code == 429 and "5" in r.json()["detail"]

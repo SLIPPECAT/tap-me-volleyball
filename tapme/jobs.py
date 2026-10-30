@@ -45,6 +45,13 @@ CLIP_MIN_AFTER_SEC = 4.0
 REEL_BEFORE_SEC = 5.0  # 모음 영상에는 장면마다 득점 5초 전~4초 뒤만. 3장면이면 약 27초
 REEL_AFTER_SEC = 4.0
 _lock = threading.Lock()
+# 렌더는 맥 CPU를 다 써서 한 번에 하나만(동시에 돌리면 서로 느려졌다, H-42). SAM 추적·해설(네트워크)은 여러 장면이 겹쳐도 된다.
+# 일괄 만들기에서 한 장면을 렌더하는 동안 다음 장면들의 추적이 끝나 있게 한다(10/30 사용자)
+RENDER_LOCK = threading.Lock()
+# 서버 제한(10/30 사용자 "제한 같은 걸 둬야"): SAM 추적은 동시에 둘까지(Meta API에 한꺼번에 몰리지 않게),
+# 한 작업에서 예약(대기·만드는 중)은 다섯 장면까지(한 사람이 줄을 오래 막지 않게)
+TRACK_SLOTS = threading.BoundedSemaphore(2)
+MAX_ACTIVE_SCENES = 5
 
 
 class BudgetExceeded(RuntimeError):
@@ -356,6 +363,12 @@ def scene_render_inputs(job: Job, scene: dict[str, Any], languages: list[str], p
 def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy: str, zoom: float,
                   face_mosaic: bool, client: Any, max_fps: int = 0) -> Path:
     src, by, masks, cues = scene_render_inputs(job, scene, languages, privacy, client)
+    with RENDER_LOCK:
+        return _render_locked(job, scene, src, by, masks, cues, zoom, privacy, face_mosaic, max_fps)
+
+
+def _render_locked(job: Job, scene: dict[str, Any], src: Path, by: Any, masks: Any, cues: Any, zoom: float, privacy: str,
+                   face_mosaic: bool, max_fps: int) -> Path:
     out = render.render_video(src, Path(scene["sam_clip"]).parent / "highlight.mp4", by, masks,
                               track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy, face_mosaic,
                               on_progress=lambda d, n: job.step("render", d, n), max_fps=max_fps)
@@ -406,7 +419,8 @@ def make_highlight(
             points.append((frame, track.Box(track.TAPPED_ID, *cards[tap[1]])))
         else:
             points.append((frame, tap[1], tap[2]))
-    wire, usage, _ = track.track_players(client, sam_clip, track.tap_prompt((w, h), points))
+    with TRACK_SLOTS:
+        wire, usage, _ = track.track_players(client, sam_clip, track.tap_prompt((w, h), points))
     job.spent_usd += track.estimate_usd(int(usage.get("video_frames_processed") or frames))
     (sam_clip.parent / "me_wire.txt").write_text(wire)  # 옵션만 바꿔 다시 렌더할 때 SAM을 또 부르지 않는다
     fps = scene["sam_fps"]

@@ -60,8 +60,13 @@
   <section id="s-rallies" hidden>
     <h2 data-t="pickRally"></h2>
     <p class="muted" data-t="pickRallyHint"></p>
+    <div class="batch-bar">
+      <button id="batch-toggle" data-t="batchToggle"></button>
+      <p class="muted" id="batch-status" aria-live="polite"></p>
+    </div>
     <p class="card muted" id="scan-note" aria-live="polite" hidden></p>
     <div id="rally-list"></div>
+    <div class="batch-go" id="batch-go" hidden><button class="primary" id="batch-start"></button></div>
     <p class="card muted" id="no-rallies" data-t="noRallies" hidden></p>
     <p class="card muted" id="unread" hidden></p>
     <div id="reel-box" hidden>
@@ -184,7 +189,7 @@ const T = {
     pickRally: "우리 팀이 득점한 랠리를 고르세요", pickRallyHint: "AI 판정은 틀릴 수 있어요. 어느 후보든 고를 수 있습니다.",
     unread: "AI가 이 구간은 읽지 못했어요. 여기 득점이 있었다면 목록에 없을 수 있어요: {r}",
     noRallies: "랠리를 찾지 못했어요. 득점 장면 앞뒤로 40초 이하만 잘라 다시 올려 주세요.",
-    preview: "장면 보기", rally: "랠리", notRally: "랠리 아님", unsure: "판정 불확실", done: "완성", makeFromRally: "이 랠리로 만들기", open: "열기",
+    preview: "장면 보기", batchToggle: "여러 랠리 한꺼번에", batchCancel: "한꺼번에 만들기 취소", batchStart: "고른 {n}개로 시작", batchMax: "한 번에 {m}개까지 고를 수 있어요", batchNext: "예약하고 다음 랠리 ({i}/{n})", batchLast: "예약하고 목록으로 ({i}/{n})", batchStatus: "만드는 중 {r}개, 대기 {q}개, 완성 {d}개", queued: "대기", making: "만드는 중", failed: "실패", queuedMsg: "만들 차례를 기다리는 중이에요. 화면을 닫아도 돼요.", pickThis: "이 랠리 고르기", rally: "랠리", notRally: "랠리 아님", unsure: "판정 불확실", done: "완성", makeFromRally: "이 랠리로 만들기", open: "열기",
     reelTitle: "완성된 장면 모아 보기", reelHint: "고른 장면을 득점 앞뒤만 잘라 한 편으로 이어요. AI 비용은 들지 않아요.",
     makeReel: "모아서 한 편 만들기", reelBusy: "모으는 중…", pickOne: "모을 장면을 하나 이상 고르세요", scoreAt: "{t} 득점",
     tapTitle: "내가 보이는 장면에서 나를 고르세요", preparing: "득점 장면을 찾는 중… (1분 안팎)", tapHint: "장면을 누르고 선수 카드에서 나를 고르세요(목록에 없으면 사진에서 내 몸을 탭). 득점 순간에 내가 안 보이면 다른 장면을 고르면 돼요. 여러 장면에서 고를수록 정확해요.",
@@ -211,7 +216,7 @@ const T = {
     pickRally: "自分のチームが得点したラリーを選んでください", pickRallyHint: "AIの判定は間違うことがあります。どの候補でも選べます。",
     unread: "AIがこの区間を読み取れませんでした。ここに得点があればリストにないかもしれません: {r}",
     noRallies: "ラリーが見つかりませんでした。得点シーンの前後40秒以内に切って、もう一度アップロードしてください。",
-    preview: "シーンを見る", rally: "ラリー", notRally: "ラリーではない", unsure: "判定があいまい", done: "完成", makeFromRally: "このラリーで作る", open: "開く",
+    preview: "シーンを見る", batchToggle: "複数のラリーをまとめて", batchCancel: "まとめて作るのをやめる", batchStart: "選んだ{n}件で始める", batchMax: "一度に{m}件まで選べます", batchNext: "予約して次のラリーへ（{i}/{n}）", batchLast: "予約して一覧へ（{i}/{n}）", batchStatus: "作成中{r}件、待機{q}件、完成{d}件", queued: "待機", making: "作成中", failed: "失敗", queuedMsg: "作る順番を待っています。画面を閉じても大丈夫です。", pickThis: "このラリーを選ぶ", rally: "ラリー", notRally: "ラリーではない", unsure: "判定があいまい", done: "完成", makeFromRally: "このラリーで作る", open: "開く",
     reelTitle: "完成したシーンをまとめる", reelHint: "選んだシーンの得点前後だけを切り出してつなげます。AIの費用はかかりません。",
     makeReel: "まとめて1本にする", reelBusy: "まとめています…", pickOne: "シーンを1つ以上選んでください", scoreAt: "{t} 得点",
     tapTitle: "自分が映っているシーンで自分を選んでください", preparing: "得点シーンを探しています…（1分ほど）", tapHint: "シーンを押して、選手カードから自分を選んでください（いなければ写真の自分をタップ）。得点の瞬間に映っていなければ別のシーンを選べます。複数のシーンで選ぶほど正確です。",
@@ -238,7 +243,7 @@ const T = {
     pickRally: "Pick a rally your team scored", pickRallyHint: "The AI can be wrong. You can pick any candidate.",
     unread: "The AI could not read these parts. Points there may be missing from the list: {r}",
     noRallies: "No rallies found. Trim the video to 40 seconds or less around the point and upload it again.",
-    preview: "Watch scene", rally: "Rally", notRally: "Not a rally", unsure: "Unsure", done: "Done", makeFromRally: "Use this rally", open: "Open",
+    preview: "Watch scene", batchToggle: "Several rallies at once", batchCancel: "Cancel making several", batchStart: "Start with {n} picked", batchMax: "You can pick up to {m} at a time", batchNext: "Queue and next rally ({i}/{n})", batchLast: "Queue and back to list ({i}/{n})", batchStatus: "{r} making, {q} waiting, {d} done", queued: "Waiting", making: "Making", failed: "Failed", queuedMsg: "Waiting for its turn. You can close this screen.", pickThis: "Pick this rally", rally: "Rally", notRally: "Not a rally", unsure: "Unsure", done: "Done", makeFromRally: "Use this rally", open: "Open",
     reelTitle: "Combine finished scenes", reelHint: "Joins the moments around each point into one video. No AI cost.",
     makeReel: "Combine into one", reelBusy: "Combining…", pickOne: "Pick at least one scene", scoreAt: "Point at {t}",
     tapTitle: "Pick yourself in a scene where you are visible", preparing: "Finding the scoring moment… (about a minute)", tapHint: "Open a scene and pick yourself from the player cards (or tap yourself in the photo). If you are not visible at the scoring moment, use another scene. Picking in more scenes is more accurate.",
@@ -256,7 +261,7 @@ const T = {
 const $ = (id) => document.getElementById(id);
 const KINDS = ["score", "b1", "b2", "b3", "start"];
 const KIND_LABEL = { score: "mScore", b1: "mB1", b2: "mB2", b3: "mB3", start: "mStart" };
-const state = { job: null, rally: null, taps: {}, tappers: {}, moment: "score", poll: null, last: null, lang: "ko", pending: null };
+const state = { job: null, rally: null, taps: {}, tappers: {}, moment: "score", poll: null, last: null, lang: "ko", pending: null, batchMode: false, picked: new Set(), batch: [], active: 0 };
 const anyTap = () => Object.values(state.taps).some(Boolean);
 const BASE_TITLE = document.title;
 // 기다리는 동안 정한 옵션(팀 이름·자막·가리기…). 이 폰에만 저장, 탭 화면에 미리 채운다
@@ -339,7 +344,7 @@ function startPolling() {
 function busyOf(s) {
   if (s.status === "uploaded" || s.status === "finding_rallies") return true;
   const sc = state.rally !== null && s.scenes[String(state.rally)];
-  if (sc && (sc.status === "preparing" || sc.status === "rendering")) return true;
+  if (sc && (sc.status === "preparing" || sc.status === "rendering" || sc.status === "queued")) return true;
   return Boolean(s.reel && s.reel.status === "rendering");
 }
 
@@ -380,14 +385,23 @@ $("copy-link").onclick = async () => {
 
 function render(s) {
   setError(s.error);
+  const active = Object.values(s.scenes).filter((x) => x.status === "queued" || x.status === "rendering").length;
+  if (state.active > 0 && active === 0 && !s.error) {
+    if (navigator.vibrate) navigator.vibrate(200);
+    if (document.hidden) document.title = "✓ " + BASE_TITLE;
+  }
+  state.active = active;
   renderWait(s);
   $("spent").textContent = t("spent", { u: s.spent_usd.toFixed(3) });
   if (state.rally === null) return renderRallies(s);
   const scene = s.scenes[String(state.rally)];
   if (!scene || scene.status === "preparing") {
     show("s-tap"); $("tap-status").textContent = s.error ? "" : t("preparing"); $("tap-box").hidden = true;
-  } else if (scene.status === "awaiting_tap") {
+  } else if (scene.status === "awaiting_tap" || scene.status === "failed") {
     show("s-tap"); renderTap();
+    $("make").textContent = batchLabel() || t("make");
+  } else if (scene.status === "queued") {
+    show("s-tap"); $("tap-status").textContent = t("queuedMsg"); $("tap-box").hidden = true;
   } else if (scene.status === "rendering") {
     if ($("s-result").hidden) { show("s-tap"); $("tap-status").textContent = t("rendering"); $("tap-box").hidden = true; }
     else { $("result-status").textContent = t("rerenderBusy"); }
@@ -411,7 +425,8 @@ function renderRallies(s) {
   $("unread").hidden = !unread.length;
   $("unread").textContent = t("unread", { r: unread.map(([a, b]) => `${fmt(a)}~${fmt(b)}`).join(", ") });
   const list = $("rally-list");
-  const key = `${state.job}|${state.lang}|${s.rallies.length}|${Object.entries(s.scenes).map(([k, v]) => k + v.status).join(",")}`;
+  renderBatchBar(s);
+  const key = `${state.job}|${state.lang}|${s.rallies.length}|${state.batchMode}|${Object.entries(s.scenes).map(([k, v]) => k + v.status).join(",")}`;
   if (list.dataset.key === key) return;
   list.dataset.key = key;
   // 찾는 도중 붙은 랠리는 번호 순서가 시간 순서와 다를 수 있어 시간 순으로 보여 준다
@@ -435,9 +450,10 @@ function renderRallies(s) {
     const row = document.createElement("div"); row.className = "row";
     const time = document.createElement("strong"); time.textContent = `${fmt(r.start_sec)} ~ ${fmt(r.end_sec)}`;
     const tag = document.createElement("span");
-    const kind = scene && scene.status === "done" ? "done" : r.uncertain ? "unsure" : r.is_rally ? "yes" : "no";
+    const st = scene && scene.status;
+    const kind = ["done", "queued", "rendering", "failed"].includes(st) ? st : r.uncertain ? "unsure" : r.is_rally ? "yes" : "no";
     tag.className = `tag ${kind}`;
-    tag.textContent = t({ done: "done", unsure: "unsure", yes: "rally", no: "notRally" }[kind]);
+    tag.textContent = t({ done: "done", queued: "queued", rendering: "making", failed: "failed", unsure: "unsure", yes: "rally", no: "notRally" }[kind]);
     row.append(time, tag);
     const reason = document.createElement("p"); reason.className = "muted"; reason.textContent = reasonText(r.reason);
     const pick = document.createElement("button"); pick.textContent = scene ? t("open") : t("makeFromRally");
@@ -451,10 +467,53 @@ function renderRallies(s) {
       }
       startPolling();
     };
-    info.append(row, reason, pick);
+    if (state.batchMode && !["done", "queued", "rendering"].includes(st)) {
+      const box = document.createElement("label"); box.className = "pick-check";
+      const cb = Object.assign(document.createElement("input"), { type: "checkbox", checked: state.picked.has(r.index) });
+      cb.onchange = () => { cb.checked ? state.picked.add(r.index) : state.picked.delete(r.index); renderBatchBar(state.last); };
+      box.append(cb, document.createTextNode(" " + t("pickThis")));
+      info.append(row, reason, box);
+    } else {
+      info.append(row, reason, pick);
+    }
     card.append(thumb, info);
     return card;
   }));
+}
+
+// 여러 랠리 한꺼번에(10/30 사용자): 고른 랠리마다 나를 탭해 예약하면 서버가 뒤에서 차례로 만든다(화면을 닫아도 됨)
+// 한 번에 예약은 BATCH_MAX개까지(서버 jobs.MAX_ACTIVE_SCENES와 같게). 이미 대기·만드는 중인 장면도 센다
+const BATCH_MAX = 5;
+function batchRoom(s) {
+  return BATCH_MAX - Object.values((s && s.scenes) || {}).filter((x) => x.status === "queued" || x.status === "rendering").length;
+}
+function renderBatchBar(s) {
+  $("batch-toggle").textContent = t(state.batchMode ? "batchCancel" : "batchToggle");
+  $("batch-go").hidden = !state.batchMode || state.picked.size === 0;
+  $("batch-start").textContent = t("batchStart", { n: state.picked.size });
+  // 다 찼으면 나머지 체크를 막고 이유를 보여 준다
+  const full = state.picked.size >= batchRoom(s);
+  document.querySelectorAll(".pick-check input").forEach((cb) => { cb.disabled = full && !cb.checked; });
+  const sc = Object.values((s && s.scenes) || {});
+  const r = sc.filter((x) => x.status === "rendering").length, q = sc.filter((x) => x.status === "queued").length;
+  const d = sc.filter((x) => x.status === "done").length;
+  $("batch-status").textContent = state.batchMode && full ? t("batchMax", { m: BATCH_MAX }) : r + q ? t("batchStatus", { r, q, d }) : "";
+}
+$("batch-toggle").onclick = () => { state.batchMode = !state.batchMode; state.picked.clear(); render(state.last); };
+$("batch-start").onclick = async () => {
+  const byTime = (i) => (state.last.rallies.find((r) => r.index === i) || {}).start_sec || 0;
+  state.batch = [...state.picked].sort((a, b) => byTime(a) - byTime(b));
+  state.batchMode = false; state.picked.clear();
+  // 고른 랠리를 모두 미리 준비해 둔다(서버가 하나씩 처리). 탭 화면은 첫 랠리부터
+  for (const i of state.batch) {
+    if (!state.last.scenes[String(i)]) await api(`/jobs/${state.job}/rallies/${i}/prepare`, { method: "POST" }).catch(() => {});
+  }
+  state.rally = state.batch[0]; setHash(); startPolling();
+};
+function batchLabel() {
+  const i = state.batch.indexOf(state.rally);
+  if (i < 0) return null;
+  return t(i === state.batch.length - 1 ? "batchLast" : "batchNext", { i: i + 1, n: state.batch.length });
 }
 
 function renderReel(s) {
@@ -600,7 +659,14 @@ $("make").onclick = async () => {
     .map(([which, v]) => (v.player !== undefined ? { which, player: v.player } : { which, x: v.x, y: v.y }));
   const body = { taps, team: $("team").value.trim() || t("ourTeam"), ...readOptions($("opts-tap")) };
   $("make").disabled = true;
-  try { await postJson(`/jobs/${state.job}/rallies/${state.rally}/highlight`, body); } catch (e) { setError(e.message); $("make").disabled = false; }
+  try { await postJson(`/jobs/${state.job}/rallies/${state.rally}/highlight`, body); } catch (e) { setError(e.message); $("make").disabled = false; return; }
+  const i = state.batch.indexOf(state.rally);
+  if (i >= 0) {  // 일괄: 예약만 하고 다음 랠리로(마지막이면 목록으로). 만들기는 서버가 뒤에서 한다
+    const next = state.batch[i + 1];
+    if (next === undefined) state.batch = [];
+    state.rally = next === undefined ? null : next;
+    $("make").disabled = false; setHash(); startPolling();
+  }
 };
 
 function renderResult(scene) {
