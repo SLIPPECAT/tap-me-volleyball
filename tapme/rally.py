@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 from dataclasses import asdict, dataclass
 from itertools import pairwise
@@ -92,6 +93,7 @@ def find_whistles(audio: np.ndarray, tonality_min: float = TONALITY_MIN) -> list
     return whistles
 
 
+CHUNK_SEC = 20.0  # 휘슬이 없으면 이 길이 안팎으로 고르게 잘라 화면으로 거른다(심판 없는 경기, H-32)
 EVENT_GAP_SEC = 2.0  # 이보다 붙은 휘슬은 한 사건(랠리 중 큰 소리가 몰려 잡히면 구간이 잘게 잘렸다, H-31)
 
 
@@ -103,6 +105,7 @@ def segments(whistles: list[Whistle], duration_sec: float | None = None) -> list
       넉넉히 잡으면 득점 뒤 세리머니가 랠리 끝 1초와 함께 들어가 "랠리"로 판정됐다(H-31). 같은 사건을 사이에 둔
       두 "랠리"는 rally_filter.merge_rallies가 잇는다
     - duration_sec을 주면 영상 처음·끝도 사건으로 둔다(랠리 도중 시작·끝난 영상, H-31)
+    - 그래도 후보가 없으면(휘슬 없는 경기) 영상을 약 CHUNK_SEC씩 고르게 나눈다(H-32)
     """
     events: list[list[float]] = []
     for w in whistles:
@@ -119,8 +122,13 @@ def segments(whistles: list[Whistle], duration_sec: float | None = None) -> list
             events.append([duration_sec, duration_sec])
         else:
             events[-1][1] = duration_sec
-    return [RallyCandidate(a[1], b[0]) for a, b in pairwise(events)
-            if SEGMENT_SEC[0] <= b[0] - a[1] <= SEGMENT_SEC[1]]
+    cands = [RallyCandidate(a[1], b[0]) for a, b in pairwise(events)
+             if SEGMENT_SEC[0] <= b[0] - a[1] <= SEGMENT_SEC[1]]
+    if not cands and duration_sec:
+        # 휘슬로 나눌 수 없으면 같은 길이 조각으로. 이어진 랠리는 merge_rallies가 잇는다(H-32)
+        n = math.ceil(duration_sec / CHUNK_SEC)
+        cands = [RallyCandidate(round(duration_sec * i / n, 2), round(duration_sec * (i + 1) / n, 2)) for i in range(n)]
+    return cands
 
 
 def main() -> None:

@@ -108,6 +108,7 @@
     <h2 data-t="pickRally"></h2>
     <p class="muted" data-t="pickRallyHint"></p>
     <div id="rally-list"></div>
+    <p class="card muted" id="no-rallies" data-t="noRallies" hidden></p>
     <div id="reel-box" hidden>
       <h2 data-t="reelTitle"></h2>
       <p class="muted" data-t="reelHint"></p>
@@ -214,6 +215,7 @@ const T = {
     pickVideo: "영상 고르기", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
     findingRallies: "랠리를 찾는 중… (영상 길이에 따라 몇 분)",
     pickRally: "우리 팀이 득점한 랠리를 고르세요", pickRallyHint: "AI 판정은 틀릴 수 있어요. 어느 후보든 고를 수 있습니다.",
+    noRallies: "랠리를 찾지 못했어요. 득점 장면 앞뒤로 40초 이하만 잘라 다시 올려 주세요.",
     preview: "장면 보기", rally: "랠리", notRally: "랠리 아님", unsure: "판정 불확실", done: "완성", makeFromRally: "이 랠리로 만들기", open: "열기",
     reelTitle: "완성된 장면 모아 보기", reelHint: "고른 장면을 득점 앞뒤만 잘라 한 편으로 이어요. AI 비용은 들지 않아요.",
     makeReel: "모아서 한 편 만들기", reelBusy: "모으는 중…", pickOne: "모을 장면을 하나 이상 고르세요", scoreAt: "{t} 득점",
@@ -239,6 +241,7 @@ const T = {
     pickVideo: "動画を選ぶ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
     findingRallies: "ラリーを探しています…（動画の長さにより数分）",
     pickRally: "自分のチームが得点したラリーを選んでください", pickRallyHint: "AIの判定は間違うことがあります。どの候補でも選べます。",
+    noRallies: "ラリーが見つかりませんでした。得点シーンの前後40秒以内に切って、もう一度アップロードしてください。",
     preview: "シーンを見る", rally: "ラリー", notRally: "ラリーではない", unsure: "判定があいまい", done: "完成", makeFromRally: "このラリーで作る", open: "開く",
     reelTitle: "完成したシーンをまとめる", reelHint: "選んだシーンの得点前後だけを切り出してつなげます。AIの費用はかかりません。",
     makeReel: "まとめて1本にする", reelBusy: "まとめています…", pickOne: "シーンを1つ以上選んでください", scoreAt: "{t} 得点",
@@ -264,6 +267,7 @@ const T = {
     pickVideo: "Choose a video", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
     findingRallies: "Finding rallies… (a few minutes, depending on length)",
     pickRally: "Pick a rally your team scored", pickRallyHint: "The AI can be wrong. You can pick any candidate.",
+    noRallies: "No rallies found. Trim the video to 40 seconds or less around the point and upload it again.",
     preview: "Watch scene", rally: "Rally", notRally: "Not a rally", unsure: "Unsure", done: "Done", makeFromRally: "Use this rally", open: "Open",
     reelTitle: "Combine finished scenes", reelHint: "Joins the moments around each point into one video. No AI cost.",
     makeReel: "Combine into one", reelBusy: "Combining…", pickOne: "Pick at least one scene", scoreAt: "Point at {t}",
@@ -422,6 +426,7 @@ function renderRallies(s) {
   show(s.status === "rallies_ready" ? "s-rallies" : busyOf(s) && !s.error ? null : "s-upload");
   if (s.status !== "rallies_ready") { $("up-status").textContent = s.error ? "" : t("findingRallies"); return; }
   renderReel(s);
+  $("no-rallies").hidden = s.rallies.length > 0;
   const list = $("rally-list");
   const key = `${state.job}|${state.lang}|${Object.entries(s.scenes).map(([k, v]) => k + v.status).join(",")}`;
   if (list.dataset.key === key) return;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -63,6 +64,14 @@ def test_middle_whistle_does_not_shift_later_candidates() -> None:
     # 10/29 27초 영상: 3.0(시작) · 16.75(랠리 중간) · 26.5(끝). 두 개씩 짝지으면 26.5가 남아 랠리가 잘렸다
     w = [rally.Whistle(t, 20.0, 40.0) for t in (3.0, 16.75, 26.5)]
     assert rally.segments(w) == [rally.RallyCandidate(3.0, 16.75), rally.RallyCandidate(16.75, 26.5)]
+
+
+def test_no_whistles_split_video_into_even_chunks() -> None:
+    # S2: 심판 없는 경기(휘슬 없음) 75초 영상은 후보가 0개라 사용자가 막혔다
+    segs = rally.segments([], duration_sec=75.44)
+    assert len(segs) == 4 and segs[0].start_sec == 0.0 and segs[-1].end_sec == 75.44
+    assert all(a.end_sec == b.start_sec for a, b in pairwise(segs))
+    assert rally.segments([]) == []  # 길이를 모르면 나누지 않는다
 
 
 def test_load_audio_from_video(tmp_path: Path) -> None:
