@@ -33,6 +33,15 @@ def test_zoom_crops_stay_inside_with_9_16() -> None:
     assert crops[-1] == (0, 0, 540, 960)
 
 
+def test_zoom_follows_a_moving_me_at_the_first_and_last_frame() -> None:
+    # S5: 오른쪽으로 달리는 '나'를 처음 프레임에서 앞질러 링이 화면 가장자리에 걸렸다
+    centers = [(400.0 + 20 * i, 960.0) for i in range(30)]
+    crops = render.zoom_crops(centers, 1920, 1920, zoom=2.0, smooth=10)
+    for i in (0, len(centers) - 1):
+        x, _, w, _ = crops[i]
+        assert abs(x + w / 2 - centers[i][0]) <= 1
+
+
 @pytest.mark.parametrize(("privacy", "other_blurred", "outside_blurred"), [
     ("face", False, False),
     ("silhouette", True, False),

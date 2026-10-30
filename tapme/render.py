@@ -86,7 +86,9 @@ def zoom_crops(
         filled.append(last)
     crops = []
     for i in range(len(filled)):
-        win = filled[max(0, i - smooth): i + smooth + 1]
+        # 처음·끝에서는 창을 양쪽 똑같이 줄인다. 한쪽만 줄이면 움직이는 '나'보다 앞서거나 늦었다(S1 끝, S5 처음)
+        r = min(smooth, i, len(filled) - 1 - i)
+        win = filled[i - r: i + r + 1]
         cx = sum(c[0] for c in win) / len(win)
         cy = sum(c[1] for c in win) / len(win)
         crops.append((max(0, min(width - cw, round(cx - cw / 2))), max(0, min(height - ch, round(cy - ch / 2))), cw, ch))
