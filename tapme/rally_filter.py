@@ -58,6 +58,9 @@ def blurred_clip(video: Path, start_sec: float, end_sec: float, out: Path) -> Pa
 
 
 JOIN_GAP_SEC = 10.0  # 이웃한 두 랠리 판정 사이(휘슬 사건 하나의 길이)가 이 안이면 잇는다
+# Muse는 플레이가 조금만 보여도 랠리로 봐서, 이웃한 랠리를 모두 이으면 두 랠리가 하나가 됐다(S3, H-33).
+# 이은 길이가 후보 최대 길이를 넘지 않게 한다. "점수가 났는가"를 함께 묻는 방법은 절반만 맞아 쓰지 않는다
+MAX_RALLY_SEC = rally.SEGMENT_SEC[1]
 
 
 def merge_rallies(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -70,7 +73,8 @@ def merge_rallies(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         prev = out[-1] if out else None
         # 후보는 휘슬 사건 사이를 좁게 잡는다(H-31). 바로 이웃한 두 후보 사이는 휘슬 사건 하나이므로 그 사건을 건너 잇는다
         if (prev and prev["is_rally"] and r["is_rally"] and prev["parts"][-1] == i - 1
-                and r["start_sec"] - prev["end_sec"] <= JOIN_GAP_SEC):
+                and r["start_sec"] - prev["end_sec"] <= JOIN_GAP_SEC
+                and r["end_sec"] - prev["start_sec"] <= MAX_RALLY_SEC):
             prev.update(
                 end_sec=max(prev["end_sec"], r["end_sec"]), parts=[*prev["parts"], i], clip=None,
                 confidence=min(float(prev.get("confidence") or 0), float(r.get("confidence") or 0)),

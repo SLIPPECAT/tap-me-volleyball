@@ -133,3 +133,19 @@ def test_rallies_across_one_whistle_event_merge() -> None:
     # 사건이 너무 길면(쉬는 시간) 잇지 않는다
     merged = rally_filter.merge_rallies([r(0.0, 9.0), r(9.0 + rally_filter.JOIN_GAP_SEC + 1, 40.0)])
     assert len(merged) == 2
+
+
+def test_two_back_to_back_rallies_are_not_joined_into_one() -> None:
+    # S3: 이어 붙인 두 랠리(득점 26.2·50.0초)의 후보가 모두 "랠리"로 판정돼 0~51.6초 하나로 이어졌다(H-33)
+    r = lambda s, e: {"start_sec": s, "end_sec": e, "is_rally": True, "confidence": 0.9, "usd": 0.006,
+                      "input_tokens": 1, "output_tokens": 1, "clip": "x"}
+    merged = rally_filter.merge_rallies([r(0.0, 3.02), r(3.02, 9.53), r(9.53, 16.5), r(16.5, 26.93), r(26.93, 42.2),
+                                         r(43.73, 48.12), r(49.2, 51.65)])
+    assert [(m["start_sec"], m["end_sec"]) for m in merged] == [(0.0, 26.93), (26.93, 51.65)]
+
+
+def test_joined_rally_never_exceeds_the_longest_candidate() -> None:
+    r = lambda s, e: {"start_sec": s, "end_sec": e, "is_rally": True, "confidence": 0.9, "usd": 0.006,
+                      "input_tokens": 1, "output_tokens": 1, "clip": "x"}
+    merged = rally_filter.merge_rallies([r(0.0, 20.0), r(21.0, 35.0), r(36.0, 50.0)])
+    assert [(m["start_sec"], m["end_sec"]) for m in merged] == [(0.0, 35.0), (36.0, 50.0)]
