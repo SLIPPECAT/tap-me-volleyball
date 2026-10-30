@@ -107,7 +107,8 @@ def load_job(job_id: str) -> Job:
 
 def _cut(video: Path, start: float, duration: float, out: Path, fps: int | None) -> Path:
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{start:.2f}", "-i", str(video), "-t", f"{duration:.2f}"]
-    cmd += ["-r", str(fps)] if fps else []
+    # -r는 원본보다 4프레임(0.13초) 늦은 장면을 골라, SAM 박스(프레임 k = k/fps초)가 원본 클립보다 늦게 따라갔다(S1)
+    cmd += ["-vf", f"setpts=PTS-STARTPTS,fps={fps}:round=up"] if fps else []
     subprocess.run([*cmd, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(out)], check=True)
     return out
 

@@ -281,3 +281,25 @@ def test_picking_a_player_card_sends_that_players_box(job: jobs.Job, monkeypatch
     assert "<4f>0<|box;x1=211;y1=228" in sam[0]
     with pytest.raises(jobs.TapMissed):
         jobs.make_highlight(job, 0, [("score", 9)], "검정", [], "", "face", 2.0, client=None)
+
+
+def test_sam_clip_frames_line_up_with_render_clip(tmp_path: Path) -> None:
+    # S1: SAM 클립(10fps)의 프레임 k는 원본 클립(30fps)의 프레임 3k여야 링·확대가 '나'를 제때 따라간다
+    import cv2
+    import numpy as np
+
+    def gray(path: Path) -> list[np.ndarray]:
+        cap, out = cv2.VideoCapture(str(path)), []
+        while (r := cap.read())[0]:
+            out.append(cv2.cvtColor(r[1], cv2.COLOR_BGR2GRAY).astype(np.float32))
+        return out
+
+    src = _video(tmp_path / "src.mp4", 30, seconds=4.0)  # testsrc2는 프레임마다 그림이 움직인다
+    sam = gray(jobs._cut(src, 1.0, 2.0, tmp_path / "sam.mp4", 10))
+    clip = gray(jobs._cut(src, 1.0, 2.0, tmp_path / "clip.mp4", None))
+
+    def err(shift: int) -> float:
+        return float(np.mean([np.abs(s - clip[3 * k + shift]).mean()
+                              for k, s in enumerate(sam) if 0 <= 3 * k + shift < len(clip)]))
+
+    assert min(range(-6, 7), key=err) == 0
