@@ -47,6 +47,10 @@
     <p class="muted" data-t="captureTip"></p>
     <div class="field"><label for="match-name" data-t="matchLabel"></label><input type="text" id="match-name" maxlength="40"></div>
     <label class="drop"><span data-t="pickVideo"></span><small data-t="dropHint"></small><input type="file" id="file" accept="video/*"></label>
+    <div class="picked" id="picked" hidden>
+      <p id="picked-name"></p>
+      <button class="primary" id="start-upload" data-t="startUpload"></button>
+    </div>
     <div class="progress" id="up-progress" hidden><div></div></div>
     <p class="muted" id="up-status" aria-live="polite"></p>
     <p class="error" id="upload-warn" data-t="keepOpen" hidden></p>
@@ -175,7 +179,7 @@ const T = {
     stCommentary: "해설 자막을 만드는 중…", stRender: "영상을 만드는 중… {p}%", stWorking: "처리하는 중…",
     uploadIntro: "정모 경기 영상을 올리면 랠리를 찾아 드려요. AI로 보내는 장면은 늘 얼굴을 흐린 뒤 보냅니다. 결과 영상의 모자이크는 직접 고를 수 있어요.",
     captureTip: "팁: 폰을 삼각대나 난간에 고정하고 코트 전체가 보이게 찍은 영상이 가장 잘 돼요. 공을 따라 카메라를 움직이면 화면 밖으로 나간 나를 놓칠 수 있어요.",
-    pickVideo: "영상 고르기", dropHint: "또는 영상 파일을 여기로 끌어다 놓으세요", dropNotVideo: "영상 파일만 올릴 수 있어요 (mp4·mov 등)", matchLabel: "경기 이름 (선택, 저장 파일 이름에 씀)", fileHighlight: "하이라이트", fileReel: "모음", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
+    pickVideo: "영상 고르기", dropHint: "또는 영상 파일을 여기로 끌어다 놓으세요", startUpload: "이 영상으로 시작", pickAgain: "다른 영상 고르기", dropNotVideo: "영상 파일만 올릴 수 있어요 (mp4·mov 등)", matchLabel: "경기 이름 (선택, 저장 파일 이름에 씀)", fileHighlight: "하이라이트", fileReel: "모음", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
     findingRallies: "랠리를 찾는 중… (영상 길이에 따라 몇 분)",
     pickRally: "우리 팀이 득점한 랠리를 고르세요", pickRallyHint: "AI 판정은 틀릴 수 있어요. 어느 후보든 고를 수 있습니다.",
     unread: "AI가 이 구간은 읽지 못했어요. 여기 득점이 있었다면 목록에 없을 수 있어요: {r}",
@@ -202,7 +206,7 @@ const T = {
     stCommentary: "実況字幕を作っています…", stRender: "動画を作っています… {p}%", stWorking: "処理しています…",
     uploadIntro: "練習試合の動画をアップすると、ラリーを見つけます。AIに送るシーンは必ず顔をぼかしてから送ります。完成動画のモザイクは自分で選べます。",
     captureTip: "ヒント：スマホを三脚や手すりに固定して、コート全体が映るように撮った動画がいちばんうまくいきます。ボールを追ってカメラを動かすと、画面の外に出た自分を見失うことがあります。",
-    pickVideo: "動画を選ぶ", dropHint: "または動画ファイルをここにドラッグ＆ドロップ", dropNotVideo: "動画ファイルだけアップロードできます（mp4・movなど）", matchLabel: "試合名（任意、保存ファイル名に使います）", fileHighlight: "ハイライト", fileReel: "まとめ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
+    pickVideo: "動画を選ぶ", dropHint: "または動画ファイルをここにドラッグ＆ドロップ", startUpload: "この動画で始める", pickAgain: "別の動画を選ぶ", dropNotVideo: "動画ファイルだけアップロードできます（mp4・movなど）", matchLabel: "試合名（任意、保存ファイル名に使います）", fileHighlight: "ハイライト", fileReel: "まとめ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
     findingRallies: "ラリーを探しています…（動画の長さにより数分）",
     pickRally: "自分のチームが得点したラリーを選んでください", pickRallyHint: "AIの判定は間違うことがあります。どの候補でも選べます。",
     unread: "AIがこの区間を読み取れませんでした。ここに得点があればリストにないかもしれません: {r}",
@@ -229,7 +233,7 @@ const T = {
     stCommentary: "Writing commentary subtitles…", stRender: "Making the video… {p}%", stWorking: "Working…",
     uploadIntro: "Upload a match video and we'll find the rallies. Anything sent to the AI is always face-blurred first. You choose whether the final video pixelates faces.",
     captureTip: "Tip: works best when the phone is fixed on a tripod or railing with the whole court in view. If the camera follows the ball, it can lose you when you leave the frame.",
-    pickVideo: "Choose a video", dropHint: "or drag and drop a video file here", dropNotVideo: "Only video files can be uploaded (mp4, mov and so on)", matchLabel: "Match name (optional, used in saved file names)", fileHighlight: "highlight", fileReel: "reel", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
+    pickVideo: "Choose a video", dropHint: "or drag and drop a video file here", startUpload: "Start with this video", pickAgain: "Choose another video", dropNotVideo: "Only video files can be uploaded (mp4, mov and so on)", matchLabel: "Match name (optional, used in saved file names)", fileHighlight: "highlight", fileReel: "reel", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
     findingRallies: "Finding rallies… (a few minutes, depending on length)",
     pickRally: "Pick a rally your team scored", pickRallyHint: "The AI can be wrong. You can pick any candidate.",
     unread: "The AI could not read these parts. Points there may be missing from the list: {r}",
@@ -252,7 +256,7 @@ const T = {
 const $ = (id) => document.getElementById(id);
 const KINDS = ["score", "b1", "b2", "b3", "start"];
 const KIND_LABEL = { score: "mScore", b1: "mB1", b2: "mB2", b3: "mB3", start: "mStart" };
-const state = { job: null, rally: null, taps: {}, tappers: {}, moment: "score", poll: null, last: null, lang: "ko" };
+const state = { job: null, rally: null, taps: {}, tappers: {}, moment: "score", poll: null, last: null, lang: "ko", pending: null };
 const anyTap = () => Object.values(state.taps).some(Boolean);
 const BASE_TITLE = document.title;
 // 기다리는 동안 정한 옵션(팀 이름·자막·가리기…). 이 폰에만 저장, 탭 화면에 미리 채운다
@@ -654,13 +658,28 @@ function uploadVideo(f) {
   };
   xhr.onload = () => {
     $("upload-warn").hidden = true;
-    if (xhr.status !== 200) { setError(t("uploadFail", { c: xhr.status })); return; }
+    if (xhr.status !== 200) { setError(t("uploadFail", { c: xhr.status })); $("start-upload").disabled = false; $("up-progress").hidden = true; return; }
     state.job = JSON.parse(xhr.responseText).id; state.rally = null; setHash(); startPolling();
   };
-  xhr.onerror = () => { $("upload-warn").hidden = true; setError(t("uploadFail", { c: "network" })); };
+  xhr.onerror = () => { $("upload-warn").hidden = true; setError(t("uploadFail", { c: "network" })); $("start-upload").disabled = false; $("up-progress").hidden = true; };
   xhr.open("POST", "/jobs"); xhr.send(form);
 }
-$("file").addEventListener("change", () => { const f = $("file").files[0]; if (f) uploadVideo(f); });
+// 고르거나 끌어다 놓으면 바로 올리지 않고, 파일을 보여 준 뒤 "시작"을 눌러야 올린다(10/30 사용자)
+function pickVideo(f) {
+  state.pending = f;
+  const mb = f.size / (1024 * 1024);
+  $("picked-name").textContent = `${f.name}  ${mb >= 1024 ? (mb / 1024).toFixed(2) + " GB" : mb.toFixed(0) + " MB"}`;
+  $("picked").hidden = false;
+  document.querySelector(".drop").classList.add("has-file");
+  const label = document.querySelector(".drop span"); label.dataset.t = "pickAgain"; label.textContent = t("pickAgain");
+  setError("");
+}
+$("file").addEventListener("change", () => { const f = $("file").files[0]; if (f) pickVideo(f); });
+$("start-upload").onclick = () => {
+  if (!state.pending) return;
+  $("start-upload").disabled = true;
+  uploadVideo(state.pending);
+};
 
 // 끌어다 놓기(웹에서 더 편함, 10/30 사용자): 올리기 화면이 보이고 아직 올리는 중이 아닐 때, 화면 어디에 놓아도 올린다
 const dropZone = document.querySelector(".drop");
@@ -674,7 +693,7 @@ window.addEventListener("drop", (e) => {
   e.preventDefault(); dragDepth = 0; dropZone.classList.remove("is-over");
   if (!canDrop()) return;
   const f = [...((e.dataTransfer && e.dataTransfer.files) || [])].find(isVideo);
-  if (f) uploadVideo(f); else setError(t("dropNotVideo"));
+  if (f) pickVideo(f); else setError(t("dropNotVideo"));
 });
 
 initLang();

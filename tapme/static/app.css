@@ -75,6 +75,10 @@ summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2
 .drop { gap: var(--space-sm); align-content: center; }
 .drop.is-over { border-color: var(--color-accent); border-style: solid; background: var(--color-paper); }
 @media (hover: none) { .drop small { display: none; } }
+.drop.has-file { min-height: 112px; }
+.drop.has-file span { background: none; color: var(--color-ink); border: var(--rule-hair) solid var(--color-rule); }
+.picked { display: grid; gap: var(--space-sm); padding: var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); }
+#picked-name { font-family: var(--font-outlier); font-size: var(--text-sm); overflow-wrap: anywhere; white-space: pre-wrap; }
 .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 
 /* 2. 랠리 장부: 가는 선으로 나뉜 행, 시각은 고정폭 */
