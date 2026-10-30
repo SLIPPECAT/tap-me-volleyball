@@ -38,6 +38,7 @@ class RenderOptions(BaseModel):
     face_mosaic: bool = True
     privacy: str = render.DEFAULT_PRIVACY
     zoom: float = render.DEFAULT_ZOOM
+    fps: int = Field(default=0, description="결과 영상 fps: 0이면 원본 그대로, 30이면 30fps까지(60fps 원본은 렌더가 약 절반)")
 
     @field_validator("languages")
     @classmethod
@@ -66,6 +67,13 @@ class RenderOptions(BaseModel):
     def _zoom(cls, v: float) -> float:
         if v not in render.ZOOM_CHOICES:
             raise ValueError(f"확대 배율은 {render.ZOOM_CHOICES} 중 하나")
+        return v
+
+    @field_validator("fps")
+    @classmethod
+    def _fps(cls, v: int) -> int:
+        if v not in (0, 30):
+            raise ValueError("fps는 0(원본) 또는 30")
         return v
 
 
@@ -245,7 +253,7 @@ def highlight(job_id: str, index: int, req: TapRequest, background: BackgroundTa
     if not scene or scene.get("status") not in ("awaiting_tap", "done"):
         raise HTTPException(409, "먼저 prepare로 탭할 장면을 만든다")
     background.add_task(_run, job_id, jobs.make_highlight, index, [t.as_tuple() for t in req.taps], req.team, req.languages, req.role,
-                        req.privacy, req.zoom, client_factory(), req.face_mosaic)
+                        req.privacy, req.zoom, client_factory(), req.face_mosaic, req.fps)
     return {"status": "rendering"}
 
 
@@ -256,7 +264,7 @@ def rerender(job_id: str, index: int, req: RenderOptions, background: Background
         raise HTTPException(409, "하이라이트를 먼저 만든다")
     # 자막을 처음 켜거나 역할을 바꾸면 해설(Muse), '몸 실루엣'을 처음 고르면 다른 선수 추적(SAM)이 한 번 필요하다
     background.add_task(_run, job_id, jobs.rerender, index, req.languages, req.role, req.privacy, req.zoom,
-                        client_factory(), req.face_mosaic)
+                        client_factory(), req.face_mosaic, req.fps)
     return {"status": "rendering"}
 
 

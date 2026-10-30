@@ -60,10 +60,12 @@ def detect_faces(
     detector: cv2.FaceDetectorYN,
     profile: cv2.CascadeClassifier | None = None,
     profile_scale: float = PROFILE_SCALE_FACTOR,
+    scores: list[float] | None = None,
 ) -> list[tuple[int, int, int, int]]:
     """프레임에서 얼굴 박스 (x, y, w, h) 목록을 돌려준다.
 
     YuNet은 DETECT_UPSCALE배로 키운 프레임에서 찾고, profile이 있으면 옆얼굴도 양쪽 방향으로 찾는다.
+    scores 목록을 주면 박스마다 확신 점수를 같은 순서로 채운다(옆얼굴 검출기는 점수가 없어 1.0).
     """
     h, w = frame.shape[:2]
     big_w, big_h = int(w * DETECT_UPSCALE), int(h * DETECT_UPSCALE)
@@ -73,6 +75,8 @@ def detect_faces(
     boxes = [] if faces is None else [
         tuple(int(v / DETECT_UPSCALE) for v in f[:4]) for f in faces
     ]
+    if scores is not None:
+        scores.extend([] if faces is None else [float(f[-1]) for f in faces])
     if profile is not None:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         for flipped in (False, True):
@@ -80,6 +84,8 @@ def detect_faces(
             for x, y, bw, bh in profile.detectMultiScale(img, scaleFactor=profile_scale, minNeighbors=PROFILE_MIN_NEIGHBORS):
                 x = w - int(x) - int(bw) if flipped else int(x)
                 boxes.append((x, int(y), int(bw), int(bh)))
+                if scores is not None:
+                    scores.append(1.0)
     return boxes
 
 
@@ -88,10 +94,13 @@ def load_plain_detector() -> cv2.FaceDetectorYN:
     return cv2.FaceDetectorYN.create(str(MODEL_PATH), "", (320, 320), SCORE_THRESHOLD, NMS_THRESHOLD, MAX_FACES)
 
 
-def detect_faces_plain(frame: np.ndarray, detector: cv2.FaceDetectorYN) -> list[tuple[int, int, int, int]]:
+def detect_faces_plain(frame: np.ndarray, detector: cv2.FaceDetectorYN,
+                       scores: list[float] | None = None) -> list[tuple[int, int, int, int]]:
     h, w = frame.shape[:2]
     detector.setInputSize((w, h))
     _, faces = detector.detect(frame)
+    if scores is not None:
+        scores.extend([] if faces is None else [float(f[-1]) for f in faces])
     return [] if faces is None else [tuple(int(v) for v in f[:4]) for f in faces]
 
 

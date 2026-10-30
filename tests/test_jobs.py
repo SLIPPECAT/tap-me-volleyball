@@ -145,7 +145,7 @@ def test_rerender_pays_only_when_something_new_is_needed(job: jobs.Job, monkeypa
     jobs.rerender(job, 0, ["en"], "defense", "silhouette", 1.5)  # 저장해 둔 것을 다시 씀
     assert calls[1:] == ["muse:assist", "muse:defense", "volleyball player"]
     assert scene["options"] == {"languages": ["en"], "role": "defense", "privacy": "silhouette", "zoom": 1.5,
-                                "face_mosaic": True}
+                                "face_mosaic": True, "fps": 0}
     scene = jobs.rerender(job, 0, ["en"], "defense", "face", 1.5, face_mosaic=False)  # 모자이크 끄기도 비용 없음
     assert scene["options"]["face_mosaic"] is False and len(calls) == 4
 

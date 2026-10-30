@@ -120,7 +120,7 @@ def test_face_mosaic_off_skips_face_detection(tmp_path: Path, monkeypatch: pytes
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=0.5",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
     calls: list = []
-    monkeypatch.setattr(anonymize, "detect_faces", lambda *a: calls.append(1) or [])
+    monkeypatch.setattr(anonymize, "detect_faces", lambda *a, **k: calls.append(1) or [])
     render.render_video(src, tmp_path / "a.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=False)
     assert calls == []
     render.render_video(src, tmp_path / "b.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=True)
@@ -151,8 +151,8 @@ def test_face_found_once_stays_mosaicked_for_a_moment(tmp_path: Path, monkeypatc
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=0.5",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
     calls = iter(range(1000))
-    monkeypatch.setattr(anonymize, "detect_faces", lambda *a: [(100, 40, 60, 60)] if next(calls) == 0 else [])
-    monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a: [])
+    monkeypatch.setattr(anonymize, "detect_faces", lambda *a, **k: [(100, 40, 60, 60)] if next(calls) == 0 else [])
+    monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a, **k: [])
     plain_out, mos_out = tmp_path / "plain.mp4", tmp_path / "m.mp4"
     render.render_video(src, plain_out, {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=False)
     render.render_video(src, mos_out, {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=True)
@@ -197,8 +197,8 @@ def test_my_moving_face_never_gets_a_held_mosaic(tmp_path: Path, monkeypatch: py
     # 내가 프레임마다 오른쪽으로 8px씩 움직인다(몸 박스와 얼굴이 같이)
     by = {i: [Box(track.TAPPED_ID, 60 + 8 * i, 100, 140 + 8 * i, 400)] for i in range(12)}
     calls = iter(range(1000))
-    monkeypatch.setattr(anonymize, "detect_faces", lambda *a: [(85 + 8 * next(calls), 105, 30, 30)])
-    monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a: [])
+    monkeypatch.setattr(anonymize, "detect_faces", lambda *a, **k: [(85 + 8 * next(calls), 105, 30, 30)])
+    monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a, **k: [])
     plain_out, mos_out = tmp_path / "plain.mp4", tmp_path / "m.mp4"
     render.render_video(src, plain_out, by, {}, track.TAPPED_ID, sam_fps=30, zoom=1.0, face_mosaic=False)
     render.render_video(src, mos_out, by, {}, track.TAPPED_ID, sam_fps=30, zoom=1.0, face_mosaic=True)
@@ -236,3 +236,27 @@ def test_ground_marker_goes_under_my_feet_not_over_them() -> None:
         r.decode_mask_to_raster = real
     assert (out[295:318, 185:215] == (200, 30, 30)).all()  # 신발은 그대로
     assert np.abs(out[300:330, 120:170].astype(int) - 90).max() > 40  # 신발 옆 바닥에는 표시
+
+
+def test_implausibly_big_unsure_faces_are_dropped_but_sure_ones_stay() -> None:
+    # 10/30 성능 테스트 T2: 흐려진 몸·바닥을 커다란 얼굴로 잡아 선수 몸 전체가 모자이크됐다
+    me = Box(track.TAPPED_ID, 100, 100, 160, 350)  # 키 250px → 머리 약 32px
+    faces = [(300, 120, 30, 30), (400, 200, 220, 260), (600, 100, 200, 240)]
+    kept = render.plausible_faces(faces, [0.7, 0.6, 0.92], me)
+    assert kept == [(300, 120, 30, 30), (600, 100, 200, 240)]  # 작은 얼굴, 확신 높은 큰 얼굴(카메라 앞 사람)은 남김
+    assert render.plausible_faces(faces, [0.7, 0.6, 0.92], None) == faces  # '나'를 모르면 거르지 않는다
+    assert render.plausible_faces(faces, [], me) == faces  # 점수를 모르면 버리지 않는다
+
+
+def test_sixty_fps_source_can_be_rendered_at_thirty(tmp_path: Path) -> None:
+    # 10/30: 60fps 원본은 렌더가 두 배 걸렸다. 사용자가 30fps를 고르면 프레임을 절반만 만든다
+    import cv2
+
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x568:rate=60:duration=1",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
+    out = render.render_video(src, tmp_path / "o.mp4", {}, {}, "me", sam_fps=10, zoom=1.0, face_mosaic=False, max_fps=30)
+    cap = cv2.VideoCapture(str(out))
+    assert round(cap.get(cv2.CAP_PROP_FPS)) == 30 and 28 <= int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) <= 31
+    same = render.render_video(src, tmp_path / "p.mp4", {}, {}, "me", sam_fps=10, zoom=1.0, face_mosaic=False)
+    assert round(cv2.VideoCapture(str(same)).get(cv2.CAP_PROP_FPS)) == 60  # 기본은 원본 그대로

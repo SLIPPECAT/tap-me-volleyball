@@ -353,11 +353,11 @@ def scene_render_inputs(job: Job, scene: dict[str, Any], languages: list[str], p
 
 
 def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy: str, zoom: float,
-                  face_mosaic: bool, client: Any) -> Path:
+                  face_mosaic: bool, client: Any, max_fps: int = 0) -> Path:
     src, by, masks, cues = scene_render_inputs(job, scene, languages, privacy, client)
     out = render.render_video(src, Path(scene["sam_clip"]).parent / "highlight.mp4", by, masks,
                               track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy, face_mosaic,
-                              on_progress=lambda d, n: job.step("render", d, n))
+                              on_progress=lambda d, n: job.step("render", d, n), max_fps=max_fps)
     job.progress = {}
     return out
 
@@ -381,7 +381,7 @@ def _ensure_commentary(job: Job, scene: dict[str, Any], languages: list[str], ro
 
 def make_highlight(
     job: Job, index: int, taps: list[tuple[str, float, float]], team_label: str,
-    languages: list[str], role: str, privacy: str, zoom: float, client: Any, face_mosaic: bool = True,
+    languages: list[str], role: str, privacy: str, zoom: float, client: Any, face_mosaic: bool = True, max_fps: int = 0,
 ) -> dict[str, Any]:
     """taps = [(장면 종류, x, y) 또는 (장면 종류, 고른 선수 번호), ...]. 장면 종류는 TAP_KINDS, 하나 이상.
     languages가 비면 자막 없음(Muse 해설을 묻지 않는다). role은 score.ROLE_TEXT의 키(선택)."""
@@ -431,24 +431,24 @@ def make_highlight(
     clip_video = _cut(Path(job.video), clip_start, clip_end - clip_start, sam_clip.parent / "clip.mp4", None)
     scene.update(taps=[list(t) for t in taps], span_frames=list(span),
                  clip=[round(clip_start, 2), round(clip_end, 2)], clip_video=str(clip_video), clip_is_original=True)
-    out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client)
+    out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client, max_fps)
     scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom,
-                                         "face_mosaic": face_mosaic}, video=str(out))
+                                         "face_mosaic": face_mosaic, "fps": max_fps}, video=str(out))
     job.save()
     return scene
 
 
 def rerender(job: Job, index: int, languages: list[str], role: str, privacy: str, zoom: float,
-             client: Any = None, face_mosaic: bool = True) -> dict[str, Any]:
+             client: Any = None, face_mosaic: bool = True, max_fps: int = 0) -> dict[str, Any]:
     """자막·가리기·확대만 바꿔 다시 렌더. 저장해 둔 SAM 결과와 해설을 써서 API 비용이 없다.
     자막을 처음 켜거나 역할을 바꾸면 해설을, '몸 실루엣'을 처음 고르면 다른 선수 추적을 한 번 부른다."""
     scene = job.scenes[str(index)]
     scene["status"] = "rendering"
     job.save()
     _ensure_commentary(job, scene, languages, role, client)
-    out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client)
+    out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client, max_fps)
     scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom,
-                                         "face_mosaic": face_mosaic}, video=str(out))
+                                         "face_mosaic": face_mosaic, "fps": max_fps}, video=str(out))
     job.save()
     return scene
 

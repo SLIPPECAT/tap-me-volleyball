@@ -203,6 +203,8 @@
         <option value="1" selected>1×</option><option value="1.5">1.5×</option>
         <option value="2">2×</option><option value="2.5">2.5×</option>
       </select></div>
+    <div class="field"><label data-t="fps"></label>
+      <select class="fps"><option value="0" selected data-t="fpsSource"></option><option value="30">30fps</option></select></div>
   </div>
 </template>
 
@@ -232,7 +234,7 @@ const T = {
     resultTitle: "내 하이라이트", commentary: "해설: {c}", rerenderBusy: "다시 만드는 중…", share: "공유", save: "저장",
     changeOptions: "옵션 바꾸기", rerenderHint: "대부분 AI 비용 없이 다시 만들어요. 자막을 처음 켜거나 역할을 바꿀 때, 몸 실루엣을 처음 고를 때만 약 $0.01씩 들어요.", rerender: "다시 만들기",
     faceMosaic: "다른 회원 얼굴 모자이크 (내 얼굴은 그대로)", subsOn: "자막 넣기 (중계 해설처럼)", subLangs: "자막 언어", role: "이 득점에서 내 역할 (선택)",
-    roleNone: "고르지 않음", roleScore: "내가 직접 득점", roleAssist: "연결 (리시브·토스)", roleDefense: "수비로 살림", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대",
+    roleNone: "고르지 않음", roleScore: "내가 직접 득점", roleAssist: "연결 (리시브·토스)", roleDefense: "수비로 살림", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대", fps: "프레임 수", fpsSource: "원본 그대로 (60fps면 더 부드럽지만 만들기가 느림)",
     spent: "이 작업에 쓴 AI 비용 ${u}", reqFail: "요청 실패 ({c})",
   },
   ja: {
@@ -259,7 +261,7 @@ const T = {
     resultTitle: "自分のハイライト", commentary: "実況：{c}", rerenderBusy: "作り直しています…", share: "共有", save: "保存",
     changeOptions: "オプションを変える", rerenderHint: "ほとんどAIの費用なしで作り直します。字幕を初めて入れる・役割を変える・体のシルエットを初めて選ぶときだけ約$0.01ずつかかります。", rerender: "作り直す",
     faceMosaic: "ほかのメンバーの顔にモザイク（自分の顔はそのまま）", subsOn: "字幕を入れる（実況風）", subLangs: "字幕の言語", role: "この得点での自分の役割（任意）",
-    roleNone: "選ばない", roleScore: "自分で得点", roleAssist: "つなぎ（レシーブ・トス）", roleDefense: "守備でつないだ", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大",
+    roleNone: "選ばない", roleScore: "自分で得点", roleAssist: "つなぎ（レシーブ・トス）", roleDefense: "守備でつないだ", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大", fps: "フレームレート", fpsSource: "元のまま（60fpsはなめらかだが作成に時間がかかる）",
     spent: "この作業のAI費用 ${u}", reqFail: "リクエスト失敗 ({c})",
   },
   en: {
@@ -286,7 +288,7 @@ const T = {
     resultTitle: "Your highlight", commentary: "Commentary: {c}", rerenderBusy: "Re-rendering…", share: "Share", save: "Save",
     changeOptions: "Change options", rerenderHint: "Re-rendering is mostly free. About $0.01 only when you first turn on subtitles, change your role, or first pick body silhouettes.", rerender: "Re-render",
     faceMosaic: "Pixelate other members' faces (yours stays clear)", subsOn: "Add subtitles (like live commentary)", subLangs: "Subtitle languages", role: "My role in this point (optional)",
-    roleNone: "Don't say", roleScore: "I scored it", roleAssist: "Set it up (pass/set)", roleDefense: "Saved it on defense", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom",
+    roleNone: "Don't say", roleScore: "I scored it", roleAssist: "Set it up (pass/set)", roleDefense: "Saved it on defense", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom", fps: "Frame rate", fpsSource: "Same as source (60fps is smoother but slower to make)",
     spent: "AI cost for this job ${u}", reqFail: "Request failed ({c})",
   },
 };
@@ -341,6 +343,7 @@ function readOptions(box) {
     role: on ? box.querySelector(".role").value : "",
     privacy: box.querySelector(".privacy").value,
     zoom: parseFloat(box.querySelector(".zoom").value),
+    fps: parseInt(box.querySelector(".fps").value, 10),
     face_mosaic: box.querySelector(".face-mosaic").checked,
   };
 }
@@ -355,7 +358,7 @@ function mountOptions(boxId, o) {
   subsBox.hidden = !on.checked;
   on.onchange = () => { subsBox.hidden = !on.checked; };
   if (o) {
-    box.querySelector(".privacy").value = o.privacy; box.querySelector(".zoom").value = String(o.zoom);
+    box.querySelector(".privacy").value = o.privacy; box.querySelector(".zoom").value = String(o.zoom); box.querySelector(".fps").value = String(o.fps || 0);
     box.querySelector(".role").value = o.role || "";
     box.querySelector(".face-mosaic").checked = o.face_mosaic !== false;
   }

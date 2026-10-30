@@ -132,13 +132,13 @@ def run_case(run: Run, case: dict[str, Any], out_dir: Path) -> dict[str, Any]:
     for r in good:
         if len(picks) < case.get("scenes", 2) and all(abs(r["point_sec"] - p["point_sec"]) > 60 for p in picks):
             picks.append(r)
-    res["scenes"] = [run_scene(run, job, r["index"], out_dir) for r in picks]
+    res["scenes"] = [run_scene(run, job, r["index"], out_dir, case.get("fps", 0)) for r in picks]
     res["total_usd"] = run.status(job)["spent_usd"]
     res["wall_sec"] = round(time.time() - t0, 1)
     return res
 
 
-def run_scene(run: Run, job: str, index: int, out_dir: Path) -> dict[str, Any]:
+def run_scene(run: Run, job: str, index: int, out_dir: Path, fps: int = 0) -> dict[str, Any]:
     out: dict[str, Any] = {"index": index}
     t = time.time()
     run.http.post(f"/jobs/{job}/rallies/{index}/prepare")
@@ -156,7 +156,8 @@ def run_scene(run: Run, job: str, index: int, out_dir: Path) -> dict[str, Any]:
             marks[step] = time.time()
 
     t = time.time()
-    run.http.post(f"/jobs/{job}/rallies/{index}/highlight", json={"taps": [{"which": "score", "player": n}], "team": "bench"})
+    run.http.post(f"/jobs/{job}/rallies/{index}/highlight",
+                  json={"taps": [{"which": "score", "player": n}], "team": "bench", "fps": fps})
     s = run.wait(job, lambda s: s["scenes"][str(index)]["status"] in ("done", "failed"), tick)
     end = time.time()
     out["highlight_sec"] = round(end - t, 1)
