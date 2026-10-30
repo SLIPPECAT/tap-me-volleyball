@@ -154,3 +154,11 @@ def test_option_screen_preselects_the_server_default_zoom() -> None:
     html = (Path(server.__file__).parent / "static" / "index.html").read_text()
     picked = re.search(r'<option value="([\d.]+)" selected>[\d.]+×</option>', html)
     assert picked and float(picked.group(1)) == render.DEFAULT_ZOOM == 1.0
+
+
+def test_upload_keeps_the_match_name_for_saved_file_names(client: TestClient) -> None:
+    # 10/30 사용자 요청: 저장 파일 이름 = 경기이름_팀이름_하이라이트_01.mp4. 비우면 올린 파일 이름
+    named = client.post("/jobs", files={"file": ("IMG_0148.mov", b"v")}, data={"match": " 10/30 정모 2경기 "}).json()["id"]
+    unnamed = client.post("/jobs", files={"file": ("IMG_0148.mov", b"v")}).json()["id"]
+    assert client.get(f"/jobs/{named}").json()["match_name"] == "10/30 정모 2경기"
+    assert client.get(f"/jobs/{unnamed}").json()["match_name"] == "IMG_0148"

@@ -36,7 +36,9 @@ SILHOUETTE_BLUR_RADIUS = 14  # 다른 선수 몸만 흐림
 # '나' 빼고 전부: 14는 공·네트까지 지워져 경기가 안 보였다(실험 H-20, 10/29 사용자 테스트). 얼굴은 입력 흐림본에서
 # 이미 모자이크돼 있어, 6이면 경기 흐름이 보이면서 다른 선수 등번호는 읽기 어렵다
 BACKGROUND_BLUR_RADIUS = 6
-RING_COLOR = (0, 230, 255, 235)
+# '나' 표시(10/30 사용자 C안 "좀 더 전문적인 느낌"): 발밑에 은은히 빛나는 원 + 머리 위 노란 삼각형
+RING_COLOR = (0, 229, 255)
+MARKER_COLOR = (255, 204, 0)
 
 # 한글과 일본어 한자를 모두 가진 글꼴을 고른다(Apple SD Gothic Neo에는 '黒'이 없음)
 FONT_CANDIDATES = (
@@ -148,6 +150,37 @@ def _draw_subtitle(img: Image.Image, text: str) -> None:
     draw.multiline_text((pad + size // 2, y1 + size // 2), text, fill=(255, 255, 255, 255), font=font, spacing=spacing)
 
 
+def _soft(img: Image.Image, box: tuple[float, float, float, float], draw: Callable[[ImageDraw.ImageDraw, float, float], None],
+          blur: float) -> None:
+    """box 둘레의 작은 조각에만 그리고 흐려 붙인다(프레임 전체를 흐리면 렌더가 느려진다)."""
+    m = int(blur * 3) + 2
+    x0, y0 = int(box[0]) - m, int(box[1]) - m
+    patch = Image.new("RGBA", (int(box[2]) + m - x0, int(box[3]) + m - y0), (0, 0, 0, 0))
+    draw(ImageDraw.Draw(patch), -x0, -y0)
+    patch = patch.filter(ImageFilter.GaussianBlur(blur))
+    img.paste(patch, (x0, y0), patch)
+
+
+def _draw_me_marker(img: Image.Image, me: Box) -> None:
+    """발밑 스포트라이트(빛 + 흰색·하늘색 이중 테두리)와 머리 위 삼각형. 굵기·크기는 선수 크기에 맞춘다."""
+    w, h = me.right - me.left, me.bottom - me.top
+    cx = (me.left + me.right) / 2
+    rx, ry = max(14.0, w * 0.75), max(6.0, h * 0.09)
+    foot = (cx - rx, me.bottom - ry, cx + rx, me.bottom + ry)
+    _soft(img, foot, lambda d, dx, dy: d.ellipse((foot[0] + dx, foot[1] + dy, foot[2] + dx, foot[3] + dy),
+                                                 fill=RING_COLOR + (110,)), ry * 0.6)
+    t = max(2, round(h / 110))
+    d = ImageDraw.Draw(img, "RGBA")
+    d.ellipse(foot, outline=(255, 255, 255, 230), width=t)
+    d.ellipse((cx - rx * 0.62, me.bottom - ry * 0.62, cx + rx * 0.62, me.bottom + ry * 0.62), outline=RING_COLOR + (200,), width=t)
+    s = max(14.0, w * 0.32)
+    tip = me.top - s * 0.45
+    tri = [(cx - s / 2, tip - s * 0.7), (cx + s / 2, tip - s * 0.7), (cx, tip)]
+    _soft(img, (cx - s / 2, tip - s * 0.7, cx + s / 2 + 2, tip + 3),
+          lambda d, dx, dy: d.polygon([(x + dx + 2, y + dy + 3) for x, y in tri], fill=(0, 0, 0, 120)), 3)
+    ImageDraw.Draw(img, "RGBA").polygon(tri, fill=MARKER_COLOR + (255,), outline=(20, 20, 20, 255))
+
+
 def compose(
     frame: Image.Image,
     boxes: list[Box],
@@ -174,10 +207,7 @@ def compose(
                 if b.object_id != me:
                     _paste_region(work, blurred, b, masks.get(b.object_id))
     if my_box:
-        cx, w = (my_box.left + my_box.right) / 2, my_box.right - my_box.left
-        rx, ry = max(14, w / 2 + 6), max(6, (my_box.bottom - my_box.top) / 10)
-        ImageDraw.Draw(work, "RGBA").ellipse((cx - rx, my_box.bottom - ry, cx + rx, my_box.bottom + ry),
-                                             outline=RING_COLOR, width=3)
+        _draw_me_marker(work, my_box)
     x0, y0, cw, ch = crop
     out = work.crop((x0, y0, x0 + cw, y0 + ch)).resize(out_size, Image.Resampling.LANCZOS)
     if subtitle:

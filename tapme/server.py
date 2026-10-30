@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -129,8 +129,8 @@ def index() -> FileResponse:
 
 
 @app.post("/jobs")
-def upload(file: UploadFile, background: BackgroundTasks) -> dict[str, Any]:
-    job = jobs.create_job(file.filename or "video.mp4", file.file)
+def upload(file: UploadFile, background: BackgroundTasks, match: str = Form("")) -> dict[str, Any]:
+    job = jobs.create_job(file.filename or "video.mp4", file.file, match)
     background.add_task(_run, job.id, jobs.find_rallies, client_factory())
     return {"id": job.id}
 
@@ -140,7 +140,7 @@ def status(job_id: str) -> dict[str, Any]:
     job = _job(job_id)
     return {"id": job.id, "status": job.status, "error": job.error, "spent_usd": round(job.spent_usd, 4),
             "progress": job.progress, "duration_sec": job.duration_sec, "estimate_usd": job.estimate_usd,
-            "unread": job.unread,
+            "unread": job.unread, "match_name": job.match_name,
             "rallies": [{k: r.get(k) for k in ("index", "start_sec", "end_sec", "point_sec", "is_rally", "confidence",
                                                "reason", "uncertain")}
                         for r in job.rallies],

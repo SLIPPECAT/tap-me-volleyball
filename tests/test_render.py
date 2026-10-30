@@ -167,3 +167,17 @@ def test_face_found_once_stays_mosaicked_for_a_moment(tmp_path: Path, monkeypatc
     # 출력은 9:16으로 잘린 화면이라 얼굴 박스가 들어간 가운데 줄을 본다
     diff = [float(np.abs(x - y)[40:100].mean()) for x, y in zip(a, b)]
     assert all(d > 5 for d in diff[:hold]) and all(d < 5 for d in diff[hold + 2:])
+
+
+def test_me_marker_glows_at_the_feet_and_points_from_above() -> None:
+    # 10/30 사용자 C안: 발밑 스포트라이트 + 머리 위 삼각형
+    import numpy as np
+    from PIL import Image
+
+    frame = Image.new("RGB", (400, 400), (90, 90, 90))
+    me = Box("me", 170, 120, 230, 320)
+    out = np.asarray(render.compose(frame, [me], {}, "me", (0, 0, 400, 400), (400, 400))).astype(int)
+    base = 90
+    assert np.abs(out[318:323, 150:250] - base).max() > 60  # 발밑
+    above = out[60:118, 185:215]
+    assert (above[..., 0] > 200).any() and (above[..., 2] < 60).any()  # 머리 위 노란 삼각형

@@ -349,3 +349,16 @@ def test_short_video_keeps_the_minimum_budget(job: jobs.Job, monkeypatch: pytest
     monkeypatch.setattr(scan, "scan_video", lambda *a: ([], []))
     jobs.find_rallies(job, SimpleNamespace())
     assert jobs.load_job(job.id).budget_usd == jobs.MAX_USD_PER_JOB
+
+
+def test_highlights_are_numbered_in_the_order_they_were_made(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 저장 파일 번호(_01, _02): 만든 순서. 같은 장면을 다시 만들어도 번호는 그대로
+    calls: list = []
+    _prepared(job, monkeypatch, calls)
+    job.rallies.append({**job.rallies[0], "index": 1})
+    jobs.prepare_scene(job, 1, client=None)
+    jobs.make_highlight(job, 1, [("score", 240, 240)], "검정", [], "", "face", 1.0, client=None)
+    jobs.make_highlight(job, 0, [("score", 240, 240)], "검정", [], "", "face", 1.0, client=None)
+    jobs.make_highlight(job, 1, [("score", 240, 240)], "검정", [], "", "face", 1.0, client=None)
+    saved = jobs.load_job(job.id)
+    assert (saved.scenes["1"]["number"], saved.scenes["0"]["number"]) == (1, 2)

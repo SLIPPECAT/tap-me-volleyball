@@ -69,6 +69,7 @@ class Job:
     budget_usd: float = 0.0  # 0이면 MAX_USD_PER_JOB. 랠리 찾기 전에 영상 길이로 정한다
     estimate_usd: float = 0.0  # 랠리 찾기 예상 비용(화면에 보여 준다)
     unread: list[list[float]] = field(default_factory=list)  # AI가 답을 못 읽은 구간 [시작, 끝]. 화면에 알린다
+    match_name: str = ""  # 저장 파일 이름 앞부분(경기이름_팀이름_하이라이트_01.mp4). 비우면 올린 파일 이름
 
     @property
     def dir(self) -> Path:
@@ -91,9 +92,9 @@ class Job:
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
 
 
-def create_job(filename: str, data: bytes | BinaryIO) -> Job:
+def create_job(filename: str, data: bytes | BinaryIO, match_name: str = "") -> Job:
     """data는 바이트 또는 파일 객체. 경기 영상은 GB 단위일 수 있어 파일 객체는 조금씩 옮겨 쓴다."""
-    job = Job(id=uuid.uuid4().hex[:12], video="")
+    job = Job(id=uuid.uuid4().hex[:12], video="", match_name=match_name.strip()[:40] or Path(filename).stem[:40])
     job.dir.mkdir(parents=True, exist_ok=True)
     suffix = Path(filename).suffix.lower()
     src = job.dir / f"source{suffix if suffix in VIDEO_SUFFIXES else '.mp4'}"
@@ -372,6 +373,8 @@ def make_highlight(
         raise TapMissed("탭한 곳에서 선수를 찾지 못했다. 선수 몸 위를 다시 탭해 주세요")
 
     scene["team"] = team_label
+    # 저장 파일 번호: 이 경기에서 하이라이트를 만든 순서. 다시 만들어도 그대로(10/30 사용자 요청)
+    scene.setdefault("number", 1 + max((sc.get("number", 0) for sc in job.scenes.values()), default=0))
     if languages:
         job.step("commentary")
     _ensure_commentary(job, scene, languages, role, client)

@@ -98,6 +98,7 @@
   <section id="s-upload">
     <p data-t="uploadIntro"></p>
     <p class="muted" data-t="captureTip"></p>
+    <div class="field"><label for="match-name" data-t="matchLabel"></label><input type="text" id="match-name" maxlength="40"></div>
     <label class="drop"><span data-t="pickVideo"></span><input type="file" id="file" accept="video/*"></label>
     <div class="progress" id="up-progress" hidden><div></div></div>
     <p class="muted" id="up-status" aria-live="polite"></p>
@@ -214,7 +215,7 @@ const T = {
     stCommentary: "해설 자막을 만드는 중…", stRender: "영상을 만드는 중… {p}%", stWorking: "처리하는 중…",
     uploadIntro: "정모 경기 영상을 올리면 랠리를 찾아 드려요. AI로 보내는 장면은 늘 얼굴을 흐린 뒤 보냅니다. 결과 영상의 모자이크는 직접 고를 수 있어요.",
     captureTip: "팁: 폰을 삼각대나 난간에 고정하고 코트 전체가 보이게 찍은 영상이 가장 잘 돼요. 공을 따라 카메라를 움직이면 화면 밖으로 나간 나를 놓칠 수 있어요.",
-    pickVideo: "영상 고르기", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
+    pickVideo: "영상 고르기", matchLabel: "경기 이름 (선택, 저장 파일 이름에 씀)", fileHighlight: "하이라이트", fileReel: "모음", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
     findingRallies: "랠리를 찾는 중… (영상 길이에 따라 몇 분)",
     pickRally: "우리 팀이 득점한 랠리를 고르세요", pickRallyHint: "AI 판정은 틀릴 수 있어요. 어느 후보든 고를 수 있습니다.",
     unread: "AI가 이 구간은 읽지 못했어요. 여기 득점이 있었다면 목록에 없을 수 있어요: {r}",
@@ -241,7 +242,7 @@ const T = {
     stCommentary: "実況字幕を作っています…", stRender: "動画を作っています… {p}%", stWorking: "処理しています…",
     uploadIntro: "練習試合の動画をアップすると、ラリーを見つけます。AIに送るシーンは必ず顔をぼかしてから送ります。完成動画のモザイクは自分で選べます。",
     captureTip: "ヒント：スマホを三脚や手すりに固定して、コート全体が映るように撮った動画がいちばんうまくいきます。ボールを追ってカメラを動かすと、画面の外に出た自分を見失うことがあります。",
-    pickVideo: "動画を選ぶ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
+    pickVideo: "動画を選ぶ", matchLabel: "試合名（任意、保存ファイル名に使います）", fileHighlight: "ハイライト", fileReel: "まとめ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
     findingRallies: "ラリーを探しています…（動画の長さにより数分）",
     pickRally: "自分のチームが得点したラリーを選んでください", pickRallyHint: "AIの判定は間違うことがあります。どの候補でも選べます。",
     unread: "AIがこの区間を読み取れませんでした。ここに得点があればリストにないかもしれません: {r}",
@@ -268,7 +269,7 @@ const T = {
     stCommentary: "Writing commentary subtitles…", stRender: "Making the video… {p}%", stWorking: "Working…",
     uploadIntro: "Upload a match video and we'll find the rallies. Anything sent to the AI is always face-blurred first. You choose whether the final video pixelates faces.",
     captureTip: "Tip: works best when the phone is fixed on a tripod or railing with the whole court in view. If the camera follows the ball, it can lose you when you leave the frame.",
-    pickVideo: "Choose a video", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
+    pickVideo: "Choose a video", matchLabel: "Match name (optional, used in saved file names)", fileHighlight: "highlight", fileReel: "reel", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
     findingRallies: "Finding rallies… (a few minutes, depending on length)",
     pickRally: "Pick a rally your team scored", pickRallyHint: "The AI can be wrong. You can pick any candidate.",
     unread: "The AI could not read these parts. Points there may be missing from the list: {r}",
@@ -503,6 +504,8 @@ function renderReel(s) {
     if ($("reel").dataset.src !== url) { $("reel").src = url; $("reel").dataset.src = url; }
     $("reel").hidden = $("reel-actions").hidden = false;
     $("reel-download").href = url;
+    const first = s.scenes[String(reel.order[0])] || {};
+    $("reel-download").download = fileName(s, first.team, t("fileReel"));
   }
 }
 
@@ -629,6 +632,7 @@ function renderResult(scene) {
   if ($("result").dataset.src !== url) { $("result").src = url; $("result").dataset.src = url; }
   $("result").hidden = $("result-actions").hidden = false;
   $("download").href = url;
+  $("download").download = fileName(state.last, scene.team, t("fileHighlight"), scene.number);
   const lines = (scene.options.languages.length && scene.commentary) || [];
   $("result-status").textContent = lines.length ? t("commentary", { c: lines.map((l) => l[state.lang] || l.en).join(" → ") }) : "";
   if (!$("opts-result").children.length) mountOptions("opts-result", scene.options);
@@ -650,8 +654,16 @@ async function shareVideo(url, name) {
   } catch (e) { if (e.name === "AbortError") return; }
   const a = document.createElement("a"); a.href = url; a.download = name; a.click();
 }
-$("share").onclick = () => shareVideo($("download").href, "highlight.mp4");
-$("reel-share").onclick = () => shareVideo($("reel-download").href, "reel.mp4");
+$("share").onclick = () => shareVideo($("download").href, $("download").download || "highlight.mp4");
+$("reel-share").onclick = () => shareVideo($("reel-download").href, $("reel-download").download || "reel.mp4");
+
+// 저장 파일 이름: 경기이름_팀이름_하이라이트_01.mp4 (여러 개 저장해도 겹치지 않게, 10/30 사용자 요청)
+function fileName(s, team, kind, number) {
+  const clean = (x) => String(x || "").replace(/[\\/:*?"<>|#%]+/g, "").trim().replace(/\s+/g, "_");
+  const parts = [clean(s && s.match_name), clean(team), kind].filter(Boolean);
+  if (number) parts.push(String(number).padStart(2, "0"));
+  return parts.join("_") + ".mp4";
+}
 
 for (const id of ["back-rallies", "back-rallies2"]) {
   $(id).onclick = () => { state.rally = null; $("opts-result").replaceChildren(); $("opts-tap").replaceChildren(); setHash(); startPolling(); };
@@ -660,7 +672,7 @@ for (const id of ["back-rallies", "back-rallies2"]) {
 // 업로드: 진행률을 보여 주려고 XHR을 쓴다
 $("file").addEventListener("change", () => {
   const f = $("file").files[0]; if (!f) return;
-  const form = new FormData(); form.append("file", f);
+  const form = new FormData(); form.append("file", f); form.append("match", $("match-name").value);
   const xhr = new XMLHttpRequest();
   $("up-progress").hidden = false; $("upload-warn").hidden = false; setError("");
   xhr.upload.onprogress = (e) => {

@@ -31,6 +31,10 @@ MODEL_PATH = Path(__file__).resolve().parent / "models" / "face_detection_yunet_
 SCORE_THRESHOLD = 0.5
 DETECT_UPSCALE = 2.0  # 프레임을 이만큼 키워 YuNet을 돌린다(작은 얼굴)
 PROFILE_MIN_NEIGHBORS = 4
+PROFILE_SCALE_FACTOR = 1.1  # 결과 영상 모자이크(render.py)는 그대로
+# Meta로 보내는 흐림본: 옆얼굴 검출 간격을 넓혀 1시간 영상 랠리 찾기 78분 → 약 47분. 지금 방식이 찾는 얼굴의 99.4%를
+# 그대로 가린다(H-41, 10/30 사용자 결정). 옆얼굴 검출기가 시간의 60%를 쓰고 더하는 얼굴은 0.7%였다
+FAST_PROFILE_SCALE_FACTOR = 1.2
 NMS_THRESHOLD = 0.3
 MAX_FACES = 5000
 BOX_PAD = 0.25  # 얼굴 박스를 각 변 기준 이 비율만큼 넓힌다(귀·머리카락까지 가리기 위해)
@@ -55,6 +59,7 @@ def detect_faces(
     frame: np.ndarray,
     detector: cv2.FaceDetectorYN,
     profile: cv2.CascadeClassifier | None = None,
+    profile_scale: float = PROFILE_SCALE_FACTOR,
 ) -> list[tuple[int, int, int, int]]:
     """프레임에서 얼굴 박스 (x, y, w, h) 목록을 돌려준다.
 
@@ -72,7 +77,7 @@ def detect_faces(
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         for flipped in (False, True):
             img = cv2.flip(gray, 1) if flipped else gray
-            for x, y, bw, bh in profile.detectMultiScale(img, minNeighbors=PROFILE_MIN_NEIGHBORS):
+            for x, y, bw, bh in profile.detectMultiScale(img, scaleFactor=profile_scale, minNeighbors=PROFILE_MIN_NEIGHBORS):
                 x = w - int(x) - int(bw) if flipped else int(x)
                 boxes.append((x, int(y), int(bw), int(bh)))
     return boxes
@@ -134,7 +139,7 @@ def anonymize_video(src: Path, dst: Path) -> dict[str, int]:
                 writer = cv2.VideoWriter(
                     str(silent), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
                 )
-            boxes = detect_faces(frame, detector, profile)
+            boxes = detect_faces(frame, detector, profile, FAST_PROFILE_SCALE_FACTOR)
             stats["frames"] += 1
             if boxes:
                 stats["frames_with_faces"] += 1
