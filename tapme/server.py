@@ -182,11 +182,18 @@ def rally_preview(job_id: str, index: int) -> FileResponse:
 
 
 @app.post("/jobs/{job_id}/rallies/{index}/prepare")
-def prepare(job_id: str, index: int, background: BackgroundTasks) -> dict[str, str]:
+def prepare(job_id: str, index: int, background: BackgroundTasks, ahead: bool = False) -> dict[str, str]:
+    """ahead=true: 사용자가 미리보기를 열었을 때 뒤에서 미리 준비한다(고르면 탭 화면이 바로 뜨게). 비용이 없을 때
+    (훑어보기가 득점 순간을 이미 찾은 랠리)와 다른 단계가 돌지 않을 때만. 아니면 아무것도 하지 않는다."""
     job = _job(job_id)
     if not 0 <= index < len(job.rallies):
         raise HTTPException(404, "랠리가 없다")
     scene = job.scenes.get(str(index))
+    if ahead:
+        if scene is not None or job.rallies[index].get("point_sec") is None or _step_lock.locked():
+            return {"status": "skipped"}
+        background.add_task(_run, job_id, jobs.prepare_scene, index, client_factory())
+        return {"status": "preparing"}
     failed_before = scene is not None and scene.get("status") == "preparing" and job.error
     if scene is not None and not failed_before:
         # 다시 준비하면 Muse 비용이 또 들고 만든 결과가 지워진다. 앞서 준비하다 실패했을 때만 다시 한다

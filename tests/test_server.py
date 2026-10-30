@@ -162,3 +162,25 @@ def test_upload_keeps_the_match_name_for_saved_file_names(client: TestClient) ->
     unnamed = client.post("/jobs", files={"file": ("IMG_0148.mov", b"v")}).json()["id"]
     assert client.get(f"/jobs/{named}").json()["match_name"] == "10/30 정모 2경기"
     assert client.get(f"/jobs/{unnamed}").json()["match_name"] == "IMG_0148"
+
+
+def test_preparing_ahead_runs_only_when_free_and_idle(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 미리보기를 열면 뒤에서 장면을 미리 준비한다. 비용이 드는 랠리(득점 순간을 모름)나 다른 단계가 돌 때는 하지 않는다
+    calls = []
+
+    def fake_prepare(job: jobs.Job, index: int, c) -> None:
+        calls.append(index)
+        job.scenes[str(index)] = {"index": index, "status": "awaiting_tap"}
+        job.save()
+
+    monkeypatch.setattr(jobs, "prepare_scene", fake_prepare)
+    job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
+    assert client.post(f"/jobs/{job_id}/rallies/0/prepare?ahead=true").json()["status"] == "skipped"  # point_sec 없음
+    job = jobs.load_job(job_id)
+    job.rallies[0]["point_sec"] = 8.0
+    job.save()
+    with server._step_lock:
+        assert client.post(f"/jobs/{job_id}/rallies/0/prepare?ahead=true").json()["status"] == "skipped"  # 바쁨
+    assert client.post(f"/jobs/{job_id}/rallies/0/prepare?ahead=true").json()["status"] == "preparing"
+    assert client.post(f"/jobs/{job_id}/rallies/0/prepare?ahead=true").json()["status"] == "skipped"  # 이미 있음
+    assert calls == [0]

@@ -461,6 +461,8 @@ function renderRallies(s) {
     const play = document.createElement("span"); play.textContent = "▶";
     thumb.append(img, play);
     thumb.onclick = () => {
+      // 미리보기를 보는 동안 뒤에서 장면을 미리 준비한다(비용 없을 때만, 서버가 판단). 고르면 탭 화면이 바로 뜬다
+      fetch(`/jobs/${state.job}/rallies/${r.index}/prepare?ahead=true`, { method: "POST" }).catch(() => {});
       const v = document.createElement("video");
       v.src = `/jobs/${state.job}/rallies/${r.index}/preview`; v.controls = true; v.autoplay = true; v.playsInline = true;
       thumb.replaceWith(v);
@@ -479,7 +481,8 @@ function renderRallies(s) {
       state.rally = r.index; setHash();
       // 이미 준비했거나 만든 장면은 그대로 연다. 다시 준비하면 돈이 또 들고 결과가 지워진다
       const sc = state.last && state.last.scenes[String(r.index)];
-      if (!sc || (sc.status !== "awaiting_tap" && sc.status !== "done")) {
+      // 미리 준비 중(preparing)이면 기다리기만 한다. 준비하다 실패했을 때만 다시 요청
+      if (!sc || (sc.status === "preparing" && state.last.error)) {
         try { await api(`/jobs/${state.job}/rallies/${r.index}/prepare`, { method: "POST" }); } catch (e) { setError(e.message); }
       }
       startPolling();
