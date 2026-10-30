@@ -46,6 +46,7 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--color-acce
 .opts .field:last-child { grid-column: 1 / -1; }
 .actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-xs); }
 .actions a { display: block; text-decoration: none; }
+.actions:has(> button[hidden]) { grid-template-columns: minmax(0, 1fr); }
 .actions button { white-space: nowrap; }
 
 /* 판: 한 단계 밝은 바탕에 가는 선 */

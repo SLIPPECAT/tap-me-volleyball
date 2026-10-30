@@ -631,6 +631,10 @@ async function shareVideo(url, name) {
   } catch (e) { if (e.name === "AbortError") return; }
   const a = document.createElement("a"); a.href = url; a.download = name; a.click();
 }
+// 폰 공유 시트(Web Share)는 HTTPS 주소에서만 열린다. 쓸 수 없으면 '공유'를 숨기고 '저장'만 둔다
+// (http 주소에서는 공유가 저장으로 대신 처리돼 두 버튼이 같았다, 10/30 사용자)
+const CAN_SHARE = window.isSecureContext && typeof navigator.share === "function" && typeof navigator.canShare === "function";
+$("share").hidden = $("reel-share").hidden = !CAN_SHARE;
 $("share").onclick = () => shareVideo($("download").href, $("download").download || "highlight.mp4");
 $("reel-share").onclick = () => shareVideo($("reel-download").href, $("reel-download").download || "reel.mp4");
 
