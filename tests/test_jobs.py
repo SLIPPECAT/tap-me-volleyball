@@ -51,9 +51,9 @@ def test_budget_cap_stops_paid_step(job: jobs.Job, monkeypatch: pytest.MonkeyPat
 def test_prepare_scene_window_is_in_source_time(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(score, "ask_score_time", lambda c, clip: ({"score_time_sec": 8.5}, _reply()))
     scene = jobs.prepare_scene(job, 0, client=None)
-    # 클립은 원본 4.0초에서 시작 → 득점 12.5초 → 7초 전~3초 뒤
+    # 클립은 원본 4.0초에서 시작 → 득점 12.5초 → 7초 전~5초 뒤
     assert scene["score_sec"] == 12.5
-    assert scene["window"] == [5.5, 15.5]
+    assert scene["window"] == [5.5, 17.5]
     assert scene["status"] == "awaiting_tap"
     # 탭할 장면 5장: 득점 순간·1.5/3/4.5초 전·구간 시작. 가짜 SAM 클립이 5프레임뿐이라 앞 셋은 마지막 프레임
     assert scene["tap_frames"] == {"score": 4, "b1": 4, "b2": 4, "b3": 4, "start": 0}
@@ -105,8 +105,9 @@ def test_tap_sends_points_from_both_scenes_and_keeps_visible_span(job: jobs.Job,
     # 두 장면의 탭이 한 선수의 점으로 간다(득점 순간 = SAM 프레임 4, 시작 = 0)
     assert "<4f>0<|point;x=240;y=240" in sam[0] and "<0f>0<|point;x=175;y=240" in sam[0]
     assert len(sam) == 1  # 얼굴만 가리기는 다른 선수 추적이, 자막을 끄면 해설(Muse)이 필요 없다
-    # '나'는 SAM 프레임 0·1(5.5~5.7초)에만 있다. 영상은 그 구간과 최소 득점 4초 전~2초 뒤(8.5~14.5초)를 모두 담는다
-    assert scene["span_frames"] == [0, 1] and scene["clip"] == [5.5, 14.5]
+    # '나'는 SAM 프레임 0·1(5.5~5.7초)에만 있다. 영상은 그 구간과 최소 득점 4초 전~4초 뒤(8.5~16.5초)를 모두 담는다
+    # (득점 시각이 ±4초 어긋나도 실제 득점이 들어가게, H-43)
+    assert scene["span_frames"] == [0, 1] and scene["clip"] == [5.5, 16.5]
     assert scene["status"] == "done" and Path(scene["video"]).exists()
     assert scene["clip_is_original"] and scene["options"]["face_mosaic"] is True
 
@@ -195,8 +196,8 @@ def _scene_video(path: Path, seconds: int, color: str) -> Path:
 
 
 def test_reel_joins_scenes_around_each_score(job: jobs.Job, tmp_path: Path) -> None:
-    # 장면 0: 창 5.5~15.5초, 득점 12.5초 → 창 안 7.0초 → 2.0~9.0초를 씀
-    # 장면 1: 창 0~6초(득점이 영상 앞쪽이라 앞이 잘림), 득점 3.0초 → 0~5.0초를 씀
+    # 장면 0: 창 5.5~15.5초(영상 10초), 득점 12.5초 → 창 안 7.0초 → 2.0~10.0초(뒤 4초가 영상 끝에서 잘림)
+    # 장면 1: 창 0~6초(득점이 영상 앞쪽이라 앞이 잘림), 득점 3.0초 → 0~6.0초를 씀
     job.scenes = {
         "0": {"status": "done", "score_sec": 12.5, "window": [5.5, 15.5], "video": str(_scene_video(tmp_path / "a.mp4", 10, "red"))},
         "1": {"status": "done", "score_sec": 3.0, "window": [0.0, 6.0], "video": str(_scene_video(tmp_path / "b.mp4", 6, "blue"))},
@@ -204,7 +205,7 @@ def test_reel_joins_scenes_around_each_score(job: jobs.Job, tmp_path: Path) -> N
     out = jobs.make_reel(job, [1, 0])
     w, h, fps, n = __import__("tapme.render", fromlist=["probe"]).probe(Path(out["video"]))
     assert (w, h, round(fps)) == (90, 160, 30)
-    assert abs(n / fps - 12.0) < 0.2  # 5초 + 7초
+    assert abs(n / fps - 14.0) < 0.2  # 6초 + 8초
     assert out["order"] == [1, 0]  # 사용자가 고른 순서
     assert jobs.load_job(job.id).reel["status"] == "done"
 
@@ -342,7 +343,7 @@ def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs
 
     monkeypatch.setattr(score, "ask_score_time", no_muse)
     scene = jobs.prepare_scene(saved, 0, client=None)
-    assert scene["score_sec"] == 12.5 and scene["window"] == [5.5, 15.5]
+    assert scene["score_sec"] == 12.5 and scene["window"] == [5.5, 17.5]
     assert jobs.load_job(job.id).spent_usd == pytest.approx(0.03)
 
 

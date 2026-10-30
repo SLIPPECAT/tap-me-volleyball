@@ -31,18 +31,19 @@ MAX_USD_PER_MIN = float(os.environ.get("TAPME_MAX_USD_PER_MIN", "0.05"))
 # 랠리 찾기: scan(기본, 60초 조각 훑어보기) 또는 whistle(정모 휘슬에 맞춘 예전 방식, 실험 H-17~H-33 기록·비교용)
 RALLY_MODE = os.environ.get("TAPME_RALLY_MODE", "scan")
 WINDOW_BEFORE_SEC = 7.0  # SAM은 50프레임보다 짧아도 50으로 과금된다(비용 원장 R-10·R-17)
-WINDOW_AFTER_SEC = 3.0
+WINDOW_AFTER_SEC = 5.0  # 훑어보기 득점 시각은 2~4초 어긋날 때가 있어(성능 테스트 4/68, H-43) 득점 뒤를 넉넉히
 # 10fps: 움직이는 카메라에서 5fps는 같은 사람을 더 자주 놓쳤다(실험 H-24 B<C). 장면당 SAM 약 $0.02
 SAM_FPS = 10
 # 탭할 장면: 득점 순간과 그 1.5·3·4.5초 전, 구간 시작. 내가 보이는 장면을 하나 이상 골라 탭한다
 # (득점 순간에 내가 화면에 없을 수 있다, 10/30 사용자 피드백). 값 = 득점 몇 초 전(None = 구간 시작)
 TAP_MOMENTS: dict[str, float | None] = {"score": 0.0, "b1": 1.5, "b2": 3.0, "b3": 4.5, "start": None}
 TAP_KINDS = tuple(TAP_MOMENTS)
-# 하이라이트 영상은 최소 득점 4초 전~2초 뒤. '나'를 확실히 잡은 구간이 이보다 짧으면 그 밖에서는 링·확대 따라가기를 하지 않는다
+# 하이라이트 영상은 최소 득점 4초 전~4초 뒤. 득점 시각이 ±4초 어긋나도 실제 득점이 들어가게(H-43: 다시 묻기는 답이 흔들려
+# 쓰지 않음). '나'를 확실히 잡은 구간이 이보다 짧으면 그 밖에서는 링·확대 따라가기를 하지 않는다
 CLIP_MIN_BEFORE_SEC = 4.0
-CLIP_MIN_AFTER_SEC = 2.0
-REEL_BEFORE_SEC = 5.0  # 모음 영상에는 장면마다 득점 5초 전~2초 뒤만. 3장면이면 약 20초
-REEL_AFTER_SEC = 2.0
+CLIP_MIN_AFTER_SEC = 4.0
+REEL_BEFORE_SEC = 5.0  # 모음 영상에는 장면마다 득점 5초 전~4초 뒤만. 3장면이면 약 27초
+REEL_AFTER_SEC = 4.0
 _lock = threading.Lock()
 
 
