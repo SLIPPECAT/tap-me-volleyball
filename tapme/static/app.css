@@ -1,0 +1,137 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Rim (deal 2/3, seed phone-tool-where-amateur-6fc1·9089dff3·2026-10-30·r0) · redesign: full
+ * nav: kept, a top bar with the wordmark and the language switch · signature: the rally ledger, ruled rows with the time in mono · states: finding (progress and a partial list), empty, error, unsure
+ * axes: dark/grotesk-sans/warm · posture: committed · contrast: pass · v2.0.0 */
+/* Hallmark · waive 28b · the result and reel videos load only after the user makes them · each clip is their own render and no still of it exists before the clip does */
+/* Hallmark · dismissed 40 · the 3.37:1 pair is button:disabled, and disabled controls are exempt from the contrast threshold */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · weakest: V, an app screen keeps the flow it had; the rally list became a time ledger instead of rounded cards */
+@import url("./tokens.css");
+@import url("./base.css");
+
+/* 화면 틀: 폰은 한 줄, 넓어지면 단계마다 두 칸 */
+.bar { position: sticky; top: 0; z-index: var(--z-sticky-nav); background: var(--color-paper); border-bottom: var(--rule-hair) solid var(--color-rule); }
+.bar-in { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); max-width: var(--container); margin-inline: auto; padding: var(--space-sm) var(--gutter); }
+.bar h1 { font-size: var(--text-lg); letter-spacing: -0.02em; max-width: none; white-space: nowrap; }
+main { max-width: var(--container); margin-inline: auto; padding: var(--space-lg) var(--gutter) calc(var(--space-xl) + env(safe-area-inset-bottom)); }
+main > section { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-md); }
+h2 { font-size: var(--text-xl); letter-spacing: -0.03em; }
+.muted { color: var(--color-muted); font-size: var(--text-sm); }
+.error { color: var(--color-error); font-weight: 500; }
+.error:not(:empty) { border-left: 2px solid var(--color-error); padding-left: var(--space-sm); }
+
+/* 언어 바꾸기: 붙은 세 칸 */
+.langs-ui { display: flex; }
+.langs-ui button { min-height: 32px; padding: var(--space-2xs) var(--space-sm); font-size: var(--text-sm); margin-left: -1px; }
+.langs-ui button[aria-pressed=true] { background: var(--color-paper-2); color: var(--color-accent); border-color: var(--color-accent); position: relative; z-index: var(--z-base); }
+
+/* 버튼·입력: 각진 모서리, 테두리 굵기는 상태가 바뀌어도 그대로 */
+button, select, input[type=text] { min-height: 44px; padding: var(--space-xs) var(--space-md); border: var(--rule-hair) solid var(--color-rule); border-radius: 0; background: var(--color-paper); color: var(--color-ink); }
+button { cursor: pointer; font-weight: 500; transition: background-color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out); }
+button:hover { background: var(--color-paper-2); border-color: var(--color-muted-2); }
+button:active { background: var(--color-paper-3); }
+button:disabled, button:disabled:hover { cursor: not-allowed; background: var(--color-paper-2); border-color: var(--color-rule-2); color: var(--color-muted-2); opacity: 0.7; }
+button.primary { width: 100%; background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-ink); }
+button.primary:hover { background: var(--color-focus); border-color: var(--color-focus); }
+button.primary:active { background: var(--color-accent); transform: translateY(1px); }
+button.primary:disabled, button.primary:disabled:hover { opacity: 1; cursor: not-allowed; background: var(--color-paper-2); border-color: color-mix(in oklab, var(--color-accent) 35%, var(--color-rule)); color: var(--color-muted); transform: none; }
+input[type=text], select { width: 100%; border-color: var(--color-muted-2); }
+input[type=text]:hover, select:hover { border-color: var(--color-muted); }
+input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--color-accent); }
+.field { display: grid; gap: var(--space-2xs); }
+.field > label:first-child:not(.switch) { color: var(--color-muted); font-size: var(--text-sm); font-weight: 500; }
+.field label.switch { display: flex; align-items: center; gap: var(--space-sm); min-height: 44px; color: var(--color-ink); cursor: pointer; }
+.sublangs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-lg); }
+.sublangs label:not(:first-child) { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: 44px; color: var(--color-ink); }
+.sublangs label:first-child { flex-basis: 100%; }
+.opts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-sm); }
+.opts .field:last-child { grid-column: 1 / -1; }
+.actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-xs); }
+.actions a { display: block; text-decoration: none; }
+.actions button { white-space: nowrap; }
+
+/* 판: 한 단계 밝은 바탕에 가는 선 */
+.card { background: var(--color-paper-2); color: var(--color-ink); border: var(--rule-hair) solid var(--color-rule); padding: var(--space-md); }
+details { border-top: var(--rule-hair) solid var(--color-rule); padding-top: var(--space-sm); }
+summary { cursor: pointer; font-weight: 500; min-height: 44px; display: flex; align-items: center; }
+summary::after { content: "+"; margin-left: auto; color: var(--color-muted); }
+details[open] > summary::after { content: "−"; }
+summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+#wait-box { display: grid; gap: var(--space-sm); margin-bottom: var(--space-lg); }
+#wait-step { font-weight: 500; }
+#wait-cost, #spent { font-family: var(--font-outlier); font-variant-numeric: tabular-nums; }
+#spent:empty { display: none; }
+#spent { margin-top: var(--space-xl); padding-top: var(--space-sm); border-top: var(--rule-hair) solid var(--color-rule-2); }
+
+/* 진행: 막대는 폭이 아니라 비율로 늘린다 */
+.progress { height: 4px; background: var(--color-rule); overflow: hidden; }
+.progress div { height: 100%; width: 100%; background: var(--color-accent); transform: scaleX(0); transform-origin: left center; transition: transform var(--dur-short) var(--ease-out); }
+
+/* 1. 올리기 */
+#s-upload { max-width: 40rem; margin-inline: auto; }
+.drop { display: grid; place-items: center; min-height: 160px; padding: var(--space-lg); border: var(--rule-hair) dashed var(--color-muted-2); background: var(--color-paper-2); cursor: pointer; text-align: center; font-weight: 500; transition: border-color var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out); }
+.drop:hover { border-color: var(--color-accent); background: var(--color-paper); }
+.drop:focus-within { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.drop span { background: var(--color-accent); color: var(--color-accent-ink); padding: var(--space-xs) var(--space-lg); }
+.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+/* 2. 랠리 장부: 가는 선으로 나뉜 행, 시각은 고정폭 */
+#rally-list { display: grid; grid-template-columns: minmax(0, 1fr); border-top: var(--rule-hair) solid var(--color-rule); }
+.card.rally { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: var(--space-sm); align-items: start; padding: var(--space-sm) 0; background: none; border: 0; border-bottom: var(--rule-hair) solid var(--color-rule-2); }
+.card.rally > div { display: grid; gap: var(--space-2xs); min-width: 0; }
+.card.rally .row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-xs); }
+.card.rally strong { font-family: var(--font-outlier); font-weight: 400; font-variant-numeric: tabular-nums; font-size: var(--text-md); }
+.card.rally button:not(.thumb) { justify-self: start; min-height: 40px; padding: var(--space-2xs) var(--space-md); margin-top: var(--space-2xs); }
+.card.rally video { grid-column: 1 / -1; max-height: 70dvh; object-fit: contain; background: var(--color-paper-3); color: var(--color-ink); }
+.thumb { position: relative; padding: 0; border: var(--rule-hair) solid var(--color-rule); width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: var(--color-paper-3); min-height: 0; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; }
+.thumb span { position: absolute; left: var(--space-2xs); bottom: var(--space-2xs); display: grid; place-items: center; width: 24px; height: 24px; font-size: var(--text-xs); background: color-mix(in oklab, var(--color-paper-3) 78%, transparent); color: var(--color-ink); }
+.thumb:hover { border-color: var(--color-accent); background: var(--color-paper-3); }
+.tag { font-size: var(--text-xs); font-weight: 500; padding: var(--space-3xs) var(--space-xs); border: var(--rule-hair) solid currentColor; white-space: nowrap; }
+.tag.yes { color: var(--color-ink-2); }
+.tag.no { color: var(--color-muted-2); }
+.tag.unsure { color: var(--color-accent-2); }
+.tag.done { color: var(--color-ink); background: var(--color-paper-3); }
+#scan-note, #unread, #no-rallies { border-left: 2px solid var(--color-accent-2); }
+#reel-box { display: grid; gap: var(--space-sm); margin-top: var(--space-lg); padding-top: var(--space-lg); border-top: var(--rule-hair) solid var(--color-rule); }
+#reel-pick label { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: 44px; margin-right: var(--space-md); }
+
+/* 3. 나 고르기 */
+.moments { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-2xs); }
+.moments button { position: relative; padding: 0; min-height: 0; border: 2px solid transparent; overflow: hidden; background: var(--color-paper-3); color: var(--color-ink); }
+.moments button[aria-selected=true] { border-color: var(--color-accent); }
+.moments img { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; }
+.moments span { position: absolute; left: 0; right: 0; bottom: 0; padding: var(--space-3xs); font-size: var(--text-xs); background: color-mix(in oklab, var(--color-paper-3) 78%, transparent); }
+.moments b { position: absolute; top: var(--space-3xs); right: var(--space-2xs); color: var(--color-accent); font-size: var(--text-md); }
+.cards { display: flex; gap: var(--space-2xs); overflow-x: auto; padding-bottom: var(--space-xs); -webkit-overflow-scrolling: touch; }
+.cards button { flex: 0 0 auto; width: 64px; height: 96px; min-height: 0; padding: 0; border: 2px solid transparent; overflow: hidden; background: var(--color-paper-3); color: var(--color-ink); }
+.cards button[aria-selected=true] { border-color: var(--color-accent); }
+.cards img { width: 100%; height: 100%; object-fit: cover; }
+.zoombar { display: flex; align-items: center; gap: var(--space-xs); }
+.zoombar button { width: 44px; padding: 0; }
+.tapzoom { overflow: auto; max-height: 70dvh; border: var(--rule-hair) solid var(--color-rule); -webkit-overflow-scrolling: touch; }
+.tapwrap { position: relative; width: 100%; }
+.tapwrap img { width: 100%; }
+.marker { position: absolute; width: 28px; height: 28px; transform: translate(-50%, -50%); border: 3px solid var(--color-accent); outline: 2px solid color-mix(in oklab, var(--color-paper-3) 60%, transparent); pointer-events: none; display: none; }
+.pickbox { position: absolute; border: 3px solid var(--color-accent); outline: 2px solid color-mix(in oklab, var(--color-paper-3) 60%, transparent); pointer-events: none; display: none; }
+.tap-main, .tap-side, .result-main, .result-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-md); align-content: start; min-width: 0; }
+#tap-box:not([hidden]), .result-grid { display: grid; gap: var(--space-xl); }
+#tap-box, .result-grid { grid-template-columns: minmax(0, 1fr); }
+
+/* 4. 결과 */
+video { width: 100%; background: var(--color-paper-3); }
+#result { max-height: 78dvh; object-fit: contain; }
+
+/* 태블릿: 장부 두 칸 */
+@media (min-width: 40rem) {
+  #rally-list { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--space-lg); }
+  .card.rally { grid-template-columns: 160px minmax(0, 1fr); }
+  .opts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .opts .field:last-child { grid-column: auto; }
+}
+
+/* 데스크톱: 단계마다 두 칸(왼쪽은 장면, 오른쪽은 고르기·옵션) */
+@media (min-width: 64rem) {
+  #rally-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #tap-box, .result-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: var(--space-xl); align-items: start; }
+  .tap-side, .result-side { position: sticky; top: calc(var(--space-3xl) - var(--space-md)); }
+  #result { max-height: calc(100dvh - 260px); }
+}

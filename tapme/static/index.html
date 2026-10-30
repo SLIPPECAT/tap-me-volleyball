@@ -8,76 +8,23 @@
 <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Tap Me">
-<meta name="theme-color" content="#0c111d">
-<style>
-  :root { --fg: #14181f; --muted: #667085; --line: #e4e7ec; --bg: #ffffff; --card: #f9fafb; --accent: #0091b3; --warn: #b54708; --bad: #b42318; }
-  @media (prefers-color-scheme: dark) {
-    :root { --fg: #f2f4f7; --muted: #98a2b3; --line: #344054; --bg: #0c111d; --card: #121826; --accent: #3ec5e6; --warn: #fdb022; --bad: #f97066; }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 -apple-system, "Apple SD Gothic Neo", "Hiragino Sans", sans-serif; }
-  main { max-width: 560px; margin: 0 auto; padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); }
-  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-  h1 { font-size: 20px; margin: 0; }
-  h2 { font-size: 17px; margin: 20px 0 8px; }
-  .langs-ui button { padding: 4px 8px; font-size: 13px; border-radius: 8px; }
-  .langs-ui button[aria-pressed=true] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
-  .muted { color: var(--muted); font-size: 14px; }
-  .error { color: var(--bad); font-weight: 600; }
-  button, select, input[type=text] { font: inherit; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; width: 100%; }
-  button:disabled { opacity: .5; }
-  .card { border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 12px; margin: 8px 0; }
-  .card .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .card.rally { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: start; }
-  .thumb { position: relative; padding: 0; border: 0; border-radius: 8px; overflow: hidden; width: 96px; aspect-ratio: 9 / 16; background: #000; }
-  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .thumb span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 28px; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.7); }
-  .card.rally video { grid-column: 1 / -1; max-height: 70vh; object-fit: contain; }
-  .tag { font-size: 13px; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
-  .tag.yes { color: var(--accent); } .tag.no { color: var(--muted); } .tag.unsure { color: var(--warn); } .tag.done { color: var(--fg); }
-  .drop { display: block; border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center; cursor: pointer; }
-  .drop input { display: none; }
-  .tapzoom { overflow: auto; border-radius: 10px; max-height: 70vh; -webkit-overflow-scrolling: touch; }
-  .tapwrap { position: relative; width: 100%; }
-  .tapwrap img { width: 100%; display: block; }
-  .marker { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border: 3px solid var(--accent); border-radius: 50%; pointer-events: none; display: none; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
-  .zoombar { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
-  .cards { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px; -webkit-overflow-scrolling: touch; }
-  .cards button { flex: 0 0 auto; width: 64px; height: 96px; padding: 0; border: 3px solid transparent; border-radius: 8px; overflow: hidden; background: #000; }
-  .cards button[aria-selected=true] { border-color: var(--accent); }
-  .cards img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .pickbox { position: absolute; border: 3px solid var(--accent); border-radius: 4px; pointer-events: none; display: none; box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
-  .moments { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 8px 0; }
-  .moments button { position: relative; padding: 0; border: 3px solid transparent; border-radius: 8px; overflow: hidden; background: #000; color: #fff; }
-  .moments button[aria-selected=true] { border-color: var(--accent); }
-  .moments img { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; display: block; opacity: .85; }
-  .moments span { position: absolute; left: 0; right: 0; bottom: 0; font-size: 11px; padding: 2px; background: rgba(0,0,0,.6); }
-  .moments b { position: absolute; top: 2px; right: 4px; color: var(--accent); font-size: 16px; }
-  details { margin: 12px 0; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; }
-  summary { cursor: pointer; font-weight: 600; }
-  .field { margin: 12px 0; }
-  .field label { display: block; font-size: 14px; color: var(--muted); margin-bottom: 4px; }
-  .sublangs label { display: inline-flex; gap: 6px; margin-right: 16px; color: var(--fg); font-size: 16px; }
-  .field label.switch { display: inline-flex; gap: 8px; align-items: center; color: var(--fg); font-size: 16px; }
-  .role { width: 100%; }
-  .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .opts select { width: 100%; }
-  video { width: 100%; border-radius: 10px; background: #000; }
-  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
-  .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 8px 0; }
-  .progress div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
-  [hidden] { display: none !important; }
-</style>
+<meta name="theme-color" content="#0f0d0b">
+<meta name="description" content="경기 영상에서 우리 팀 득점 장면을 찾아, 나를 고르면 세로 하이라이트를 만들어 줍니다.">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link href="https://api.fontshare.com/v2/css?f[]=switzer@400,500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<main>
-  <header>
+<header class="bar">
+  <div class="bar-in">
     <h1>Tap Me Volleyball</h1>
     <div class="langs-ui" role="group" aria-label="Language">
       <button data-lang="ko">한</button><button data-lang="ja">日</button><button data-lang="en">EN</button>
     </div>
-  </header>
+  </div>
+</header>
+<main>
   <p class="error" id="error" role="alert" hidden></p>
 
   <!-- 처리 중: 지금 단계 + 닫아도 됨 + 그동안 옵션 미리 정하기 -->
@@ -131,33 +78,43 @@
     <h2 data-t="tapTitle"></h2>
     <p class="muted" id="tap-status" aria-live="polite"></p>
     <div id="tap-box" hidden>
-      <div class="moments" id="moments" role="tablist"></div>
-      <p class="muted" id="players-status" aria-live="polite"></p>
-      <div id="tapper-host"></div>
-      <p><button id="clear-tap" data-t="clearTap"></button></p>
-      <div class="field">
-        <label for="team" data-t="teamLabel"></label>
-        <input type="text" id="team" maxlength="20">
+      <div class="tap-main">
+        <div class="moments" id="moments" role="tablist"></div>
+        <p class="muted" id="players-status" aria-live="polite"></p>
+        <div id="tapper-host"></div>
+        <p><button id="clear-tap" data-t="clearTap"></button></p>
       </div>
-      <div id="opts-tap"></div>
-      <button class="primary" id="make" disabled data-t="make"></button>
+      <div class="tap-side">
+        <div class="field">
+          <label for="team" data-t="teamLabel"></label>
+          <input type="text" id="team" maxlength="20">
+        </div>
+        <div id="opts-tap"></div>
+        <button class="primary" id="make" disabled data-t="make"></button>
+        <p><button id="back-rallies" data-t="otherRally"></button></p>
+      </div>
     </div>
-    <p><button id="back-rallies" data-t="otherRally"></button></p>
   </section>
 
   <!-- 4. 결과 -->
   <section id="s-result" hidden>
     <h2 data-t="resultTitle"></h2>
     <p class="muted" id="result-status" aria-live="polite"></p>
-    <video id="result" controls playsinline hidden></video>
-    <div class="actions" id="result-actions" hidden>
-      <button id="share" data-t="share"></button><a id="download" download="highlight.mp4"><button style="width:100%" data-t="save"></button></a>
+    <div class="result-grid">
+      <div class="result-main">
+        <video id="result" controls playsinline hidden></video>
+        <div class="actions" id="result-actions" hidden>
+          <button id="share" data-t="share"></button><a id="download" download="highlight.mp4"><button style="width:100%" data-t="save"></button></a>
+        </div>
+      </div>
+      <div class="result-side">
+        <h2 data-t="changeOptions"></h2>
+        <p class="muted" data-t="rerenderHint"></p>
+        <div id="opts-result"></div>
+        <button class="primary" id="rerender" data-t="rerender"></button>
+        <p><button id="back-rallies2" data-t="otherRally"></button></p>
+      </div>
     </div>
-    <h2 data-t="changeOptions"></h2>
-    <p class="muted" data-t="rerenderHint"></p>
-    <div id="opts-result"></div>
-    <button class="primary" id="rerender" data-t="rerender"></button>
-    <p><button id="back-rallies2" data-t="otherRally"></button></p>
   </section>
 
   <p class="muted" id="spent"></p>
@@ -170,7 +127,7 @@
     <button class="zin" aria-label="zoom in">+</button>
     <span class="muted" data-t="zoomHint"></span>
   </div>
-  <div class="tapzoom"><div class="tapwrap"><img alt=""><div class="marker"></div><div class="pickbox"></div></div></div>
+  <div class="tapzoom"><div class="tapwrap"><div class="marker"></div><div class="pickbox"></div></div></div>
 </template>
 
 <template id="opts-tpl">
@@ -204,7 +161,7 @@
         <option value="2">2×</option><option value="2.5">2.5×</option>
       </select></div>
     <div class="field"><label data-t="fps"></label>
-      <select class="fps"><option value="0" selected data-t="fpsSource"></option><option value="30">30fps</option></select></div>
+      <select class="fps"><option value="0" selected data-t="fpsSource"></option><option value="30" data-t="fps30"></option></select></div>
   </div>
 </template>
 
@@ -234,7 +191,7 @@ const T = {
     resultTitle: "내 하이라이트", commentary: "해설: {c}", rerenderBusy: "다시 만드는 중…", share: "공유", save: "저장",
     changeOptions: "옵션 바꾸기", rerenderHint: "대부분 AI 비용 없이 다시 만들어요. 자막을 처음 켜거나 역할을 바꿀 때, 몸 실루엣을 처음 고를 때만 약 $0.01씩 들어요.", rerender: "다시 만들기",
     faceMosaic: "다른 회원 얼굴 모자이크 (내 얼굴은 그대로)", subsOn: "자막 넣기 (중계 해설처럼)", subLangs: "자막 언어", role: "이 득점에서 내 역할 (선택)",
-    roleNone: "고르지 않음", roleScore: "내가 직접 득점", roleAssist: "연결 (리시브·토스)", roleDefense: "수비로 살림", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대", fps: "프레임 수", fpsSource: "원본 그대로 (60fps면 더 부드럽지만 만들기가 느림)",
+    roleNone: "고르지 않음", roleScore: "내가 직접 득점", roleAssist: "연결 (리시브·토스)", roleDefense: "수비로 살림", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대", fps: "프레임 수", fpsSource: "원본 그대로", fps30: "30fps (빨리 만들기)",
     spent: "이 작업에 쓴 AI 비용 ${u}", reqFail: "요청 실패 ({c})",
   },
   ja: {
@@ -261,7 +218,7 @@ const T = {
     resultTitle: "自分のハイライト", commentary: "実況：{c}", rerenderBusy: "作り直しています…", share: "共有", save: "保存",
     changeOptions: "オプションを変える", rerenderHint: "ほとんどAIの費用なしで作り直します。字幕を初めて入れる・役割を変える・体のシルエットを初めて選ぶときだけ約$0.01ずつかかります。", rerender: "作り直す",
     faceMosaic: "ほかのメンバーの顔にモザイク（自分の顔はそのまま）", subsOn: "字幕を入れる（実況風）", subLangs: "字幕の言語", role: "この得点での自分の役割（任意）",
-    roleNone: "選ばない", roleScore: "自分で得点", roleAssist: "つなぎ（レシーブ・トス）", roleDefense: "守備でつないだ", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大", fps: "フレームレート", fpsSource: "元のまま（60fpsはなめらかだが作成に時間がかかる）",
+    roleNone: "選ばない", roleScore: "自分で得点", roleAssist: "つなぎ（レシーブ・トス）", roleDefense: "守備でつないだ", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大", fps: "フレームレート", fpsSource: "元のまま", fps30: "30fps（早く作る）",
     spent: "この作業のAI費用 ${u}", reqFail: "リクエスト失敗 ({c})",
   },
   en: {
@@ -288,7 +245,7 @@ const T = {
     resultTitle: "Your highlight", commentary: "Commentary: {c}", rerenderBusy: "Re-rendering…", share: "Share", save: "Save",
     changeOptions: "Change options", rerenderHint: "Re-rendering is mostly free. About $0.01 only when you first turn on subtitles, change your role, or first pick body silhouettes.", rerender: "Re-render",
     faceMosaic: "Pixelate other members' faces (yours stays clear)", subsOn: "Add subtitles (like live commentary)", subLangs: "Subtitle languages", role: "My role in this point (optional)",
-    roleNone: "Don't say", roleScore: "I scored it", roleAssist: "Set it up (pass/set)", roleDefense: "Saved it on defense", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom", fps: "Frame rate", fpsSource: "Same as source (60fps is smoother but slower to make)",
+    roleNone: "Don't say", roleScore: "I scored it", roleAssist: "Set it up (pass/set)", roleDefense: "Saved it on defense", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom", fps: "Frame rate", fpsSource: "Same as source", fps30: "30fps (faster)",
     spent: "AI cost for this job ${u}", reqFail: "Request failed ({c})",
   },
 };
@@ -396,7 +353,7 @@ function renderWait(s) {
     // 긴 영상은 오래 걸리고 비용도 커서 랠리 찾는 동안 길이와 예상 비용을 보여 준다
     $("wait-cost").hidden = !(s.status === "finding_rallies" && s.estimate_usd);
     if (!$("wait-cost").hidden) $("wait-cost").textContent = t("waitCost", { m: Math.max(1, Math.round(s.duration_sec / 60)), u: s.estimate_usd.toFixed(2) });
-    $("wait-progress").firstElementChild.style.width = `${pct}%`;
+    $("wait-progress").firstElementChild.style.transform = `scaleX(${pct / 100})`;
     if (!$("opts-prefs").children.length) {
       mountOptions("opts-prefs", state.prefs.options);
       $("team-pref").value = state.prefs.team || "";
@@ -536,6 +493,8 @@ function makeTapper(boxId, which, players) {
   box.replaceChildren($("tapper-tpl").content.cloneNode(true));
   box.querySelectorAll("[data-t]").forEach((el) => { el.textContent = t(el.dataset.t); });
   const zoomBox = box.querySelector(".tapzoom"), wrap = box.querySelector(".tapwrap");
+  // 장면 사진은 주소가 정해질 때 만든다(빈 img를 미리 두지 않는다)
+  box.querySelector(".tapwrap").prepend(Object.assign(document.createElement("img"), { alt: "" }));
   const img = box.querySelector(".tapwrap img"), marker = box.querySelector(".marker"), pickbox = box.querySelector(".pickbox");
   const cards = box.querySelector(".cards");
   const unpick = () => { cards.querySelectorAll("button").forEach((b) => b.setAttribute("aria-selected", "false")); pickbox.style.display = "none"; };
@@ -611,7 +570,7 @@ function renderTap() {
     state.taps = {}; state.tappers = {}; $("tapper-host").replaceChildren();
     const sc = (state.last && state.last.scenes[String(state.rally)]) || {};
     const kinds = KINDS.filter((k) => sc.tap_frames && k in sc.tap_frames);  // 예전 장면은 2장면만 있다
-    $("moments").style.gridTemplateColumns = `repeat(${kinds.length}, 1fr)`;
+    $("moments").style.gridTemplateColumns = `repeat(${kinds.length}, minmax(0, 1fr))`;
     $("moments").replaceChildren(...kinds.map((kind) => {
       const b = document.createElement("button"); b.dataset.kind = kind; b.setAttribute("role", "tab");
       const im = document.createElement("img"); im.alt = "";
@@ -692,7 +651,7 @@ $("file").addEventListener("change", () => {
   xhr.upload.onprogress = (e) => {
     if (!e.lengthComputable) return;
     const p = Math.round(100 * e.loaded / e.total);
-    $("up-progress").firstElementChild.style.width = `${p}%`; $("up-status").textContent = t("uploading", { p });
+    $("up-progress").firstElementChild.style.transform = `scaleX(${p / 100})`; $("up-status").textContent = t("uploading", { p });
   };
   xhr.onload = () => {
     $("upload-warn").hidden = true;

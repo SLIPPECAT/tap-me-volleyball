@@ -30,3 +30,6 @@ internal/
 # 도구 캐시
 .pytest_cache/
 .ruff_cache/
+
+# Hallmark 디자인 도구 기록·캡처(로컬)
+.hallmark/
