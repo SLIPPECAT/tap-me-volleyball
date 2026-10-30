@@ -148,9 +148,9 @@ def test_player_card_needs_a_listed_player(client: TestClient, monkeypatch: pyte
 
 
 def test_option_screen_preselects_the_server_default_zoom() -> None:
-    # 기본 확대를 바꿀 때 화면과 서버 기본값이 어긋나지 않게(10/30 2배 → 1.5배)
+    # 기본 확대를 바꿀 때 화면과 서버 기본값이 어긋나지 않게(10/30 2배 → 1배)
     import re
 
     html = (Path(server.__file__).parent / "static" / "index.html").read_text()
     picked = re.search(r'<option value="([\d.]+)" selected>[\d.]+×</option>', html)
-    assert picked and float(picked.group(1)) == render.DEFAULT_ZOOM == 1.5
+    assert picked and float(picked.group(1)) == render.DEFAULT_ZOOM == 1.0
