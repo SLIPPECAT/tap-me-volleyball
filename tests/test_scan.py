@@ -38,3 +38,12 @@ def test_hour_long_video_estimate_fits_the_length_based_budget() -> None:
     from tapme import jobs
 
     assert scan.estimate_usd(3600.0) < jobs.MAX_USD_PER_MIN * 60
+
+
+def test_close_points_keep_both_but_flag_the_less_sure_one() -> None:
+    # 대회 영상 C: 한 랠리를 7:30.0(0.92)·7:34.8(0.5) 둘로 짚음. B에는 7.7초 간격 진짜 득점도 있어 지우지 않는다
+    def chunk(*points):
+        return {"start": 0.0, "answer": {"rallies": [{"start_sec": p - 5, "point_sec": p, "confidence": c} for p, c in points]}}
+
+    rallies = scan.rallies_from_answers([chunk((20.0, 0.92), (24.8, 0.5), (50.0, 0.8))])
+    assert [(r["point_sec"], r["uncertain"]) for r in rallies] == [(20.0, False), (24.8, True), (50.0, False)]

@@ -27,6 +27,9 @@ STEP_SEC = 50.0  # 10초 겹침: 조각 경계에 걸친 랠리도 한 조각에
 CLIP_FPS = 2
 SAME_POINT_SEC = 2.0  # 겹친 조각에서 이 안의 득점은 같은 것
 END_AFTER_POINT_SEC = 1.0  # 랠리 끝 = 득점 순간 + 이만큼
+# 이보다 붙은 두 득점은 한 랠리를 둘로 짚었을 수 있다(대회 영상 A·C에서 3건, 모두 확신이 낮은 쪽이 헛것).
+# 진짜로 붙은 득점도 있어(B 7.7초, 서브 범실 등) 지우지 않고 확신 낮은 쪽을 '불확실'로 표시한다(H-36)
+CLOSE_POINTS_SEC = 10.0
 PARALLEL = 3
 SCAN_PROMPT = (
     "This {dur:.0f}-second clip is part of a volleyball match video (faces are pixelated for privacy). "
@@ -74,8 +77,12 @@ def rallies_from_answers(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 out[-1] = r
         else:
             out.append(r)
+    doubtful = set()
+    for i in range(1, len(out)):
+        if out[i]["point_sec"] - out[i - 1]["point_sec"] < CLOSE_POINTS_SEC:
+            doubtful.add(i if out[i]["confidence"] <= out[i - 1]["confidence"] else i - 1)
     return [{**r, "end_sec": round(r["point_sec"] + END_AFTER_POINT_SEC, 2), "is_rally": True, "reason": None,
-             "uncertain": r["confidence"] < 0.5} for r in out]
+             "uncertain": r["confidence"] < 0.5 or i in doubtful} for i, r in enumerate(out)]
 
 
 def blurred_chunk(video: Path, start: float, seconds: float, out: Path) -> Path:
