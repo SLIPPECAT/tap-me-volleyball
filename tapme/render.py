@@ -222,23 +222,25 @@ RENDER_BOX_PAD = 0.4
 MY_HEAD_SHARE = 0.35  # '나'의 얼굴로 보는 곳: 내 박스 위쪽 이 비율 안
 
 
-def mosaic_faces_except_me(frame: np.ndarray, faces: list[tuple[int, int, int, int]], me: Box | None) -> np.ndarray:
-    """얼굴 박스 (x, y, w, h)를 모자이크하되, '나'의 머리 쪽(내 박스 위쪽)에 있는 얼굴 하나만 뺀다.
+def faces_of_others(faces: list[tuple[int, int, int, int]], me: Box | None) -> list[tuple[int, int, int, int]]:
+    """얼굴 박스 (x, y, w, h) 중 '나'의 머리 쪽(내 박스 위쪽)에 있는 얼굴 하나를 뺀 나머지.
     몸 박스 전체로 빼면 내 앞뒤로 겹친 다른 사람 얼굴까지 드러났다(H-40)."""
-    keep = None
-    if me is not None:
-        head_bottom = me.top + (me.bottom - me.top) * MY_HEAD_SHARE
-        top_center = ((me.left + me.right) / 2, me.top)
-        heads = [f for f in faces
-                 if me.left <= f[0] + f[2] / 2 <= me.right and me.top <= f[1] + f[3] / 2 <= head_bottom]
-        keep = min(heads, key=lambda f: abs(f[0] + f[2] / 2 - top_center[0]) + abs(f[1] - top_center[1]), default=None)
+    if me is None:
+        return list(faces)
+    head_bottom = me.top + (me.bottom - me.top) * MY_HEAD_SHARE
+    top_center = ((me.left + me.right) / 2, me.top)
+    heads = [f for f in faces if me.left <= f[0] + f[2] / 2 <= me.right and me.top <= f[1] + f[3] / 2 <= head_bottom]
+    mine = min(heads, key=lambda f: abs(f[0] + f[2] / 2 - top_center[0]) + abs(f[1] - top_center[1]), default=None)
+    if mine is None:
+        return list(faces)
+    # 검출기 2~3개가 같은 내 얼굴을 각자 찾아 박스가 여럿이다. 하나만 빼면 나머지가 내 얼굴을 가렸다(10/30)
+    mx, my = mine[0] + mine[2] / 2, mine[1] + mine[3] / 2
+    return [f for f in faces
+            if not (abs(f[0] + f[2] / 2 - mx) < max(mine[2], f[2]) * 0.6 and abs(f[1] + f[3] / 2 - my) < max(mine[3], f[3]) * 0.6)]
 
-    def is_mine(f: tuple[int, int, int, int]) -> bool:
-        # 앞 프레임에서 유지한 내 얼굴 사본도 같은 자리라 함께 뺀다
-        return keep is not None and (abs(f[0] + f[2] / 2 - (keep[0] + keep[2] / 2)) < keep[2] * 0.6
-                                     and abs(f[1] + f[3] / 2 - (keep[1] + keep[3] / 2)) < keep[3] * 0.6)
 
-    return anonymize.pixelate_boxes(frame, [f for f in faces if not is_mine(f)], pad=RENDER_BOX_PAD)
+def mosaic_faces_except_me(frame: np.ndarray, faces: list[tuple[int, int, int, int]], me: Box | None) -> np.ndarray:
+    return anonymize.pixelate_boxes(frame, faces_of_others(faces, me), pad=RENDER_BOX_PAD)
 
 
 def probe(video: Path) -> tuple[int, int, float, int]:
@@ -317,11 +319,12 @@ def render_video(
                         part = cv2.resize(bgr[y0:y0 + ch, x0:x0 + cw], (out_w, out_h))
                         faces = faces + [(int(x / sx) + x0, int(y / sx) + y0, int(w / sx), int(h / sx))
                                          for x, y, w, h in anonymize.detect_faces(part, detector)]
-                    recent.append(faces)
-                held = [f for fs in recent for f in fs]  # 검출기가 잠깐 놓쳐도 방금 찾은 자리는 가린다
-                mine = next((b for b in boxes[k] if b.object_id == me), None)
-                # keep_my_face=False: 품질 확인용(qa.py). AI가 회원 얼굴을 보지 않도록 '나'까지 가린다
-                frame = Image.fromarray(mosaic_faces_except_me(rgb, held, mine if keep_my_face else None))
+                    mine = next((b for b in boxes[k] if b.object_id == me), None)
+                    # 내 얼굴은 찾은 그 프레임에서 뺀다. 모아 둔 뒤에 빼면 0.2초 전 내 얼굴 자리가 남아 탭한 나에게
+                    # 모자이크가 붙었다(10/30 사용자). keep_my_face=False는 품질 확인용(qa.py) — '나'까지 가린다
+                    recent.append(faces_of_others(faces, mine if keep_my_face else None))
+                held = [f for fs in recent for f in fs]  # 검출기가 잠깐 놓쳐도 방금 찾은 다른 사람 얼굴은 가린다
+                frame = Image.fromarray(anonymize.pixelate_boxes(rgb, held, pad=RENDER_BOX_PAD))
             img = compose(frame, boxes[k],
                           masks_by_sam.get(round(i * sam_fps / fps), {}), me, crops[k], (out_w, out_h),
                           text, privacy)

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from tapme import render
+from tapme import render, track
 from tapme.track import Box
 
 
@@ -134,7 +134,7 @@ def test_other_face_overlapping_my_body_is_mosaicked() -> None:
     frame = rng.integers(0, 255, (200, 300, 3), dtype=np.uint8)
     me = Box("me", 180, 20, 260, 190)
     mine, other = (205, 25, 30, 30), (200, 120, 30, 30)  # 내 머리, 내 몸 앞을 지나는 다른 사람
-    out = render.mosaic_faces_except_me(frame, [mine, other, (206, 26, 30, 30)], me)  # 마지막은 앞 프레임의 내 얼굴
+    out = render.mosaic_faces_except_me(frame, [mine, other, (207, 27, 27, 27)], me)  # 마지막은 다른 검출기가 찾은 같은 내 얼굴
     assert np.array_equal(out[25:55, 205:235], frame[25:55, 205:235])
     assert not np.array_equal(out[120:150, 200:230], frame[120:150, 200:230])
 
@@ -181,3 +181,35 @@ def test_me_marker_glows_at_the_feet_and_points_from_above() -> None:
     assert np.abs(out[318:323, 150:250] - base).max() > 60  # 발밑
     above = out[60:118, 185:215]
     assert (above[..., 0] > 200).any() and (above[..., 2] < 60).any()  # 머리 위 노란 삼각형
+
+
+def test_my_moving_face_never_gets_a_held_mosaic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/30 사용자: 탭한 나에게 중간중간 모자이크가 붙었다. 0.2초 유지한 얼굴에 앞 프레임의 내 얼굴이 섞여 있었다
+    import cv2
+    import numpy as np
+
+    from tapme import anonymize
+
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x568:rate=30:duration=0.4",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
+    # 내가 프레임마다 오른쪽으로 8px씩 움직인다(몸 박스와 얼굴이 같이)
+    by = {i: [Box(track.TAPPED_ID, 60 + 8 * i, 100, 140 + 8 * i, 400)] for i in range(12)}
+    calls = iter(range(1000))
+    monkeypatch.setattr(anonymize, "detect_faces", lambda *a: [(85 + 8 * next(calls), 105, 30, 30)])
+    monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a: [])
+    plain_out, mos_out = tmp_path / "plain.mp4", tmp_path / "m.mp4"
+    render.render_video(src, plain_out, by, {}, track.TAPPED_ID, sam_fps=30, zoom=1.0, face_mosaic=False)
+    render.render_video(src, mos_out, by, {}, track.TAPPED_ID, sam_fps=30, zoom=1.0, face_mosaic=True)
+
+    def frames(p: Path) -> list[np.ndarray]:
+        cap, out = cv2.VideoCapture(str(p)), []
+        while (r := cap.read())[0]:
+            out.append(r[1].astype(np.int16))
+        return out
+
+    a, b = frames(plain_out), frames(mos_out)
+    # 출력은 원본과 같은 크기(1배). 내 얼굴 둘레(앞 프레임 얼굴 자리 포함)가 모자이크 없이 같아야 한다
+    for i in (4, 8):
+        x = 85 + 8 * i
+        assert float(np.abs(a[i][100:140, x - 30:x + 34] - b[i][100:140, x - 30:x + 34]).mean()) < 6
