@@ -316,8 +316,8 @@ def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs
     seen: list = []
 
     def fake_scan(c, v, duration, d, progress):
-        progress(1, 72)
-        seen.append(jobs.load_job(job.id).progress)
+        progress(1, 72, 0.02)
+        seen.append((jobs.load_job(job.id).progress, jobs.load_job(job.id).spent_usd))
         return [{"start_sec": 5.5, "point_sec": 12.5, "end_sec": 13.5, "is_rally": True, "confidence": 0.9,
                  "reason": None, "uncertain": False}], [
             {"usd": 0.02, "chunk": 0, "start": 0.0, "seconds": 60.0, "answer": {"rallies": []}},
@@ -329,7 +329,7 @@ def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs
     saved = jobs.load_job(job.id)
     # 1시간 영상: 상한이 길이에 비례($0.05/분 → $3)해 예상 비용(약 $2.3)으로 막히지 않는다
     assert saved.budget_usd == pytest.approx(3.0) and 2.0 < saved.estimate_usd < 3.0
-    assert seen == [{"step": "rallies", "done": 1, "total": 72}]
+    assert seen == [({"step": "rallies", "done": 1, "total": 72}, 0.02)]  # 쓴 돈도 조각마다
     assert saved.rallies[0]["point_sec"] == 12.5 and saved.spent_usd == pytest.approx(0.03)
     assert saved.unread == [[50.0, 110.0]]  # 못 읽은 구간은 화면에 알린다
 

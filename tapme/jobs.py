@@ -140,9 +140,14 @@ def find_rallies(job: Job, client: Any) -> None:
         job.estimate_usd = round(scan.estimate_usd(job.duration_sec), 3)
         job.step("rallies", 0, len(scan.chunk_starts(job.duration_sec)))
         job.charge(job.estimate_usd)
-        merged, chunks = scan.scan_video(client, Path(job.video), job.duration_sec, job.dir / "rallies",
-                                         lambda d, n: job.step("rallies", d, n))
-        job.spent_usd += sum(c["usd"] for c in chunks)
+        base = job.spent_usd
+
+        def progress(done: int, total: int, spent: float) -> None:
+            job.spent_usd = base + spent  # 긴 영상은 오래 걸려 쓴 돈을 조각마다 보여 준다
+            job.step("rallies", done, total)
+
+        merged, chunks = scan.scan_video(client, Path(job.video), job.duration_sec, job.dir / "rallies", progress)
+        job.spent_usd = base + sum(c["usd"] for c in chunks)
         job.unread = scan.unread_ranges(chunks)
         (job.dir / "rallies").mkdir(exist_ok=True)
         (job.dir / "rallies" / "scan.json").write_text(json.dumps(chunks, ensure_ascii=False, indent=1))

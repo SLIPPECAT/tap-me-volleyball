@@ -110,15 +110,16 @@ def blurred_chunk(video: Path, start: float, seconds: float, out: Path) -> Path:
 
 def scan_video(
     client: Any, video: Path, duration: float, work_dir: Path,
-    on_progress: Callable[[int, int], None] | None = None,
+    on_progress: Callable[[int, int, float], None] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """(랠리 목록, 조각별 답·비용). 흐리기는 CPU를 다퉈 하나씩, Muse 질문만 겹친다(H-31)."""
+    """(랠리 목록, 조각별 답·비용). 흐리기는 CPU를 다퉈 하나씩, Muse 질문만 겹친다(H-31).
+    on_progress(끝난 조각 수, 전체, 지금까지 쓴 돈): 1시간 영상은 78분 걸려 쓴 돈도 조각마다 알린다(S4)."""
     starts = chunk_starts(duration)
-    done = 0
+    done, spent = 0, 0.0
     lock = threading.Lock()
 
     def ask(i: int, start: float, clip: Path) -> dict[str, Any]:
-        nonlocal done
+        nonlocal done, spent
         seconds = min(CHUNK_SEC, duration - start)
         replies, answer = [], None
         while answer is None and len(replies) < MAX_ATTEMPTS:
@@ -129,8 +130,9 @@ def scan_video(
                 answer = None
         with lock:
             done += 1
+            spent += sum(r.usd for r in replies)
             if on_progress:
-                on_progress(done, len(starts))
+                on_progress(done, len(starts), spent)
         return {"chunk": i, "start": start, "seconds": seconds,
                 "answer": answer if answer is not None else {"rallies": [], "unreadable": True},
                 "attempts": len(replies), "usd": sum(r.usd for r in replies),
