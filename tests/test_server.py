@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from tapme import jobs, server
+from tapme import jobs, render, server
 
 
 @pytest.fixture
@@ -145,3 +145,12 @@ def test_player_card_needs_a_listed_player(client: TestClient, monkeypatch: pyte
     job_id = _awaiting_tap(client, monkeypatch)
     assert client.get(f"/jobs/{job_id}/rallies/0/player?which=score&n=0").status_code == 404  # 목록이 비어 있음
     assert client.get(f"/jobs/{job_id}/rallies/0/player?which=../x&n=0").status_code == 422
+
+
+def test_option_screen_preselects_the_server_default_zoom() -> None:
+    # 기본 확대를 바꿀 때 화면과 서버 기본값이 어긋나지 않게(10/30 2배 → 1.5배)
+    import re
+
+    html = (Path(server.__file__).parent / "static" / "index.html").read_text()
+    picked = re.search(r'<option value="([\d.]+)" selected>[\d.]+×</option>', html)
+    assert picked and float(picked.group(1)) == render.DEFAULT_ZOOM == 1.5
