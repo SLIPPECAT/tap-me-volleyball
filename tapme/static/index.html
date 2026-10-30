@@ -109,6 +109,7 @@
   <section id="s-rallies" hidden>
     <h2 data-t="pickRally"></h2>
     <p class="muted" data-t="pickRallyHint"></p>
+    <p class="card muted" id="scan-note" aria-live="polite" hidden></p>
     <div id="rally-list"></div>
     <p class="card muted" id="no-rallies" data-t="noRallies" hidden></p>
     <p class="card muted" id="unread" hidden></p>
@@ -210,7 +211,7 @@ const T = {
   ko: {
     keepOpen: "업로드가 끝날 때까지 이 화면을 켜 두세요.", canClose: "화면을 닫아도 맥에서 계속 진행돼요. 이 링크로 다시 들어오면 이어서 볼 수 있어요.",
     copyLink: "이 작업 링크 복사", copied: "복사했어요", prefsTitle: "기다리는 동안 옵션 미리 정하기",
-    stWhistles: "휘슬 소리를 찾는 중…", stRallies: "AI가 영상을 1분씩 훑으며 랠리를 찾는 중… {d}/{n}", waitCost: "영상 {m}분 · 예상 AI 비용 약 ${u}", stPreviews: "미리보기 만드는 중… {d}/{n}",
+    stWhistles: "휘슬 소리를 찾는 중…", stRallies: "AI가 영상을 1분씩 훑으며 랠리를 찾는 중… {d}/{n}", scanNote: "아직 찾는 중이에요 ({d}/{n}). 지금까지 찾은 랠리부터 골라 만들 수 있어요.", waitCost: "영상 {m}분 · 예상 AI 비용 약 ${u}", stPreviews: "미리보기 만드는 중… {d}/{n}",
     stScore_time: "득점 순간을 찾는 중…", stBlur: "AI로 보낼 장면의 얼굴을 흐리는 중…", stTracking: "나를 따라가는 중… (SAM)",
     stCommentary: "해설 자막을 만드는 중…", stRender: "영상을 만드는 중… {p}%", stWorking: "처리하는 중…",
     uploadIntro: "정모 경기 영상을 올리면 랠리를 찾아 드려요. AI로 보내는 장면은 늘 얼굴을 흐린 뒤 보냅니다. 결과 영상의 모자이크는 직접 고를 수 있어요.",
@@ -237,7 +238,7 @@ const T = {
   ja: {
     keepOpen: "アップロードが終わるまでこの画面を開いたままにしてください。", canClose: "画面を閉じてもMacで処理は続きます。このリンクから戻れば続きが見られます。",
     copyLink: "この作業のリンクをコピー", copied: "コピーしました", prefsTitle: "待っている間にオプションを決めておく",
-    stWhistles: "ホイッスルの音を探しています…", stRallies: "AIが動画を1分ずつ見てラリーを探しています… {d}/{n}", waitCost: "動画 {m}分 · AI費用の見込み 約${u}", stPreviews: "プレビューを作っています… {d}/{n}",
+    stWhistles: "ホイッスルの音を探しています…", stRallies: "AIが動画を1分ずつ見てラリーを探しています… {d}/{n}", scanNote: "まだ探しています（{d}/{n}）。見つかったラリーから選んで作れます。", waitCost: "動画 {m}分 · AI費用の見込み 約${u}", stPreviews: "プレビューを作っています… {d}/{n}",
     stScore_time: "得点の瞬間を探しています…", stBlur: "AIに送るシーンの顔をぼかしています…", stTracking: "自分を追いかけています…（SAM）",
     stCommentary: "実況字幕を作っています…", stRender: "動画を作っています… {p}%", stWorking: "処理しています…",
     uploadIntro: "練習試合の動画をアップすると、ラリーを見つけます。AIに送るシーンは必ず顔をぼかしてから送ります。完成動画のモザイクは自分で選べます。",
@@ -264,7 +265,7 @@ const T = {
   en: {
     keepOpen: "Keep this screen open until the upload finishes.", canClose: "You can close this screen; your Mac keeps working. Open this link again to continue.",
     copyLink: "Copy link to this job", copied: "Copied", prefsTitle: "Set options while you wait",
-    stWhistles: "Finding whistles…", stRallies: "AI is scanning the video a minute at a time for rallies… {d}/{n}", waitCost: "{m}-minute video · estimated AI cost about ${u}", stPreviews: "Making previews… {d}/{n}",
+    stWhistles: "Finding whistles…", stRallies: "AI is scanning the video a minute at a time for rallies… {d}/{n}", scanNote: "Still scanning ({d}/{n}). You can pick from the rallies found so far.", waitCost: "{m}-minute video · estimated AI cost about ${u}", stPreviews: "Making previews… {d}/{n}",
     stScore_time: "Finding the scoring moment…", stBlur: "Blurring faces before sending to AI…", stTracking: "Following you… (SAM)",
     stCommentary: "Writing commentary subtitles…", stRender: "Making the video… {p}%", stWorking: "Working…",
     uploadIntro: "Upload a match video and we'll find the rallies. Anything sent to the AI is always face-blurred first. You choose whether the final video pixelates faces.",
@@ -382,7 +383,9 @@ function renderWait(s) {
   const busy = busyOf(s) && !s.error;
   $("wait-box").hidden = !busy;
   if (busy) {
-    const pr = s.progress || {};
+    const sc = state.rally !== null && s.scenes[String(state.rally)];
+    const sceneBusy = sc && (sc.status === "preparing" || sc.status === "rendering");
+    const pr = s.status === "finding_rallies" && !sceneBusy ? { step: "rallies", ...(s.scan || {}) } : (s.progress || {});
     const key = pr.step ? "st" + pr.step[0].toUpperCase() + pr.step.slice(1) : "stWorking";
     const pct = pr.total ? Math.round(100 * pr.done / pr.total) : 0;
     $("wait-step").textContent = t(T[state.lang][key] ? key : "stWorking", { d: pr.done || 0, n: pr.total || 0, p: pct });
@@ -432,18 +435,23 @@ function render(s) {
 
 function renderRallies(s) {
   // 처리 중에는 올리기 칸을 숨긴다(다시 올리는 실수 방지). 기다림 상자가 대신 보인다
-  show(s.status === "rallies_ready" ? "s-rallies" : busyOf(s) && !s.error ? null : "s-upload");
-  if (s.status !== "rallies_ready") { $("up-status").textContent = s.error ? "" : t("findingRallies"); return; }
+  // 긴 영상은 찾은 랠리부터 보여 주어 다 끝나기 전에 골라 만들 수 있게 한다(10/30)
+  const partial = s.status === "finding_rallies" && s.rallies.length > 0;
+  show(s.status === "rallies_ready" || partial ? "s-rallies" : busyOf(s) && !s.error ? null : "s-upload");
+  if (s.status !== "rallies_ready" && !partial) { $("up-status").textContent = s.error ? "" : t("findingRallies"); return; }
+  $("scan-note").hidden = !partial;
+  if (partial) $("scan-note").textContent = t("scanNote", { d: s.scan.done || 0, n: s.scan.total || 0 });
   renderReel(s);
-  $("no-rallies").hidden = s.rallies.length > 0;
+  $("no-rallies").hidden = s.rallies.length > 0 || partial;
   const unread = s.unread || [];
   $("unread").hidden = !unread.length;
   $("unread").textContent = t("unread", { r: unread.map(([a, b]) => `${fmt(a)}~${fmt(b)}`).join(", ") });
   const list = $("rally-list");
-  const key = `${state.job}|${state.lang}|${Object.entries(s.scenes).map(([k, v]) => k + v.status).join(",")}`;
+  const key = `${state.job}|${state.lang}|${s.rallies.length}|${Object.entries(s.scenes).map(([k, v]) => k + v.status).join(",")}`;
   if (list.dataset.key === key) return;
   list.dataset.key = key;
-  list.replaceChildren(...s.rallies.map((r) => {
+  // 찾는 도중 붙은 랠리는 번호 순서가 시간 순서와 다를 수 있어 시간 순으로 보여 준다
+  list.replaceChildren(...[...s.rallies].sort((a, b) => a.start_sec - b.start_sec).map((r) => {
     const scene = s.scenes[String(r.index)];
     const card = document.createElement("div"); card.className = "card rally";
     // 장면 사진. 누르면 그 구간 미리보기를 카드 안에서 재생한다(시간만으로는 어떤 장면인지 모른다)

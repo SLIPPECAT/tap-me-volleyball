@@ -316,8 +316,10 @@ def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs
     seen: list = []
 
     def fake_scan(c, v, duration, d, progress):
-        progress(1, 72, 0.02)
-        seen.append((jobs.load_job(job.id).progress, jobs.load_job(job.id).spent_usd))
+        progress(1, 72, 0.02, [{"start": 0.0, "answer": {"rallies": [{"start_sec": 5.5, "point_sec": 12.5,
+                                                                       "confidence": 0.9}]}}])
+        now = jobs.load_job(job.id)
+        seen.append((now.scan, now.spent_usd, [r["point_sec"] for r in now.rallies]))
         return [{"start_sec": 5.5, "point_sec": 12.5, "end_sec": 13.5, "is_rally": True, "confidence": 0.9,
                  "reason": None, "uncertain": False}], [
             {"usd": 0.02, "chunk": 0, "start": 0.0, "seconds": 60.0, "answer": {"rallies": []}},
@@ -329,7 +331,9 @@ def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs
     saved = jobs.load_job(job.id)
     # 1시간 영상: 상한이 길이에 비례($0.05/분 → $3)해 예상 비용(약 $2.3)으로 막히지 않는다
     assert saved.budget_usd == pytest.approx(3.0) and 2.0 < saved.estimate_usd < 3.0
-    assert seen == [({"step": "rallies", "done": 1, "total": 72}, 0.02)]  # 쓴 돈도 조각마다
+    # 찾는 동안 찾은 랠리·진행·쓴 돈을 조각마다 저장한다(찾은 랠리부터 고를 수 있게)
+    assert seen == [({"done": 1, "total": 72}, 0.02, [12.5])]
+    assert saved.scan == {} and len(saved.rallies) == 1  # 끝난 뒤 같은 득점이 두 번 붙지 않는다
     assert saved.rallies[0]["point_sec"] == 12.5 and saved.spent_usd == pytest.approx(0.03)
     assert saved.unread == [[50.0, 110.0]]  # 못 읽은 구간은 화면에 알린다
 
@@ -362,3 +366,29 @@ def test_highlights_are_numbered_in_the_order_they_were_made(job: jobs.Job, monk
     jobs.make_highlight(job, 1, [("score", 240, 240)], "검정", [], "", "face", 1.0, client=None)
     saved = jobs.load_job(job.id)
     assert (saved.scenes["1"]["number"], saved.scenes["0"]["number"]) == (1, 2)
+
+
+def test_scan_and_scene_steps_saving_at_once_keep_each_others_changes(job: jobs.Job) -> None:
+    # 10/30: 1시간 영상은 랠리를 찾는 동안 장면을 만든다. 같은 job.json을 두 객체가 저장해도 서로 지우지 않는다
+    job.save()
+    scanner, scener = jobs.load_job(job.id), jobs.load_job(job.id)
+    scanner.rallies.append({"index": 1, "start_sec": 30.0, "end_sec": 40.0, "point_sec": 39.0})
+    scanner.spent_usd += 0.03
+    scanner.save()
+    scener.scenes["0"] = {"index": 0, "status": "awaiting_tap"}
+    scener.spent_usd += 0.01
+    scener.save()
+    scanner.scan = {"done": 2, "total": 72}
+    scanner.save()
+    saved = jobs.load_job(job.id)
+    assert len(saved.rallies) == 2 and saved.scenes["0"]["status"] == "awaiting_tap"
+    assert saved.scan == {"done": 2, "total": 72} and saved.spent_usd == pytest.approx(0.04)
+
+
+def test_rallies_found_later_never_renumber_a_picked_rally(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(jobs, "make_preview", lambda j, i: None)
+    job.rallies = [{"index": 0, "start_sec": 5.0, "end_sec": 13.5, "point_sec": 12.5, "confidence": 0.6}]
+    job.scenes = {"0": {"index": 0, "status": "awaiting_tap"}}
+    jobs._add_rallies(job, [{"start_sec": 1.0, "end_sec": 3.0, "point_sec": 2.0, "confidence": 0.9},
+                            {"start_sec": 6.0, "end_sec": 13.0, "point_sec": 12.0, "confidence": 0.95}])
+    assert [(r["index"], r["point_sec"]) for r in job.rallies] == [(0, 12.5), (1, 2.0)]  # 고른 랠리는 그대로, 새것은 뒤에

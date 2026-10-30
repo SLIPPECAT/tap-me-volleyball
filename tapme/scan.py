@@ -110,12 +110,14 @@ def blurred_chunk(video: Path, start: float, seconds: float, out: Path) -> Path:
 
 def scan_video(
     client: Any, video: Path, duration: float, work_dir: Path,
-    on_progress: Callable[[int, int, float], None] | None = None,
+    on_progress: Callable[[int, int, float, list[dict[str, Any]]], None] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """(랠리 목록, 조각별 답·비용). 흐리기는 CPU를 다퉈 하나씩, Muse 질문만 겹친다(H-31).
-    on_progress(끝난 조각 수, 전체, 지금까지 쓴 돈): 1시간 영상은 78분 걸려 쓴 돈도 조각마다 알린다(S4)."""
+    on_progress(끝난 조각 수, 전체, 지금까지 쓴 돈, 끝난 조각들): 1시간 영상은 오래 걸려 찾은 랠리부터 보여 준다.
+    한 번에 하나씩 부른다(여러 질문 스레드가 같은 작업을 동시에 바꾸지 않게)."""
     starts = chunk_starts(duration)
     done, spent = 0, 0.0
+    finished: list[dict[str, Any]] = []
     lock = threading.Lock()
 
     def ask(i: int, start: float, clip: Path) -> dict[str, Any]:
@@ -128,15 +130,18 @@ def scan_video(
                 answer = muse.parse_json_reply(replies[-1].text)
             except ValueError:
                 answer = None
+        result = {"chunk": i, "start": start, "seconds": seconds,
+                  "answer": answer if answer is not None else {"rallies": [], "unreadable": True},
+                  "attempts": len(replies), "usd": sum(r.usd for r in replies),
+                  "input_tokens": sum(r.input_tokens for r in replies),
+                  "output_tokens": sum(r.output_tokens for r in replies)}
         with lock:
             done += 1
-            spent += sum(r.usd for r in replies)
+            spent += result["usd"]
+            finished.append(result)
             if on_progress:
-                on_progress(done, len(starts), spent)
-        return {"chunk": i, "start": start, "seconds": seconds,
-                "answer": answer if answer is not None else {"rallies": [], "unreadable": True},
-                "attempts": len(replies), "usd": sum(r.usd for r in replies),
-                "input_tokens": sum(r.input_tokens for r in replies), "output_tokens": sum(r.output_tokens for r in replies)}
+                on_progress(done, len(starts), spent, sorted(finished, key=lambda c: c["chunk"]))
+        return result
 
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
         futures = [

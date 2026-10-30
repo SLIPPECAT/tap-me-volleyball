@@ -70,14 +70,34 @@ class Job:
     estimate_usd: float = 0.0  # 랠리 찾기 예상 비용(화면에 보여 준다)
     unread: list[list[float]] = field(default_factory=list)  # AI가 답을 못 읽은 구간 [시작, 끝]. 화면에 알린다
     match_name: str = ""  # 저장 파일 이름 앞부분(경기이름_팀이름_하이라이트_01.mp4). 비우면 올린 파일 이름
+    scan: dict[str, Any] = field(default_factory=dict)  # 랠리 찾기 진행 {"done", "total"}. 찾는 동안 장면 단계가 progress를 쓴다
+
+    def __post_init__(self) -> None:
+        self._seen: dict[str, Any] | None = None  # 마지막으로 읽거나 쓴 이 객체의 내용(save가 바뀐 항목만 고르는 기준)
 
     @property
     def dir(self) -> Path:
         return JOBS_DIR / self.id
 
     def save(self) -> None:
+        """이 객체가 바꾼 항목만 디스크에 합쳐 쓴다. 랠리 찾기(긴 영상)와 장면 만들기가 동시에 돌며 같은 job.json을
+        저장해도 서로의 내용을 덮어쓰지 않게. 쓴 돈은 서로 더하고, 장면은 장면별로 합친다."""
         with _lock:
-            (self.dir / "job.json").write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2))
+            path = self.dir / "job.json"
+            mine = asdict(self)
+            out = mine
+            if self._seen is not None and path.exists():
+                disk, before = json.loads(path.read_text()), self._seen
+                out = dict(disk)
+                for k, v in mine.items():
+                    if k == "spent_usd":
+                        out[k] = round(float(disk.get(k) or 0) + v - float(before.get(k) or 0), 6)
+                    elif k == "scenes":
+                        out[k] = {**disk.get(k, {}), **{i: sc for i, sc in v.items() if sc != before.get(k, {}).get(i)}}
+                    elif v != before.get(k):
+                        out[k] = v
+            path.write_text(json.dumps(out, ensure_ascii=False, indent=2))
+            self._seen = mine
 
     def step(self, name: str, done: int = 0, total: int = 0) -> None:
         self.progress = {"step": name, "done": done, "total": total}
@@ -112,7 +132,10 @@ def load_job(job_id: str) -> Job:
     path = JOBS_DIR / job_id / "job.json"
     if not job_id.isalnum() or not path.exists():
         raise KeyError(job_id)
-    return Job(**json.loads(path.read_text()))
+    text = path.read_text()
+    job = Job(**json.loads(text))
+    job._seen = json.loads(text)  # 따로 읽은 사본. 같은 객체면 고친 내용이 '본 내용'에도 들어가 바뀐 게 없다고 본다
+    return job
 
 
 def _cut(video: Path, start: float, duration: float, out: Path, fps: int | None) -> Path:
@@ -136,29 +159,48 @@ def find_rallies(job: Job, client: Any) -> None:
     job.duration_sec = round(scan.duration_sec(Path(job.video)), 2)
     job.budget_usd = round(max(MAX_USD_PER_JOB, MAX_USD_PER_MIN * job.duration_sec / 60), 2)
     if RALLY_MODE == "whistle":
-        merged = _rallies_by_whistle(job, client)
+        job.rallies = [{**r, "index": i} for i, r in enumerate(_rallies_by_whistle(job, client))]
     else:
+        job.rallies = []
         job.estimate_usd = round(scan.estimate_usd(job.duration_sec), 3)
-        job.step("rallies", 0, len(scan.chunk_starts(job.duration_sec)))
+        total = len(scan.chunk_starts(job.duration_sec))
+        job.scan = {"done": 0, "total": total}
         job.charge(job.estimate_usd)
+        job.save()
         base = job.spent_usd
 
-        def progress(done: int, total: int, spent: float) -> None:
-            job.spent_usd = base + spent  # 긴 영상은 오래 걸려 쓴 돈을 조각마다 보여 준다
-            job.step("rallies", done, total)
+        def progress(done: int, total: int, spent: float, finished: list[dict[str, Any]]) -> None:
+            # 찾은 랠리부터 목록에 붙여 1시간 영상도 바로 고를 수 있게 한다(10/30). 쓴 돈도 조각마다
+            job.spent_usd = base + spent
+            _add_rallies(job, scan.rallies_from_answers(finished))
+            job.scan = {"done": done, "total": total}
+            job.save()
 
-        merged, chunks = scan.scan_video(client, Path(job.video), job.duration_sec, job.dir / "rallies", progress)
+        found, chunks = scan.scan_video(client, Path(job.video), job.duration_sec, job.dir / "rallies", progress)
         job.spent_usd = base + sum(c["usd"] for c in chunks)
+        _add_rallies(job, found)
         job.unread = scan.unread_ranges(chunks)
         (job.dir / "rallies").mkdir(exist_ok=True)
         (job.dir / "rallies" / "scan.json").write_text(json.dumps(chunks, ensure_ascii=False, indent=1))
-    job.rallies = [{**r, "index": i} for i, r in enumerate(merged)]
     for i in range(len(job.rallies)):
-        job.step("previews", i, len(job.rallies))
-        make_preview(job, i)  # 사용자가 시간만 보고는 어떤 장면인지 모른다(10/29 사용자 피드백)
+        make_preview(job, i)  # 사용자가 시간만 보고는 어떤 장면인지 모른다(10/29 사용자 피드백). 이미 있으면 건너뜀
+    job.scan = {}
     job.progress = {}
     job.status = "rallies_ready"
     job.save()
+
+
+def _add_rallies(job: Job, found: list[dict[str, Any]]) -> None:
+    """찾은 랠리를 목록에 붙인다. 번호(index)는 바꾸지 않는다 — 찾는 도중에 사용자가 고른 장면이 번호로 묶여 있다.
+    같은 득점(2초 안)은 새 답으로 고치되, 이미 고른 장면은 그대로 둔다."""
+    for r in found:
+        j = next((k for k, e in enumerate(job.rallies)
+                  if abs(e["point_sec"] - r["point_sec"]) <= scan.SAME_POINT_SEC), None)
+        if j is None:
+            job.rallies.append({**r, "index": len(job.rallies)})
+            make_preview(job, len(job.rallies) - 1)
+        elif str(j) not in job.scenes:
+            job.rallies[j] = {**r, "index": j}
 
 
 def _rallies_by_whistle(job: Job, client: Any) -> list[dict[str, Any]]:

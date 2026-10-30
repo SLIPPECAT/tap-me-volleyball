@@ -123,6 +123,21 @@ def _run(job_id: str, step: Callable[..., Any], *args: Any, **kwargs: Any) -> No
         job.save()
 
 
+def _run_scan(job_id: str, client: Any) -> None:
+    """랠리 찾기는 장면 단계와 따로 돈다. 1시간 영상은 오래 걸려, 찾은 랠리부터 골라 장면을 만들 수 있게(10/30).
+    같은 job.json은 Job.save가 서로 바꾼 항목만 합쳐 쓴다."""
+    job = jobs.load_job(job_id)
+    try:
+        jobs.find_rallies(job, client)
+        job.error = None
+    except jobs.BudgetExceeded as e:
+        job.error = str(e)
+    except Exception as e:  # noqa: BLE001 - 서버가 죽지 않고 화면에 알린다
+        traceback.print_exc()
+        job.error = f"처리 중 오류: {e}"
+    job.save()
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
@@ -131,7 +146,7 @@ def index() -> FileResponse:
 @app.post("/jobs")
 def upload(file: UploadFile, background: BackgroundTasks, match: str = Form("")) -> dict[str, Any]:
     job = jobs.create_job(file.filename or "video.mp4", file.file, match)
-    background.add_task(_run, job.id, jobs.find_rallies, client_factory())
+    background.add_task(_run_scan, job.id, client_factory())
     return {"id": job.id}
 
 
