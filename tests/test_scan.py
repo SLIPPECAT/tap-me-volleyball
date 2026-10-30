@@ -47,3 +47,20 @@ def test_close_points_keep_both_but_flag_the_less_sure_one() -> None:
 
     rallies = scan.rallies_from_answers([chunk((20.0, 0.92), (24.8, 0.5), (50.0, 0.8))])
     assert [(r["point_sec"], r["uncertain"]) for r in rallies] == [(20.0, False), (24.8, True), (50.0, False)]
+
+
+def test_cut_off_answer_is_asked_again_then_reported(tmp_path, monkeypatch) -> None:
+    # H-39: 출력 한도에서 잘린 답 하나로 조각의 득점 5개가 사라졌다. 다시 묻고, 그래도 안 되면 구간을 알린다
+    from tapme import muse
+
+    replies = iter(["{\"rallies\": [", '{"rallies": [{"start_sec": 1, "point_sec": 9, "confidence": 0.8}]}',
+                    "", ""])
+    monkeypatch.setattr(scan, "blurred_chunk", lambda v, s, sec, out: out)
+    monkeypatch.setattr(muse, "ask_about_video", lambda c, clip, prompt: muse.MuseReply(
+        text=next(replies), input_tokens=1, output_tokens=8000, usd=0.03, seconds=0))
+    monkeypatch.setattr(scan, "PARALLEL", 1)  # 답 순서를 조각 순서에 맞춘다
+    rallies, chunks = scan.scan_video(None, tmp_path / "v.mp4", 75.0, tmp_path)
+    assert [c["attempts"] for c in chunks] == [2, 2]
+    assert [r["point_sec"] for r in rallies] == [9.0]
+    assert scan.unread_ranges(chunks) == [[50.0, 75.0]]
+    assert sum(c["usd"] for c in chunks) == 0.12  # 다시 물은 값도 센다

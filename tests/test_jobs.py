@@ -319,7 +319,9 @@ def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs
         progress(1, 72)
         seen.append(jobs.load_job(job.id).progress)
         return [{"start_sec": 5.5, "point_sec": 12.5, "end_sec": 13.5, "is_rally": True, "confidence": 0.9,
-                 "reason": None, "uncertain": False}], [{"usd": 0.03, "chunk": 0}]
+                 "reason": None, "uncertain": False}], [
+            {"usd": 0.02, "chunk": 0, "start": 0.0, "seconds": 60.0, "answer": {"rallies": []}},
+            {"usd": 0.01, "chunk": 1, "start": 50.0, "seconds": 60.0, "answer": {"rallies": [], "unreadable": True}}]
 
     monkeypatch.setattr(scan, "scan_video", fake_scan)
     monkeypatch.setattr(jobs, "make_preview", lambda j, i: None)
@@ -329,6 +331,7 @@ def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs
     assert saved.budget_usd == pytest.approx(3.0) and 2.0 < saved.estimate_usd < 3.0
     assert seen == [{"step": "rallies", "done": 1, "total": 72}]
     assert saved.rallies[0]["point_sec"] == 12.5 and saved.spent_usd == pytest.approx(0.03)
+    assert saved.unread == [[50.0, 110.0]]  # 못 읽은 구간은 화면에 알린다
 
     def no_muse(*a):
         raise AssertionError("훑어보기가 찾은 득점 순간을 다시 묻지 않는다")

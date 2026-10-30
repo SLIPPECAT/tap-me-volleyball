@@ -31,6 +31,9 @@ END_AFTER_POINT_SEC = 1.0  # 랠리 끝 = 득점 순간 + 이만큼
 # 진짜로 붙은 득점도 있어(B 7.7초, 서브 범실 등) 지우지 않고 확신 낮은 쪽을 '불확실'로 표시한다(H-36)
 CLOSE_POINTS_SEC = 10.0
 PARALLEL = 3
+# 답이 출력 한도(8000토큰)에서 잘리면 조각의 득점이 통째로 사라졌다(H-39: 120초 조각 하나에서 5개). 한 번 더 묻고,
+# 그래도 못 읽으면 그 구간을 화면에 알린다(조용히 버리지 않는다)
+MAX_ATTEMPTS = 2
 SCAN_PROMPT = (
     "This {dur:.0f}-second clip is part of a volleyball match video (faces are pixelated for privacy). "
     "List every rally in it. A rally is play from the serve until the ball is dead. "
@@ -85,6 +88,11 @@ def rallies_from_answers(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
              "uncertain": r["confidence"] < 0.5 or i in doubtful} for i, r in enumerate(out)]
 
 
+def unread_ranges(chunks: list[dict[str, Any]]) -> list[list[float]]:
+    """두 번 물어도 답을 못 읽은 조각의 원본 구간. 이웃 조각과 겹친 10초는 그쪽에서 본다."""
+    return [[c["start"], round(c["start"] + c["seconds"], 2)] for c in chunks if c["answer"].get("unreadable")]
+
+
 def blurred_chunk(video: Path, start: float, seconds: float, out: Path) -> Path:
     """조각을 CLIP_FPS로 잘라 얼굴을 흐린다. 얼굴이 그대로인 잘린 사본은 남기지 않는다."""
     raw = out.with_name(out.stem + "_raw.mp4")
@@ -112,17 +120,21 @@ def scan_video(
     def ask(i: int, start: float, clip: Path) -> dict[str, Any]:
         nonlocal done
         seconds = min(CHUNK_SEC, duration - start)
-        reply = muse.ask_about_video(client, clip, SCAN_PROMPT.format(dur=seconds))
-        try:
-            answer = muse.parse_json_reply(reply.text)
-        except ValueError:
-            answer = {"rallies": [], "unreadable": True}
+        replies, answer = [], None
+        while answer is None and len(replies) < MAX_ATTEMPTS:
+            replies.append(muse.ask_about_video(client, clip, SCAN_PROMPT.format(dur=seconds)))
+            try:
+                answer = muse.parse_json_reply(replies[-1].text)
+            except ValueError:
+                answer = None
         with lock:
             done += 1
             if on_progress:
                 on_progress(done, len(starts))
-        return {"chunk": i, "start": start, "answer": answer, "usd": reply.usd,
-                "input_tokens": reply.input_tokens, "output_tokens": reply.output_tokens}
+        return {"chunk": i, "start": start, "seconds": seconds,
+                "answer": answer if answer is not None else {"rallies": [], "unreadable": True},
+                "attempts": len(replies), "usd": sum(r.usd for r in replies),
+                "input_tokens": sum(r.input_tokens for r in replies), "output_tokens": sum(r.output_tokens for r in replies)}
 
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
         futures = [

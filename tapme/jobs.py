@@ -68,6 +68,7 @@ class Job:
     duration_sec: float = 0.0
     budget_usd: float = 0.0  # 0이면 MAX_USD_PER_JOB. 랠리 찾기 전에 영상 길이로 정한다
     estimate_usd: float = 0.0  # 랠리 찾기 예상 비용(화면에 보여 준다)
+    unread: list[list[float]] = field(default_factory=list)  # AI가 답을 못 읽은 구간 [시작, 끝]. 화면에 알린다
 
     @property
     def dir(self) -> Path:
@@ -142,6 +143,7 @@ def find_rallies(job: Job, client: Any) -> None:
         merged, chunks = scan.scan_video(client, Path(job.video), job.duration_sec, job.dir / "rallies",
                                          lambda d, n: job.step("rallies", d, n))
         job.spent_usd += sum(c["usd"] for c in chunks)
+        job.unread = scan.unread_ranges(chunks)
         (job.dir / "rallies").mkdir(exist_ok=True)
         (job.dir / "rallies" / "scan.json").write_text(json.dumps(chunks, ensure_ascii=False, indent=1))
     job.rallies = [{**r, "index": i} for i, r in enumerate(merged)]
