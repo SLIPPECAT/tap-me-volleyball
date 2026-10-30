@@ -238,16 +238,6 @@ def test_ground_marker_goes_under_my_feet_not_over_them() -> None:
     assert np.abs(out[300:330, 120:170].astype(int) - 90).max() > 40  # 신발 옆 바닥에는 표시
 
 
-def test_implausibly_big_unsure_faces_are_dropped_but_sure_ones_stay() -> None:
-    # 10/30 성능 테스트 T2: 흐려진 몸·바닥을 커다란 얼굴로 잡아 선수 몸 전체가 모자이크됐다
-    me = Box(track.TAPPED_ID, 100, 100, 160, 350)  # 키 250px → 머리 약 32px
-    faces = [(300, 120, 30, 30), (400, 200, 220, 260), (600, 100, 200, 240)]
-    kept = render.plausible_faces(faces, [0.7, 0.6, 0.92], me)
-    assert kept == [(300, 120, 30, 30), (600, 100, 200, 240)]  # 작은 얼굴, 확신 높은 큰 얼굴(카메라 앞 사람)은 남김
-    assert render.plausible_faces(faces, [0.7, 0.6, 0.92], None) == faces  # '나'를 모르면 거르지 않는다
-    assert render.plausible_faces(faces, [], me) == faces  # 점수를 모르면 버리지 않는다
-
-
 def test_sixty_fps_source_can_be_rendered_at_thirty(tmp_path: Path) -> None:
     # 10/30: 60fps 원본은 렌더가 두 배 걸렸다. 사용자가 30fps를 고르면 프레임을 절반만 만든다
     import cv2

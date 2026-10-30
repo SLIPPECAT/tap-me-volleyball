@@ -232,20 +232,6 @@ def compose(
 FACE_HOLD_SEC = 0.2
 RENDER_BOX_PAD = 0.4
 MY_HEAD_SHARE = 0.35  # '나'의 얼굴로 보는 곳: 내 박스 위쪽 이 비율 안
-# 얼굴 검출기가 흐려진 몸·바닥 무늬를 커다란 '얼굴'로 잡아 선수 몸 전체가 모자이크됐다(10/30 성능 테스트 T2, 사용자).
-# 같은 장면의 얼굴이 내 머리보다 이만큼 넘게 크고 확신도 낮으면 버린다. 카메라 바로 앞의 진짜 얼굴은 점수가 높아 남는다
-HEAD_SHARE_OF_HEIGHT = 0.13
-TOO_BIG_X_MY_HEAD = 3.0
-TOO_BIG_MAX_SCORE = 0.75
-
-
-def plausible_faces(faces: list[tuple[int, int, int, int]], scores: list[float], me: Box | None) -> list[tuple[int, int, int, int]]:
-    """'나'의 키로 본 머리 크기보다 TOO_BIG_X_MY_HEAD배 넘게 크면서 확신이 낮은 박스를 뺀다. '나'를 모르면 그대로."""
-    if me is None:
-        return list(faces)
-    limit = (me.bottom - me.top) * HEAD_SHARE_OF_HEIGHT * TOO_BIG_X_MY_HEAD
-    scores = list(scores) + [1.0] * (len(faces) - len(scores))  # 점수를 모르는 박스는 버리지 않는다
-    return [f for f, sc in zip(faces, scores) if not (f[2] > limit and sc < TOO_BIG_MAX_SCORE)]
 
 
 def faces_of_others(faces: list[tuple[int, int, int, int]], me: Box | None) -> list[tuple[int, int, int, int]]:
@@ -342,18 +328,16 @@ def render_video(
                 # 매 프레임 화면 전체에서 찾는다. 3프레임마다(실험 H-27)나 결과 화면 안만(H-28) 찾으면 놓치는 얼굴이 늘었다
                 if i % face_every == 0:
                     bgr = np.ascontiguousarray(rgb[..., ::-1])  # 검출기는 BGR
-                    scores: list[float] = []
-                    faces = anonymize.detect_faces(bgr, detector, profile, scores=scores)
+                    faces = anonymize.detect_faces(bgr, detector, profile)
                     if plain is not None:  # 두 설정은 놓치는 얼굴이 달라 합친다(H-29)
-                        faces = faces + anonymize.detect_faces_plain(bgr, plain, scores=scores)
+                        faces = faces + anonymize.detect_faces_plain(bgr, plain)
                     x0, y0, cw, ch = crops[k]
                     if cw < out_w:  # 확대하면 원본에서 작아 못 찾던 얼굴이 결과 화면에서는 커져 보인다(H-40)
                         sx = out_w / cw
                         part = cv2.resize(bgr[y0:y0 + ch, x0:x0 + cw], (out_w, out_h))
                         faces = faces + [(int(x / sx) + x0, int(y / sx) + y0, int(w / sx), int(h / sx))
-                                         for x, y, w, h in anonymize.detect_faces(part, detector, scores=scores)]
+                                         for x, y, w, h in anonymize.detect_faces(part, detector)]
                     mine = next((b for b in boxes[k] if b.object_id == me), None)
-                    faces = plausible_faces(faces, scores, mine)
                     # 내 얼굴은 찾은 그 프레임에서 뺀다. 모아 둔 뒤에 빼면 0.2초 전 내 얼굴 자리가 남아 탭한 나에게
                     # 모자이크가 붙었다(10/30 사용자). keep_my_face=False는 품질 확인용(qa.py) — '나'까지 가린다
                     recent.append(faces_of_others(faces, mine if keep_my_face else None))
