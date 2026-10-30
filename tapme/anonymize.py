@@ -91,16 +91,16 @@ def detect_faces_plain(frame: np.ndarray, detector: cv2.FaceDetectorYN) -> list[
 
 
 def pixelate_boxes(
-    frame: np.ndarray, boxes: list[tuple[int, int, int, int]]
+    frame: np.ndarray, boxes: list[tuple[int, int, int, int]], pad: float = BOX_PAD
 ) -> np.ndarray:
     """박스 영역을 모자이크한 새 프레임을 돌려준다. 원본 프레임은 바꾸지 않는다."""
     out = frame.copy()
     h, w = frame.shape[:2]
     for x, y, bw, bh in boxes:
-        x0 = max(0, x - int(bw * BOX_PAD))
-        y0 = max(0, y - int(bh * BOX_PAD))
-        x1 = min(w, x + bw + int(bw * BOX_PAD))
-        y1 = min(h, y + bh + int(bh * BOX_PAD))
+        x0 = max(0, x - int(bw * pad))
+        y0 = max(0, y - int(bh * pad))
+        x1 = min(w, x + bw + int(bw * pad))
+        y1 = min(h, y + bh + int(bh * pad))
         if x1 <= x0 or y1 <= y0:
             continue
         roi = out[y0:y1, x0:x1]

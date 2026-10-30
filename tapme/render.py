@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
+import cv2
 import numpy as np
 from meta_sam_parser import SegmentationMaskRecord, decode_mask_to_raster
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -183,14 +185,30 @@ def compose(
     return out
 
 
-def mosaic_faces_except_me(frame: np.ndarray, faces: list[tuple[int, int, int, int]], me: Box | None) -> np.ndarray:
-    """얼굴 박스 (x, y, w, h) 중 가운데가 '나'의 박스 안에 있는 것만 빼고 모자이크한다."""
-    def mine(face: tuple[int, int, int, int]) -> bool:
-        x, y, w, h = face
-        cx, cy = x + w / 2, y + h / 2
-        return me is not None and me.left <= cx <= me.right and me.top <= cy <= me.bottom
+# 결과 영상의 얼굴 모자이크(H-40, 사용자 10/30 "살짝살짝 벗겨진다"): 프레임마다 새로 찾아 검출기가 한두 프레임 놓치면
+# 그 순간만 드러났다 → 찾은 자리를 잠깐 유지하고, 박스도 넓힌다. Meta로 보내는 흐림본(anonymize)은 그대로
+FACE_HOLD_SEC = 0.2
+RENDER_BOX_PAD = 0.4
+MY_HEAD_SHARE = 0.35  # '나'의 얼굴로 보는 곳: 내 박스 위쪽 이 비율 안
 
-    return anonymize.pixelate_boxes(frame, [f for f in faces if not mine(f)])
+
+def mosaic_faces_except_me(frame: np.ndarray, faces: list[tuple[int, int, int, int]], me: Box | None) -> np.ndarray:
+    """얼굴 박스 (x, y, w, h)를 모자이크하되, '나'의 머리 쪽(내 박스 위쪽)에 있는 얼굴 하나만 뺀다.
+    몸 박스 전체로 빼면 내 앞뒤로 겹친 다른 사람 얼굴까지 드러났다(H-40)."""
+    keep = None
+    if me is not None:
+        head_bottom = me.top + (me.bottom - me.top) * MY_HEAD_SHARE
+        top_center = ((me.left + me.right) / 2, me.top)
+        heads = [f for f in faces
+                 if me.left <= f[0] + f[2] / 2 <= me.right and me.top <= f[1] + f[3] / 2 <= head_bottom]
+        keep = min(heads, key=lambda f: abs(f[0] + f[2] / 2 - top_center[0]) + abs(f[1] - top_center[1]), default=None)
+
+    def is_mine(f: tuple[int, int, int, int]) -> bool:
+        # 앞 프레임에서 유지한 내 얼굴 사본도 같은 자리라 함께 뺀다
+        return keep is not None and (abs(f[0] + f[2] / 2 - (keep[0] + keep[2] / 2)) < keep[2] * 0.6
+                                     and abs(f[1] + f[3] / 2 - (keep[1] + keep[3] / 2)) < keep[3] * 0.6)
+
+    return anonymize.pixelate_boxes(frame, [f for f in faces if not is_mine(f)], pad=RENDER_BOX_PAD)
 
 
 def probe(video: Path) -> tuple[int, int, float, int]:
@@ -249,6 +267,7 @@ def render_video(
     try:
         i = 0
         faces: list[tuple[int, int, int, int]] = []
+        recent: deque[list[tuple[int, int, int, int]]] = deque(maxlen=max(1, round(FACE_HOLD_SEC * fps)))
         while len(buf := dec.stdout.read(size)) == size:
             k = min(i, n - 1)
             now = i / fps
@@ -262,9 +281,17 @@ def render_video(
                     faces = anonymize.detect_faces(bgr, detector, profile)
                     if plain is not None:  # 두 설정은 놓치는 얼굴이 달라 합친다(H-29)
                         faces = faces + anonymize.detect_faces_plain(bgr, plain)
+                    x0, y0, cw, ch = crops[k]
+                    if cw < out_w:  # 확대하면 원본에서 작아 못 찾던 얼굴이 결과 화면에서는 커져 보인다(H-40)
+                        sx = out_w / cw
+                        part = cv2.resize(bgr[y0:y0 + ch, x0:x0 + cw], (out_w, out_h))
+                        faces = faces + [(int(x / sx) + x0, int(y / sx) + y0, int(w / sx), int(h / sx))
+                                         for x, y, w, h in anonymize.detect_faces(part, detector)]
+                    recent.append(faces)
+                held = [f for fs in recent for f in fs]  # 검출기가 잠깐 놓쳐도 방금 찾은 자리는 가린다
                 mine = next((b for b in boxes[k] if b.object_id == me), None)
                 # keep_my_face=False: 품질 확인용(qa.py). AI가 회원 얼굴을 보지 않도록 '나'까지 가린다
-                frame = Image.fromarray(mosaic_faces_except_me(rgb, faces, mine if keep_my_face else None))
+                frame = Image.fromarray(mosaic_faces_except_me(rgb, held, mine if keep_my_face else None))
             img = compose(frame, boxes[k],
                           masks_by_sam.get(round(i * sam_fps / fps), {}), me, crops[k], (out_w, out_h),
                           text, privacy)

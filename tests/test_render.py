@@ -124,3 +124,46 @@ def test_face_mosaic_off_skips_face_detection(tmp_path: Path, monkeypatch: pytes
     assert calls == []
     render.render_video(src, tmp_path / "b.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=True)
     assert len(calls) == 5  # 0.5초 × 10fps
+
+
+def test_other_face_overlapping_my_body_is_mosaicked() -> None:
+    # H-40: 몸 박스 전체로 '나'를 빼면 내 앞뒤로 겹친 다른 사람 얼굴이 드러났다. 머리 쪽 얼굴 하나만 뺀다
+    import numpy as np
+
+    rng = np.random.default_rng(1)
+    frame = rng.integers(0, 255, (200, 300, 3), dtype=np.uint8)
+    me = Box("me", 180, 20, 260, 190)
+    mine, other = (205, 25, 30, 30), (200, 120, 30, 30)  # 내 머리, 내 몸 앞을 지나는 다른 사람
+    out = render.mosaic_faces_except_me(frame, [mine, other, (206, 26, 30, 30)], me)  # 마지막은 앞 프레임의 내 얼굴
+    assert np.array_equal(out[25:55, 205:235], frame[25:55, 205:235])
+    assert not np.array_equal(out[120:150, 200:230], frame[120:150, 200:230])
+
+
+def test_face_found_once_stays_mosaicked_for_a_moment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # H-40: 검출기가 한두 프레임 놓치면 그 순간만 모자이크가 빠졌다. 찾은 자리를 FACE_HOLD_SEC 동안 유지한다
+    import cv2
+    import numpy as np
+
+    from tapme import anonymize
+
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=0.5",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
+    calls = iter(range(1000))
+    monkeypatch.setattr(anonymize, "detect_faces", lambda *a: [(100, 40, 60, 60)] if next(calls) == 0 else [])
+    monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a: [])
+    plain_out, mos_out = tmp_path / "plain.mp4", tmp_path / "m.mp4"
+    render.render_video(src, plain_out, {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=False)
+    render.render_video(src, mos_out, {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=True)
+
+    def frames(p: Path) -> list[np.ndarray]:
+        cap, out = cv2.VideoCapture(str(p)), []
+        while (r := cap.read())[0]:
+            out.append(r[1].astype(np.int16))
+        return out
+
+    a, b = frames(plain_out), frames(mos_out)
+    hold = round(render.FACE_HOLD_SEC * 30)
+    # 출력은 9:16으로 잘린 화면이라 얼굴 박스가 들어간 가운데 줄을 본다
+    diff = [float(np.abs(x - y)[40:100].mean()) for x, y in zip(a, b)]
+    assert all(d > 5 for d in diff[:hold]) and all(d < 5 for d in diff[hold + 2:])
