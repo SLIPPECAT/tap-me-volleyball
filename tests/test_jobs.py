@@ -392,3 +392,28 @@ def test_rallies_found_later_never_renumber_a_picked_rally(job: jobs.Job, monkey
     jobs._add_rallies(job, [{"start_sec": 1.0, "end_sec": 3.0, "point_sec": 2.0, "confidence": 0.9},
                             {"start_sec": 6.0, "end_sec": 13.0, "point_sec": 12.0, "confidence": 0.95}])
     assert [(r["index"], r["point_sec"]) for r in job.rallies] == [(0, 12.5), (1, 2.0)]  # 고른 랠리는 그대로, 새것은 뒤에
+
+
+def test_readers_never_see_a_half_written_job_file(job: jobs.Job) -> None:
+    # 10/30 성능 테스트 T3: 저장하는 순간 읽으면 빈 파일이라 오류가 났고, 장면 준비가 멈췄다
+    import threading
+
+    job.save()
+    errors: list = []
+    stop = threading.Event()
+
+    def reader() -> None:
+        while not stop.is_set():
+            try:
+                jobs.load_job(job.id)
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+    t = threading.Thread(target=reader)
+    t.start()
+    for i in range(300):
+        job.rallies = [{"index": k, "point_sec": float(k)} for k in range(i % 50)]
+        job.save()
+    stop.set()
+    t.join()
+    assert errors == []

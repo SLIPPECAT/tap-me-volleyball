@@ -96,7 +96,11 @@ class Job:
                         out[k] = {**disk.get(k, {}), **{i: sc for i, sc in v.items() if sc != before.get(k, {}).get(i)}}
                     elif v != before.get(k):
                         out[k] = v
-            path.write_text(json.dumps(out, ensure_ascii=False, indent=2))
+            # 임시 파일에 다 쓴 뒤 바꿔치기한다. 바로 쓰면 비운 순간 화면·다른 단계가 빈 파일을 읽어 오류가 났고,
+            # 장면 준비가 그 오류로 멈춰 화면이 "준비 중"에 머물렀다(10/30 성능 테스트 T3)
+            tmp = path.with_name(f"job.{threading.get_ident()}.tmp")
+            tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2))
+            os.replace(tmp, path)
             self._seen = mine
 
     def step(self, name: str, done: int = 0, total: int = 0) -> None:
