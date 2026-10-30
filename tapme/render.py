@@ -161,8 +161,8 @@ def _soft(img: Image.Image, box: tuple[float, float, float, float], draw: Callab
     img.paste(patch, (x0, y0), patch)
 
 
-def _draw_me_marker(img: Image.Image, me: Box) -> None:
-    """발밑 스포트라이트(빛 + 흰색·하늘색 이중 테두리)와 머리 위 삼각형. 굵기·크기는 선수 크기에 맞춘다."""
+def _draw_ground_marker(img: Image.Image, me: Box) -> None:
+    """발밑 스포트라이트(빛 + 흰색·하늘색 이중 테두리). 굵기·크기는 선수 크기에 맞춘다."""
     w, h = me.right - me.left, me.bottom - me.top
     cx = (me.left + me.right) / 2
     rx, ry = max(14.0, w * 0.75), max(6.0, h * 0.09)
@@ -173,6 +173,12 @@ def _draw_me_marker(img: Image.Image, me: Box) -> None:
     d = ImageDraw.Draw(img, "RGBA")
     d.ellipse(foot, outline=(255, 255, 255, 230), width=t)
     d.ellipse((cx - rx * 0.62, me.bottom - ry * 0.62, cx + rx * 0.62, me.bottom + ry * 0.62), outline=RING_COLOR + (200,), width=t)
+
+
+def _draw_head_marker(img: Image.Image, me: Box) -> None:
+    """머리 위 노란 삼각형(그림자 포함)."""
+    w = me.right - me.left
+    cx = (me.left + me.right) / 2
     s = max(14.0, w * 0.32)
     tip = me.top - s * 0.45
     tri = [(cx - s / 2, tip - s * 0.7), (cx + s / 2, tip - s * 0.7), (cx, tip)]
@@ -207,7 +213,13 @@ def compose(
                 if b.object_id != me:
                     _paste_region(work, blurred, b, masks.get(b.object_id))
     if my_box:
-        _draw_me_marker(work, my_box)
+        rec = masks.get(me)
+        body = work.copy() if rec is not None else None
+        _draw_ground_marker(work, my_box)
+        if body is not None:
+            # 발밑 표시가 발을 덮지 않고 바닥에 깔린 것처럼: '나'의 몸(SAM 마스크)을 표시 위에 다시 올린다(10/30 사용자)
+            _paste_region(work, body, my_box, rec)
+        _draw_head_marker(work, my_box)
     x0, y0, cw, ch = crop
     out = work.crop((x0, y0, x0 + cw, y0 + ch)).resize(out_size, Image.Resampling.LANCZOS)
     if subtitle:

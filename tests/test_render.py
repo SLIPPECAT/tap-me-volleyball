@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -213,3 +214,25 @@ def test_my_moving_face_never_gets_a_held_mosaic(tmp_path: Path, monkeypatch: py
     for i in (4, 8):
         x = 85 + 8 * i
         assert float(np.abs(a[i][100:140, x - 30:x + 34] - b[i][100:140, x - 30:x + 34]).mean()) < 6
+
+
+def test_ground_marker_goes_under_my_feet_not_over_them() -> None:
+    # 10/30 사용자: 발밑 표시가 발을 덮는 느낌 → '나'의 몸(마스크) 위에는 표시를 그리지 않는다
+    import numpy as np
+    from PIL import Image
+
+    me = Box(track.TAPPED_ID, 170, 120, 230, 320)
+    frame = Image.new("RGB", (400, 400), (90, 90, 90))
+    frame.paste((200, 30, 30), (180, 290, 220, 320))  # 빨간 신발
+    rec = SimpleNamespace(mask=SimpleNamespace(width=60, height=200))
+    body = [1 if 290 - 120 <= y < 320 - 120 and 10 <= x < 50 else 0 for y in range(200) for x in range(60)]
+    import tapme.render as r
+
+    real = r.decode_mask_to_raster
+    r.decode_mask_to_raster = lambda m: body
+    try:
+        out = np.asarray(render.compose(frame, [me], {track.TAPPED_ID: rec}, track.TAPPED_ID, (0, 0, 400, 400), (400, 400)))
+    finally:
+        r.decode_mask_to_raster = real
+    assert (out[295:318, 185:215] == (200, 30, 30)).all()  # 신발은 그대로
+    assert np.abs(out[300:330, 120:170].astype(int) - 90).max() > 40  # 신발 옆 바닥에는 표시
