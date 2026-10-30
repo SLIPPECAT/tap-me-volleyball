@@ -157,8 +157,10 @@ def test_load_job_rejects_path_tricks(tmp_path: Path, monkeypatch: pytest.Monkey
 
 
 def test_find_rallies_keeps_rejected_candidates_for_the_user(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tapme import rally, rally_filter
+    from tapme import rally, rally_filter, scan
 
+    monkeypatch.setattr(jobs, "RALLY_MODE", "whistle")
+    monkeypatch.setattr(scan, "duration_sec", lambda v: 30.0)
     monkeypatch.setattr(rally, "load_audio", lambda v: __import__("numpy").zeros(16000))
     monkeypatch.setattr(rally, "find_whistles", lambda a: [])
     monkeypatch.setattr(rally, "segments", lambda w, d=None: [rally.RallyCandidate(1, 9), rally.RallyCandidate(20, 28)])
@@ -241,8 +243,10 @@ def test_preview_is_a_small_clip_and_middle_thumbnail(tmp_path: Path, monkeypatc
 
 
 def test_find_rallies_merges_a_rally_split_by_a_middle_whistle(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tapme import rally, rally_filter
+    from tapme import rally, rally_filter, scan
 
+    monkeypatch.setattr(jobs, "RALLY_MODE", "whistle")
+    monkeypatch.setattr(scan, "duration_sec", lambda v: 30.0)
     monkeypatch.setattr(rally, "load_audio", lambda v: __import__("numpy").zeros(16000))
     monkeypatch.setattr(rally, "find_whistles", lambda a: [])
     monkeypatch.setattr(rally, "segments", lambda w, d=None: [rally.RallyCandidate(3.0, 16.75), rally.RallyCandidate(16.75, 26.5)])
@@ -303,3 +307,42 @@ def test_sam_clip_frames_line_up_with_render_clip(tmp_path: Path) -> None:
                               for k, s in enumerate(sam) if 0 <= 3 * k + shift < len(clip)]))
 
     assert min(range(-6, 7), key=err) == 0
+
+
+def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tapme import scan
+
+    monkeypatch.setattr(scan, "duration_sec", lambda v: 3600.0)
+    seen: list = []
+
+    def fake_scan(c, v, duration, d, progress):
+        progress(1, 72)
+        seen.append(jobs.load_job(job.id).progress)
+        return [{"start_sec": 5.5, "point_sec": 12.5, "end_sec": 13.5, "is_rally": True, "confidence": 0.9,
+                 "reason": None, "uncertain": False}], [{"usd": 0.03, "chunk": 0}]
+
+    monkeypatch.setattr(scan, "scan_video", fake_scan)
+    monkeypatch.setattr(jobs, "make_preview", lambda j, i: None)
+    jobs.find_rallies(job, SimpleNamespace())
+    saved = jobs.load_job(job.id)
+    # 1시간 영상: 상한이 길이에 비례($0.05/분 → $3)해 예상 비용(약 $2.3)으로 막히지 않는다
+    assert saved.budget_usd == pytest.approx(3.0) and 2.0 < saved.estimate_usd < 3.0
+    assert seen == [{"step": "rallies", "done": 1, "total": 72}]
+    assert saved.rallies[0]["point_sec"] == 12.5 and saved.spent_usd == pytest.approx(0.03)
+
+    def no_muse(*a):
+        raise AssertionError("훑어보기가 찾은 득점 순간을 다시 묻지 않는다")
+
+    monkeypatch.setattr(score, "ask_score_time", no_muse)
+    scene = jobs.prepare_scene(saved, 0, client=None)
+    assert scene["score_sec"] == 12.5 and scene["window"] == [5.5, 15.5]
+    assert jobs.load_job(job.id).spent_usd == pytest.approx(0.03)
+
+
+def test_short_video_keeps_the_minimum_budget(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tapme import scan
+
+    monkeypatch.setattr(scan, "duration_sec", lambda v: 60.0)
+    monkeypatch.setattr(scan, "scan_video", lambda *a: ([], []))
+    jobs.find_rallies(job, SimpleNamespace())
+    assert jobs.load_job(job.id).budget_usd == jobs.MAX_USD_PER_JOB

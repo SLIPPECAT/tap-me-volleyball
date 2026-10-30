@@ -2,8 +2,8 @@
 
 작업 폴더 data/jobs/<id>/ (git 제외)에 원본·흐림본·결과와 job.json을 둔다.
 단계:
-  1. find_rallies    휘슬 후보 → 흐림본을 Muse로 거르기 (유료, 후보당 약 $0.006)
-  2. prepare_scene   사용자가 고른 랠리의 득점 시점(Muse) → 득점 7초 전~3초 뒤 SAM용 흐림본 + 탭할 장면 2장(득점 순간·구간 시작)
+  1. find_rallies    60초 조각 흐림본을 Muse로 훑어 랠리·득점 순간 찾기 (유료, 1분에 약 $0.035, scan.py)
+  2. prepare_scene   사용자가 고른 랠리의 득점 7초 전~3초 뒤 SAM용 흐림본 + 탭할 장면 5장(득점 순간·그 전·구간 시작)
   3. make_highlight  탭 → '나'만 SAM 추적(점 프롬프트) → 득점 순간과 이어서 보이는 구간만 → 자막(Muse) → 원본 fps 흐림본 렌더
 외부로 나가는 영상은 흐림본뿐이다. 얼굴이 그대로인 잘린 사본은 흐림 직후 지운다.
 """
@@ -22,10 +22,14 @@ from typing import Any, BinaryIO
 
 from PIL import Image
 
-from tapme import anonymize, muse, rally, rally_filter, render, score, track
+from tapme import anonymize, muse, rally, rally_filter, render, scan, score, track
 
 JOBS_DIR = Path(os.environ.get("TAPME_JOBS_DIR", "data/jobs"))
 MAX_USD_PER_JOB = float(os.environ.get("TAPME_MAX_USD_PER_JOB", "1.0"))
+# 긴 영상도 처리하도록 상한을 길이에 비례해 올린다(10/30 사용자 결정: 1분에 $0.05, 1시간 $3). 짧은 영상은 MAX_USD_PER_JOB
+MAX_USD_PER_MIN = float(os.environ.get("TAPME_MAX_USD_PER_MIN", "0.05"))
+# 랠리 찾기: scan(기본, 60초 조각 훑어보기) 또는 whistle(정모 휘슬에 맞춘 예전 방식, 실험 H-17~H-33 기록·비교용)
+RALLY_MODE = os.environ.get("TAPME_RALLY_MODE", "scan")
 WINDOW_BEFORE_SEC = 7.0  # SAM은 50프레임보다 짧아도 50으로 과금된다(비용 원장 R-10·R-17)
 WINDOW_AFTER_SEC = 3.0
 # 10fps: 움직이는 카메라에서 5fps는 같은 사람을 더 자주 놓쳤다(실험 H-24 B<C). 장면당 SAM 약 $0.02
@@ -61,6 +65,9 @@ class Job:
     progress: dict[str, Any] = field(default_factory=dict)  # 화면에 보여 줄 지금 단계: {"step", "done", "total"}
     spent_usd: float = 0.0
     error: str | None = None
+    duration_sec: float = 0.0
+    budget_usd: float = 0.0  # 0이면 MAX_USD_PER_JOB. 랠리 찾기 전에 영상 길이로 정한다
+    estimate_usd: float = 0.0  # 랠리 찾기 예상 비용(화면에 보여 준다)
 
     @property
     def dir(self) -> Path:
@@ -75,8 +82,9 @@ class Job:
         self.save()
 
     def charge(self, estimate_usd: float) -> None:
-        if self.spent_usd + estimate_usd > MAX_USD_PER_JOB:
-            raise BudgetExceeded(f"작업당 상한 ${MAX_USD_PER_JOB:.2f}을 넘는다 (쓴 돈 ${self.spent_usd:.3f} + 예상 ${estimate_usd:.3f})")
+        limit = self.budget_usd or MAX_USD_PER_JOB
+        if self.spent_usd + estimate_usd > limit:
+            raise BudgetExceeded(f"작업당 상한 ${limit:.2f}을 넘는다 (쓴 돈 ${self.spent_usd:.3f} + 예상 ${estimate_usd:.3f})")
 
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
@@ -123,6 +131,29 @@ def _cut_blurred(video: Path, start: float, duration: float, out: Path, fps: int
 
 def find_rallies(job: Job, client: Any) -> None:
     job.status = "finding_rallies"
+    job.duration_sec = round(scan.duration_sec(Path(job.video)), 2)
+    job.budget_usd = round(max(MAX_USD_PER_JOB, MAX_USD_PER_MIN * job.duration_sec / 60), 2)
+    if RALLY_MODE == "whistle":
+        merged = _rallies_by_whistle(job, client)
+    else:
+        job.estimate_usd = round(scan.estimate_usd(job.duration_sec), 3)
+        job.step("rallies", 0, len(scan.chunk_starts(job.duration_sec)))
+        job.charge(job.estimate_usd)
+        merged, chunks = scan.scan_video(client, Path(job.video), job.duration_sec, job.dir / "rallies",
+                                         lambda d, n: job.step("rallies", d, n))
+        job.spent_usd += sum(c["usd"] for c in chunks)
+        (job.dir / "rallies").mkdir(exist_ok=True)
+        (job.dir / "rallies" / "scan.json").write_text(json.dumps(chunks, ensure_ascii=False, indent=1))
+    job.rallies = [{**r, "index": i} for i, r in enumerate(merged)]
+    for i in range(len(job.rallies)):
+        job.step("previews", i, len(job.rallies))
+        make_preview(job, i)  # 사용자가 시간만 보고는 어떤 장면인지 모른다(10/29 사용자 피드백)
+    job.progress = {}
+    job.status = "rallies_ready"
+    job.save()
+
+
+def _rallies_by_whistle(job: Job, client: Any) -> list[dict[str, Any]]:
     job.step("whistles")
     audio = rally.load_audio(Path(job.video))
     candidates = rally.segments(rally.find_whistles(audio), audio.size / rally.SAMPLE_RATE)
@@ -138,13 +169,7 @@ def find_rallies(job: Job, client: Any) -> None:
             out = job.dir / "rallies" / f"merged{m['parts'][0]:02d}_{m['parts'][-1]:02d}_blur.mp4"
             m["clip"] = str(rally_filter.blurred_clip(Path(job.video), m["start_sec"], m["end_sec"], out))
             m["clip_start_sec"] = max(0.0, m["start_sec"] - rally_filter.PAD_SEC)
-    job.rallies = [{**r, "index": i} for i, r in enumerate(merged)]
-    for i in range(len(job.rallies)):
-        job.step("previews", i, len(job.rallies))
-        make_preview(job, i)  # 사용자가 시간만 보고는 어떤 장면인지 모른다(10/29 사용자 피드백)
-    job.progress = {}
-    job.status = "rallies_ready"
-    job.save()
+    return merged
 
 
 PREVIEW_SHORT_SIDE = 360  # 랠리 후보 미리보기: 폰에서 고르기용 낮은 화질
@@ -207,11 +232,15 @@ def player_cards(job: Job, index: int, kind: str, client: Any) -> list[list[floa
 def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
     r = job.rallies[index]
     job.scenes[str(index)] = {"index": index, "status": "preparing"}
-    job.step("score_time")
-    job.charge(muse.estimate_usd(r["end_sec"] - r["start_sec"] + 2 * rally_filter.PAD_SEC))
-    answer, reply = score.ask_score_time(client, Path(r["clip"]))
-    job.spent_usd += reply.usd
-    score_sec = r["clip_start_sec"] + float(answer["score_time_sec"])
+    if r.get("point_sec") is not None:  # 훑어보기가 이미 득점 순간을 찾았다(다시 묻지 않는다)
+        answer = {"score_time_sec": r["point_sec"], "confidence": r.get("confidence"), "from": "scan"}
+        score_sec = float(r["point_sec"])
+    else:
+        job.step("score_time")
+        job.charge(muse.estimate_usd(r["end_sec"] - r["start_sec"] + 2 * rally_filter.PAD_SEC))
+        answer, reply = score.ask_score_time(client, Path(r["clip"]))
+        job.spent_usd += reply.usd
+        score_sec = r["clip_start_sec"] + float(answer["score_time_sec"])
     start = max(0.0, score_sec - WINDOW_BEFORE_SEC)
     duration = score_sec + WINDOW_AFTER_SEC - start
     scene_dir = job.dir / f"scene{index:02d}"

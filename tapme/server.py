@@ -139,9 +139,9 @@ def upload(file: UploadFile, background: BackgroundTasks) -> dict[str, Any]:
 def status(job_id: str) -> dict[str, Any]:
     job = _job(job_id)
     return {"id": job.id, "status": job.status, "error": job.error, "spent_usd": round(job.spent_usd, 4),
-            "progress": job.progress,
-            "rallies": [{k: r.get(k) for k in ("index", "start_sec", "end_sec", "is_rally", "confidence", "reason",
-                                               "uncertain")}
+            "progress": job.progress, "duration_sec": job.duration_sec, "estimate_usd": job.estimate_usd,
+            "rallies": [{k: r.get(k) for k in ("index", "start_sec", "end_sec", "point_sec", "is_rally", "confidence",
+                                               "reason", "uncertain")}
                         for r in job.rallies],
             "scenes": {k: {f: v for f, v in s.items() if f not in _SERVER_PATHS}
                        for k, s in job.scenes.items()},

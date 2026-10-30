@@ -83,6 +83,7 @@
   <!-- 처리 중: 지금 단계 + 닫아도 됨 + 그동안 옵션 미리 정하기 -->
   <section id="wait-box" class="card" hidden>
     <p id="wait-step" aria-live="polite"></p>
+    <p class="muted" id="wait-cost" hidden></p>
     <div class="progress" id="wait-progress"><div></div></div>
     <p class="muted" data-t="canClose"></p>
     <p><button id="copy-link" data-t="copyLink"></button></p>
@@ -207,7 +208,7 @@ const T = {
   ko: {
     keepOpen: "업로드가 끝날 때까지 이 화면을 켜 두세요.", canClose: "화면을 닫아도 맥에서 계속 진행돼요. 이 링크로 다시 들어오면 이어서 볼 수 있어요.",
     copyLink: "이 작업 링크 복사", copied: "복사했어요", prefsTitle: "기다리는 동안 옵션 미리 정하기",
-    stWhistles: "휘슬 소리를 찾는 중…", stRallies: "랠리 후보를 AI로 확인하는 중… {d}/{n}", stPreviews: "미리보기 만드는 중… {d}/{n}",
+    stWhistles: "휘슬 소리를 찾는 중…", stRallies: "AI가 영상을 1분씩 훑으며 랠리를 찾는 중… {d}/{n}", waitCost: "영상 {m}분 · 예상 AI 비용 약 ${u}", stPreviews: "미리보기 만드는 중… {d}/{n}",
     stScore_time: "득점 순간을 찾는 중…", stBlur: "AI로 보낼 장면의 얼굴을 흐리는 중…", stTracking: "나를 따라가는 중… (SAM)",
     stCommentary: "해설 자막을 만드는 중…", stRender: "영상을 만드는 중… {p}%", stWorking: "처리하는 중…",
     uploadIntro: "정모 경기 영상을 올리면 랠리를 찾아 드려요. AI로 보내는 장면은 늘 얼굴을 흐린 뒤 보냅니다. 결과 영상의 모자이크는 직접 고를 수 있어요.",
@@ -233,7 +234,7 @@ const T = {
   ja: {
     keepOpen: "アップロードが終わるまでこの画面を開いたままにしてください。", canClose: "画面を閉じてもMacで処理は続きます。このリンクから戻れば続きが見られます。",
     copyLink: "この作業のリンクをコピー", copied: "コピーしました", prefsTitle: "待っている間にオプションを決めておく",
-    stWhistles: "ホイッスルの音を探しています…", stRallies: "ラリー候補をAIで確認しています… {d}/{n}", stPreviews: "プレビューを作っています… {d}/{n}",
+    stWhistles: "ホイッスルの音を探しています…", stRallies: "AIが動画を1分ずつ見てラリーを探しています… {d}/{n}", waitCost: "動画 {m}分 · AI費用の見込み 約${u}", stPreviews: "プレビューを作っています… {d}/{n}",
     stScore_time: "得点の瞬間を探しています…", stBlur: "AIに送るシーンの顔をぼかしています…", stTracking: "自分を追いかけています…（SAM）",
     stCommentary: "実況字幕を作っています…", stRender: "動画を作っています… {p}%", stWorking: "処理しています…",
     uploadIntro: "練習試合の動画をアップすると、ラリーを見つけます。AIに送るシーンは必ず顔をぼかしてから送ります。完成動画のモザイクは自分で選べます。",
@@ -259,7 +260,7 @@ const T = {
   en: {
     keepOpen: "Keep this screen open until the upload finishes.", canClose: "You can close this screen; your Mac keeps working. Open this link again to continue.",
     copyLink: "Copy link to this job", copied: "Copied", prefsTitle: "Set options while you wait",
-    stWhistles: "Finding whistles…", stRallies: "Checking rally candidates with AI… {d}/{n}", stPreviews: "Making previews… {d}/{n}",
+    stWhistles: "Finding whistles…", stRallies: "AI is scanning the video a minute at a time for rallies… {d}/{n}", waitCost: "{m}-minute video · estimated AI cost about ${u}", stPreviews: "Making previews… {d}/{n}",
     stScore_time: "Finding the scoring moment…", stBlur: "Blurring faces before sending to AI…", stTracking: "Following you… (SAM)",
     stCommentary: "Writing commentary subtitles…", stRender: "Making the video… {p}%", stWorking: "Working…",
     uploadIntro: "Upload a match video and we'll find the rallies. Anything sent to the AI is always face-blurred first. You choose whether the final video pixelates faces.",
@@ -381,6 +382,9 @@ function renderWait(s) {
     const pct = pr.total ? Math.round(100 * pr.done / pr.total) : 0;
     $("wait-step").textContent = t(T[state.lang][key] ? key : "stWorking", { d: pr.done || 0, n: pr.total || 0, p: pct });
     $("wait-progress").hidden = !pr.total;
+    // 긴 영상은 오래 걸리고 비용도 커서 랠리 찾는 동안 길이와 예상 비용을 보여 준다
+    $("wait-cost").hidden = !(s.status === "finding_rallies" && s.estimate_usd);
+    if (!$("wait-cost").hidden) $("wait-cost").textContent = t("waitCost", { m: Math.max(1, Math.round(s.duration_sec / 60)), u: s.estimate_usd.toFixed(2) });
     $("wait-progress").firstElementChild.style.width = `${pct}%`;
     if (!$("opts-prefs").children.length) {
       mountOptions("opts-prefs", state.prefs.options);
