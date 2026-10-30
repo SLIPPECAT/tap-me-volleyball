@@ -184,3 +184,12 @@ def test_preparing_ahead_runs_only_when_free_and_idle(client: TestClient, monkey
     assert client.post(f"/jobs/{job_id}/rallies/0/prepare?ahead=true").json()["status"] == "preparing"
     assert client.post(f"/jobs/{job_id}/rallies/0/prepare?ahead=true").json()["status"] == "skipped"  # 이미 있음
     assert calls == [0]
+
+
+def test_status_shows_scan_progress_while_finding_rallies(client: TestClient) -> None:
+    # 10/30: 찾는 동안 화면이 진행(30/84)을 몰라 "0/0"이 뜨고 찾은 랠리 목록도 그리지 못했다
+    job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
+    job = jobs.load_job(job_id)
+    job.status, job.scan = "finding_rallies", {"done": 30, "total": 84}
+    job.save()
+    assert client.get(f"/jobs/{job_id}").json()["scan"] == {"done": 30, "total": 84}

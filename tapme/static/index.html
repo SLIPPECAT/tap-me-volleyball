@@ -443,7 +443,7 @@ function renderRallies(s) {
   show(s.status === "rallies_ready" || partial ? "s-rallies" : busyOf(s) && !s.error ? null : "s-upload");
   if (s.status !== "rallies_ready" && !partial) { $("up-status").textContent = s.error ? "" : t("findingRallies"); return; }
   $("scan-note").hidden = !partial;
-  if (partial) $("scan-note").textContent = t("scanNote", { d: s.scan.done || 0, n: s.scan.total || 0 });
+  if (partial) $("scan-note").textContent = t("scanNote", { d: (s.scan || {}).done || 0, n: (s.scan || {}).total || 0 });
   renderReel(s);
   $("no-rallies").hidden = s.rallies.length > 0 || partial;
   const unread = s.unread || [];
