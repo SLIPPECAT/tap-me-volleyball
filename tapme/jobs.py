@@ -123,7 +123,8 @@ def _cut_blurred(video: Path, start: float, duration: float, out: Path, fps: int
 def find_rallies(job: Job, client: Any) -> None:
     job.status = "finding_rallies"
     job.step("whistles")
-    candidates = rally.segments(rally.find_whistles(rally.load_audio(Path(job.video))))
+    audio = rally.load_audio(Path(job.video))
+    candidates = rally.segments(rally.find_whistles(audio), audio.size / rally.SAMPLE_RATE)
     job.step("rallies", 0, len(candidates))
     job.charge(sum(muse.estimate_usd(c.end_sec - c.start_sec + 2 * rally_filter.PAD_SEC) for c in candidates))
     results = rally_filter.check_candidates(client, Path(job.video), candidates, job.dir / "rallies",

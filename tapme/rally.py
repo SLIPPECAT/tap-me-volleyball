@@ -26,7 +26,7 @@ BAND_HZ = (2400.0, 4500.0)
 LOUD_DB = 12.0  # 영상 전체 대역 에너지 중앙값보다 이만큼 크면 큰 소리. 15는 작은 끝 휘슬(13.6dB)을 놓쳤다(실험 H-26)
 TONALITY_MIN = 8.0  # 대역 안 가장 센 칸 ÷ 대역 평균. 넓게 퍼진 잡음은 5 안팎
 MERGE_SEC = 0.5  # 이 안에 붙은 후보는 휘슬 하나
-SEGMENT_SEC = (2.0, 40.0)  # 이웃한 두 휘슬 사이가 이 길이면 후보
+SEGMENT_SEC = (2.0, 40.0)  # 이웃한 두 휘슬 사건 사이(앞 사건 끝~뒤 사건 시작)가 이 길이면 후보
 
 
 @dataclass(frozen=True)
@@ -92,14 +92,35 @@ def find_whistles(audio: np.ndarray, tonality_min: float = TONALITY_MIN) -> list
     return whistles
 
 
-def segments(whistles: list[Whistle]) -> list[RallyCandidate]:
-    """이웃한 두 휘슬 사이를 모두 후보로. 랠리인지는 화면으로 거르고(rally_filter), 이어진 랠리는 합친다.
+EVENT_GAP_SEC = 2.0  # 이보다 붙은 휘슬은 한 사건(랠리 중 큰 소리가 몰려 잡히면 구간이 잘게 잘렸다, H-31)
 
-    앞에서부터 두 개씩 짝지으면 랠리 중간 휘슬(옆 코트 등)이 하나 끼거나 끝 휘슬을 하나 놓칠 때
-    뒤 짝이 다 밀리고 랠리가 잘렸다(실험 H-26).
+
+def segments(whistles: list[Whistle], duration_sec: float | None = None) -> list[RallyCandidate]:
+    """휘슬 사건 사이를 모두 후보로. 랠리인지는 화면으로 거르고(rally_filter), 이어진 랠리는 합친다.
+
+    - 앞에서부터 두 개씩 짝지으면 중간 휘슬 하나로 뒤 짝이 다 밀렸다(H-26) → 이웃한 사건 사이를 모두 후보로
+    - 2초 안에 붙은 휘슬은 한 사건으로 묶고, 후보는 앞 사건의 마지막 휘슬부터 뒤 사건의 첫 휘슬까지 좁게 잡는다.
+      넉넉히 잡으면 득점 뒤 세리머니가 랠리 끝 1초와 함께 들어가 "랠리"로 판정됐다(H-31). 같은 사건을 사이에 둔
+      두 "랠리"는 rally_filter.merge_rallies가 잇는다
+    - duration_sec을 주면 영상 처음·끝도 사건으로 둔다(랠리 도중 시작·끝난 영상, H-31)
     """
-    return [RallyCandidate(a.time_sec, b.time_sec) for a, b in pairwise(whistles)
-            if SEGMENT_SEC[0] <= b.time_sec - a.time_sec <= SEGMENT_SEC[1]]
+    events: list[list[float]] = []
+    for w in whistles:
+        if events and w.time_sec - events[-1][1] < EVENT_GAP_SEC:
+            events[-1][1] = w.time_sec
+        else:
+            events.append([w.time_sec, w.time_sec])
+    if duration_sec is not None:
+        if not events or events[0][0] >= EVENT_GAP_SEC:
+            events.insert(0, [0.0, 0.0])
+        else:
+            events[0][0] = 0.0
+        if duration_sec - events[-1][1] >= EVENT_GAP_SEC:
+            events.append([duration_sec, duration_sec])
+        else:
+            events[-1][1] = duration_sec
+    return [RallyCandidate(a[1], b[0]) for a, b in pairwise(events)
+            if SEGMENT_SEC[0] <= b[0] - a[1] <= SEGMENT_SEC[1]]
 
 
 def main() -> None:
@@ -109,10 +130,11 @@ def main() -> None:
     parser.add_argument("--tonality-min", type=float, default=TONALITY_MIN, help="0이면 순음도 거르기 끔")
     args = parser.parse_args()
 
-    whistles = find_whistles(load_audio(args.video), args.tonality_min)
+    audio = load_audio(args.video)
+    whistles = find_whistles(audio, args.tonality_min)
     result = {
         "whistles": [asdict(w) for w in whistles],
-        "rallies": [asdict(r) for r in segments(whistles)],
+        "rallies": [asdict(r) for r in segments(whistles, audio.size / SAMPLE_RATE)],
     }
     text = json.dumps(result, ensure_ascii=False, indent=2)
     if args.out:

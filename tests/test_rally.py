@@ -38,8 +38,25 @@ def test_without_tonality_cheers_become_false_rallies() -> None:
 
 def test_every_neighbouring_gap_in_range_is_a_candidate() -> None:
     w = [rally.Whistle(t, 30.0, 20.0) for t in (1.0, 2.0, 10.0, 60.0, 65.0)]
-    # 1→2초는 너무 짧고 10→60초는 너무 길다. 2→10초, 60→65초가 후보
+    # 1·2초는 붙어 있어 한 사건. 그 사건 끝~10초, 60~65초가 후보(10→60초는 너무 길다)
     assert rally.segments(w) == [rally.RallyCandidate(2.0, 10.0), rally.RallyCandidate(60.0, 65.0)]
+
+
+def test_clustered_whistles_and_video_edges_keep_the_score() -> None:
+    # 시나리오 S1(0148, 13.6초): 랠리 도중 시작, 큰 소리가 몰려 휘슬처럼 잡힘. 득점 12초
+    w = [rally.Whistle(t, 20.0, 20.0) for t in (4.15, 4.9, 5.67, 10.05, 11.12)]
+    segs = rally.segments(w, duration_sec=13.6)
+    # 후보는 사건 사이를 좁게(H-31 보완). 이어진 랠리는 merge_rallies가 잇는다
+    assert segs == [rally.RallyCandidate(0.0, 4.15), rally.RallyCandidate(5.67, 10.05), rally.RallyCandidate(11.12, 13.6)]
+    assert any(s.start_sec <= 12.0 <= s.end_sec for s in segs)
+
+
+def test_tight_boundaries_leave_out_whistle_events() -> None:
+    # 정모(H-31): 9.3초 득점 휘슬 뒤 세리머니. 넉넉히 잡으면 랠리 끝 1초가 세리머니 후보에 들어가 "랠리"로 판정됐다
+    w = [rally.Whistle(t, 20.0, 20.0) for t in (9.3, 10.38, 12.97)]
+    segs = rally.segments(w, duration_sec=20.0)
+    assert segs[0] == rally.RallyCandidate(0.0, 9.3)
+    assert all(not (s.start_sec < 10.38 and s.end_sec > 9.3) for s in segs)
 
 
 def test_middle_whistle_does_not_shift_later_candidates() -> None:

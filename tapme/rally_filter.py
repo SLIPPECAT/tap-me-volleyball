@@ -57,6 +57,9 @@ def blurred_clip(video: Path, start_sec: float, end_sec: float, out: Path) -> Pa
     return out
 
 
+JOIN_GAP_SEC = 10.0  # 이웃한 두 랠리 판정 사이(휘슬 사건 하나의 길이)가 이 안이면 잇는다
+
+
 def merge_rallies(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """휘슬을 사이에 두고 이어진 '랠리' 판정 구간을 하나로 합친다(랠리 중간 휘슬로 잘린 랠리를 되살림).
 
@@ -65,9 +68,11 @@ def merge_rallies(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for i, r in enumerate(results):
         prev = out[-1] if out else None
-        if prev and prev["is_rally"] and r["is_rally"] and abs(prev["end_sec"] - r["start_sec"]) < 0.01:
+        # 후보는 휘슬 사건 사이를 좁게 잡는다(H-31). 바로 이웃한 두 후보 사이는 휘슬 사건 하나이므로 그 사건을 건너 잇는다
+        if (prev and prev["is_rally"] and r["is_rally"] and prev["parts"][-1] == i - 1
+                and r["start_sec"] - prev["end_sec"] <= JOIN_GAP_SEC):
             prev.update(
-                end_sec=r["end_sec"], parts=[*prev["parts"], i], clip=None,
+                end_sec=max(prev["end_sec"], r["end_sec"]), parts=[*prev["parts"], i], clip=None,
                 confidence=min(float(prev.get("confidence") or 0), float(r.get("confidence") or 0)),
                 uncertain=bool(prev.get("uncertain") or r.get("uncertain")),
                 usd=round(prev["usd"] + r["usd"], 6),
@@ -79,8 +84,7 @@ def merge_rallies(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _check_one(client: Any, video: Path, c: rally.RallyCandidate, i: int, work_dir: Path) -> dict[str, Any]:
-    blurred = blurred_clip(video, c.start_sec, c.end_sec, work_dir / f"cand{i:02d}_blur.mp4")
+def _ask(client: Any, c: rally.RallyCandidate, blurred: Path) -> dict[str, Any]:
     replies, answer = [], {}
     for _ in range(MAX_ATTEMPTS):
         replies.append(muse.ask_about_video(client, blurred, RALLY_CHECK_PROMPT))
@@ -102,20 +106,23 @@ def _check_one(client: Any, video: Path, c: rally.RallyCandidate, i: int, work_d
     }
 
 
-PARALLEL = 3  # 후보를 하나씩 묻느라 랠리 찾기가 오래 걸렸다(후보 3개 95초). 동시에 묻는다
+PARALLEL = 3  # 후보를 하나씩 묻느라 랠리 찾기가 오래 걸렸다(후보 3개 95초). Muse 질문은 동시에 한다
 
 
 def check_candidates(
     client: Any, video: Path, candidates: list[rally.RallyCandidate], work_dir: Path,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """후보마다 흐림 클립을 만들어 Muse에 묻는다. 결과는 후보 순서 그대로. on_progress(끝난 수, 전체)."""
+    """후보마다 흐림 클립을 만들어 Muse에 묻는다. 결과는 후보 순서 그대로. on_progress(끝난 수, 전체).
+
+    흐리기는 CPU를 써서 셋을 동시에 돌리면 서로 느려졌다(정모 12분, H-31). 흐리기는 하나씩, 질문만 겹친다.
+    """
     done = 0
     lock = threading.Lock()
 
-    def one(args: tuple[int, rally.RallyCandidate]) -> dict[str, Any]:
+    def ask(c: rally.RallyCandidate, blurred: Path) -> dict[str, Any]:
         nonlocal done
-        result = _check_one(client, video, args[1], args[0], work_dir)
+        result = _ask(client, c, blurred)
         with lock:
             done += 1
             if on_progress:
@@ -123,7 +130,11 @@ def check_candidates(
         return result
 
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
-        return list(pool.map(one, enumerate(candidates)))
+        futures = [
+            pool.submit(ask, c, blurred_clip(video, c.start_sec, c.end_sec, work_dir / f"cand{i:02d}_blur.mp4"))
+            for i, c in enumerate(candidates)
+        ]
+        return [f.result() for f in futures]
 
 
 def main() -> None:
@@ -133,7 +144,8 @@ def main() -> None:
     parser.add_argument("--yes", action="store_true", help="예상 금액을 보고 실제로 호출")
     args = parser.parse_args()
 
-    candidates = rally.segments(rally.find_whistles(rally.load_audio(args.video)))
+    audio = rally.load_audio(args.video)
+    candidates = rally.segments(rally.find_whistles(audio), audio.size / rally.SAMPLE_RATE)
     lengths = [c.end_sec - c.start_sec + 2 * PAD_SEC for c in candidates]
     print(f"후보 {len(candidates)}개, 약 {sum(lengths):.0f}초 → 예상 ${sum(map(muse.estimate_usd, lengths)):.3f}")
     if not args.yes:

@@ -159,9 +159,9 @@ def test_load_job_rejects_path_tricks(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_find_rallies_keeps_rejected_candidates_for_the_user(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
     from tapme import rally, rally_filter
 
-    monkeypatch.setattr(rally, "load_audio", lambda v: None)
+    monkeypatch.setattr(rally, "load_audio", lambda v: __import__("numpy").zeros(16000))
     monkeypatch.setattr(rally, "find_whistles", lambda a: [])
-    monkeypatch.setattr(rally, "segments", lambda w: [rally.RallyCandidate(1, 9), rally.RallyCandidate(20, 28)])
+    monkeypatch.setattr(rally, "segments", lambda w, d=None: [rally.RallyCandidate(1, 9), rally.RallyCandidate(20, 28)])
     seen: list = []
 
     def fake_check(c, v, cands, d, progress):
@@ -243,9 +243,9 @@ def test_preview_is_a_small_clip_and_middle_thumbnail(tmp_path: Path, monkeypatc
 def test_find_rallies_merges_a_rally_split_by_a_middle_whistle(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
     from tapme import rally, rally_filter
 
-    monkeypatch.setattr(rally, "load_audio", lambda v: None)
+    monkeypatch.setattr(rally, "load_audio", lambda v: __import__("numpy").zeros(16000))
     monkeypatch.setattr(rally, "find_whistles", lambda a: [])
-    monkeypatch.setattr(rally, "segments", lambda w: [rally.RallyCandidate(3.0, 16.75), rally.RallyCandidate(16.75, 26.5)])
+    monkeypatch.setattr(rally, "segments", lambda w, d=None: [rally.RallyCandidate(3.0, 16.75), rally.RallyCandidate(16.75, 26.5)])
     monkeypatch.setattr(rally_filter, "check_candidates", lambda c, v, cands, d, progress: [
         {"start_sec": 3.0, "end_sec": 16.75, "is_rally": True, "confidence": 0.95, "usd": 0.006, "clip": "a",
          "input_tokens": 1, "output_tokens": 1},

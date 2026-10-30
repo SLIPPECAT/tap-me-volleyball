@@ -92,7 +92,7 @@ def test_candidates_are_checked_in_parallel_but_kept_in_order(tmp_path: Path, mo
     running, peak = [0], [0]
     lock = threading.Lock()
 
-    def fake_one(client, video, c, i, work_dir):
+    def fake_ask(client, c, blurred):
         with lock:
             running[0] += 1
             peak[0] = max(peak[0], running[0])
@@ -101,10 +101,35 @@ def test_candidates_are_checked_in_parallel_but_kept_in_order(tmp_path: Path, mo
             running[0] -= 1
         return {"start_sec": c.start_sec}
 
-    monkeypatch.setattr(rally_filter, "_check_one", fake_one)
+    blurring, blur_peak = [0], [0]
+
+    def fake_blur(video, s, e, out):
+        blurring[0] += 1
+        blur_peak[0] = max(blur_peak[0], blurring[0])
+        time.sleep(0.01)
+        blurring[0] -= 1
+        return out
+
+    monkeypatch.setattr(rally_filter, "_ask", fake_ask)
+    monkeypatch.setattr(rally_filter, "blurred_clip", fake_blur)
     progress: list = []
     cands = [rally.RallyCandidate(float(i), float(i) + 5) for i in range(6)]
     out = rally_filter.check_candidates(None, tmp_path / "v.mp4", cands, tmp_path, lambda d, n: progress.append((d, n)))
     assert [r["start_sec"] for r in out] == [float(i) for i in range(6)]
     assert peak[0] == rally_filter.PARALLEL  # 동시에 묻는다
+    assert blur_peak[0] == 1  # 흐리기는 CPU를 다퉈 하나씩(H-31)
     assert progress[-1] == (6, 6) and len(progress) == 6
+
+
+def test_rallies_across_one_whistle_event_merge() -> None:
+    # S1(0148): 랠리 도중 큰 소리가 휘슬 사건으로 잡혀 좁은 후보 셋으로 잘렸다. 사건을 건너 잇는다
+    r = lambda s, e, ok=True: {"start_sec": s, "end_sec": e, "is_rally": ok, "confidence": 0.9, "usd": 0.006,
+                               "input_tokens": 1, "output_tokens": 1, "clip": "x"}
+    merged = rally_filter.merge_rallies([r(0.0, 4.15), r(5.67, 10.05), r(11.12, 13.6)])
+    assert [(m["start_sec"], m["end_sec"], m["parts"]) for m in merged] == [(0.0, 13.6, [0, 1, 2])]
+    # 사이에 랠리 아님이 끼면 잇지 않는다
+    merged = rally_filter.merge_rallies([r(0.0, 9.3), r(10.38, 12.97, False), r(14.0, 20.0)])
+    assert [m["parts"] for m in merged] == [[0], [1], [2]]
+    # 사건이 너무 길면(쉬는 시간) 잇지 않는다
+    merged = rally_filter.merge_rallies([r(0.0, 9.0), r(9.0 + rally_filter.JOIN_GAP_SEC + 1, 40.0)])
+    assert len(merged) == 2
