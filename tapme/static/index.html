@@ -464,9 +464,13 @@ function renderWait(s) {
 document.addEventListener("visibilitychange", () => { if (!document.hidden) document.title = BASE_TITLE; });
 $("team-pref").addEventListener("input", () => { state.prefs.team = $("team-pref").value; savePrefs(); });
 $("opts-prefs").addEventListener("change", () => { state.prefs.options = readOptions($("opts-prefs")); savePrefs(); });
+// 다시 볼 링크는 서버를 깨우는 입구 주소로(10/31): 서버는 30분 쉬면 꺼져, 서버 주소를 그대로 주면 나중에 열리지 않았다.
+// 입구가 서버를 켠 뒤 #job=…을 그대로 넘긴다. 입장 쿠키가 있는 브라우저면 배구구를 거치지 않고 이어 본다
+const ENTRY = location.hostname === "tapme.highlight.baegugu.com" ? "https://highlight.baegugu.com/tapme" : location.origin + "/";
 $("copy-link").onclick = async () => {
-  try { await navigator.clipboard.writeText(location.href); $("copy-link").textContent = t("copied"); }
-  catch { prompt("", location.href); }  // http 주소에서는 클립보드가 막힐 수 있다
+  const link = ENTRY + location.hash;
+  try { await navigator.clipboard.writeText(link); $("copy-link").textContent = t("copied"); }
+  catch { prompt("", link); }  // http 주소에서는 클립보드가 막힐 수 있다
 };
 
 function render(s) {
