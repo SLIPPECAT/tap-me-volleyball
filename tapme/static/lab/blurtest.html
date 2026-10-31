@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>브라우저 얼굴 흐리기 시험</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .lab { display: grid; gap: var(--space-md); max-width: 44rem; margin-inline: auto; }
+  .lab table { border-collapse: collapse; font-family: var(--font-outlier); font-size: var(--text-sm); }
+  .lab td { padding: var(--space-2xs) var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule-2); }
+  .lab canvas { width: 100%; height: auto; background: var(--color-paper-3); }
+  .lab .opts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* 재생하며 읽을 때 화면에 없으면(display:none) 프레임 신호가 오지 않는다 */
+  #v { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<header class="bar"><div class="bar-in"><h1>브라우저 얼굴 흐리기 시험</h1></div></header>
+<main class="lab">
+  <p class="muted">영상은 이 기기 밖으로 나가지 않아요. 2fps로 프레임을 읽고, 서버와 같은 얼굴 검출 모델(YuNet)로 얼굴을 찾아 흐려요. 숫자는 처리 속도를 재기 위한 것이에요.</p>
+  <div class="field"><label for="file">시험할 영상</label><input type="file" id="file" accept="video/*"></div>
+  <div class="opts">
+    <div class="field"><label for="scale">검출 배율</label>
+      <select id="scale"><option value="1">1배 (원래 크기)</option><option value="2">2배 (서버와 같음)</option></select></div>
+    <div class="field"><label for="secs">시험 길이</label>
+      <select id="secs"><option value="60">앞 1분</option><option value="180">앞 3분</option><option value="0">전체</option></select></div>
+    <div class="field"><label for="ep">계산 방식</label>
+      <select id="ep"><option value="webgpu">그래픽칩(WebGPU)</option><option value="wasm">일반(WASM)</option></select></div>
+    <div class="field"><label for="read">프레임 읽기</label>
+      <select id="read"><option value="play">재생하며 읽기</option><option value="seek">0.5초마다 이동</option></select></div>
+  </div>
+  <button class="primary" id="run" disabled>시험 시작</button>
+  <p id="status" aria-live="polite" class="muted"></p>
+  <table id="stats"></table>
+  <canvas id="view"></canvas>
+  <pre id="result" hidden></pre>
+</main>
+<video id="v" muted playsinline preload="auto"></video>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.webgpu.min.js" crossorigin></script>
+<script>
+// 서버(tapme/anonymize.py)와 같은 YuNet 해석: 출력 cls·obj·bbox × 보폭 8·16·32, 점수 sqrt(cls×obj) ≥ 0.5, NMS 0.3
+// (10/30 파이썬으로 같은 해석을 짜 OpenCV FaceDetectorYN과 13/13 일치 확인)
+// 받은 모델은 입력이 640×640 고정이라 입력·출력 크기만 가변으로 바꾼 사본(yunet_dyn.onnx)을 쓴다. 1080p에서 OpenCV와 14/14 일치
+const $ = (id) => document.getElementById(id);
+const THR = 0.5, NMS = 0.3, FPS = 2, RATE = 16;  // RATE: 재생하며 읽을 때 배속(크롬 최대 16)
+const q = new URLSearchParams(location.search);
+let session = null, epUsed = "";
+
+function nms(boxes, scores) {
+  const order = scores.map((s, i) => i).sort((a, b) => scores[b] - scores[a]), keep = [];
+  const iou = (a, b) => {
+    const x1 = Math.max(a[0], b[0]), y1 = Math.max(a[1], b[1]);
+    const x2 = Math.min(a[0] + a[2], b[0] + b[2]), y2 = Math.min(a[1] + a[3], b[1] + b[3]);
+    const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+    return inter / (a[2] * a[3] + b[2] * b[3] - inter);
+  };
+  for (const i of order) if (keep.every((k) => iou(boxes[i], boxes[k]) <= NMS)) keep.push(i);
+  return keep.map((i) => boxes[i]);
+}
+
+async function detect(ctx, pw, ph) {
+  const rgba = ctx.getImageData(0, 0, pw, ph).data, n = pw * ph, data = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++) { data[i] = rgba[4 * i + 2]; data[n + i] = rgba[4 * i + 1]; data[2 * n + i] = rgba[4 * i]; }  // BGR, 0~255
+  const t0 = performance.now();
+  const out = await session.run({ [session.inputNames[0]]: new ort.Tensor("float32", data, [1, 3, ph, pw]) });
+  const tInfer = performance.now() - t0;
+  const boxes = [], scores = [];
+  for (const s of [8, 16, 32]) {
+    const cols = pw / s, cls = out[`cls_${s}`].data, obj = out[`obj_${s}`].data, bb = out[`bbox_${s}`].data;
+    for (let i = 0; i < cls.length; i++) {
+      const sc = Math.sqrt(Math.min(Math.max(cls[i], 0), 1) * Math.min(Math.max(obj[i], 0), 1));
+      if (sc < THR) continue;
+      const r = Math.floor(i / cols), c = i % cols;
+      const cx = (c + bb[4 * i]) * s, cy = (r + bb[4 * i + 1]) * s, w = Math.exp(bb[4 * i + 2]) * s, h = Math.exp(bb[4 * i + 3]) * s;
+      boxes.push([cx - w / 2, cy - h / 2, w, h]); scores.push(sc);
+    }
+  }
+  return { faces: nms(boxes, scores), tInfer };
+}
+
+function pixelate(ctx, boxes, k) {
+  // 서버와 같게 박스를 사방 25% 넓혀(흐림본 기준) 굵은 모자이크
+  for (const [x0, y0, w0, h0] of boxes) {
+    const x = Math.max(0, Math.floor((x0 - w0 * 0.25) / k)), y = Math.max(0, Math.floor((y0 - h0 * 0.25) / k));
+    const w = Math.ceil(w0 * 1.5 / k), h = Math.ceil(h0 * 1.5 / k);
+    const block = Math.max(8, Math.floor(w / 12)), sw = Math.max(1, Math.floor(w / block)), sh = Math.max(1, Math.floor(h / block));
+    const tmp = new OffscreenCanvas(sw, sh), tctx = tmp.getContext("2d");
+    tctx.drawImage(ctx.canvas, x, y, w, h, 0, 0, sw, sh);
+    ctx.imageSmoothingEnabled = false; ctx.drawImage(tmp, 0, 0, sw, sh, x, y, w, h); ctx.imageSmoothingEnabled = true;
+  }
+}
+
+function seek(v, t) {
+  // 이미 그 자리면 브라우저가 이동 완료 신호를 보내지 않는다(0초에서 멈췄다)
+  if (Math.abs(v.currentTime - t) < 0.001 && v.readyState >= 2) return Promise.resolve();
+  return new Promise((ok) => { v.onseeked = () => ok(); v.currentTime = t; });
+}
+
+function readByPlay(v, end, onFrame) {
+  // 처음부터 빠르게 재생하며 0.5초마다 한 장. 이동(seek)은 키프레임부터 다시 풀어 느리다(8초 간격 영상에서 장당 0.2초)
+  return new Promise((done, bad) => {
+    let next = 0, finished = false;
+    const finish = () => { if (!finished) { finished = true; v.pause(); done(); } };
+    const cb = async (now, meta) => {
+      if (finished) return;
+      if (meta.mediaTime >= next) {
+        v.pause();
+        try { await onFrame(meta.mediaTime); } catch (e) { finished = true; return bad(e); }
+        next += 1 / FPS;
+        if (next >= end) return finish();
+        await v.play();
+      }
+      v.requestVideoFrameCallback(cb);
+    };
+    v.onended = finish;
+    v.currentTime = 0; v.playbackRate = RATE;
+    v.requestVideoFrameCallback(cb);
+    v.play().catch((e) => { if (e.name !== "AbortError") bad(e); });  // 첫 프레임에서 곧바로 멈추면 나는 중단은 정상
+  });
+}
+
+function row(k, v) { return `<tr><td>${k}</td><td>${v}</td></tr>`; }
+
+async function run(src) {
+  $("run").disabled = true;
+  const scale = Number($("scale").value), ep = $("ep").value;
+  $("status").textContent = "모델 준비 중…";
+  session = null; epUsed = "";
+  try {
+    // 그래픽칩을 못 잡으면 조용히 WASM으로 넘어가 결과가 헷갈렸다. 따로 시도해 실제로 쓴 쪽을 적는다
+    if (ep === "webgpu") {
+      try { session = await ort.InferenceSession.create("/static/lab/yunet_dyn.onnx", { executionProviders: ["webgpu"] }); epUsed = "webgpu"; }
+      catch (e) { epUsed = "wasm (그래픽칩 못 씀: " + String(e.message).slice(0, 60) + ")"; }
+    }
+    if (!session) {
+      session = await ort.InferenceSession.create("/static/lab/yunet_dyn.onnx", { executionProviders: ["wasm"] });
+      epUsed ||= "wasm";
+    }
+    if (epUsed.startsWith("wasm")) epUsed += `, 스레드 ${ort.env.wasm.numThreads}${crossOriginIsolated ? "" : " (격리 안 됨)"}`;
+  } catch (e) { $("status").textContent = "모델 준비 실패: " + e.message; return; }
+  $("status").textContent = "영상 여는 중…";
+  const v = $("v");
+  // 신호를 먼저 걸고 주소를 넣는다(빨리 읽히면 신호를 놓쳐 멈췄다)
+  try {
+    await new Promise((ok, bad) => {
+      v.onloadedmetadata = ok; v.onerror = () => bad(new Error("영상을 열 수 없어요"));
+      if (v.src.endsWith(src) && v.readyState >= 1) ok(); else v.src = src;  // 같은 영상을 다시 시험하면 신호가 오지 않는다
+    });
+  } catch (e) { $("status").textContent = e.message; $("run").disabled = false; return; }
+  const W = v.videoWidth, H = v.videoHeight, dur = v.duration;
+  const limit = Number($("secs").value) || dur, end = Math.min(dur, limit);
+  const dw = W * scale, dh = H * scale, pw = Math.ceil(dw / 32) * 32, ph = Math.ceil(dh / 32) * 32;
+  const work = new OffscreenCanvas(pw, ph), wctx = work.getContext("2d", { willReadFrequently: true });
+  const view = $("view"); view.width = W; view.height = H; const vctx = view.getContext("2d");
+  const T = { seek: 0, prep: 0, infer: 0, blur: 0 }, results = [];
+  let frames = 0, faces = 0;
+  const t0 = performance.now();
+  let mark = performance.now();
+  const onFrame = async (t) => {
+    T.seek += performance.now() - mark;
+    let a = performance.now();
+    wctx.clearRect(0, 0, pw, ph); wctx.drawImage(v, 0, 0, dw, dh);
+    T.prep += performance.now() - a;
+    a = performance.now();
+    const { faces: found, tInfer } = await detect(wctx, pw, ph);
+    T.infer += tInfer; T.prep += performance.now() - a - tInfer;
+    a = performance.now();
+    vctx.drawImage(v, 0, 0, W, H); pixelate(vctx, found, scale);
+    T.blur += performance.now() - a;
+    frames++; faces += found.length;
+    results.push({ t: Math.round(t * 10) / 10, boxes: found.map((b) => b.map((x) => Math.round(x / scale))) });
+    if (frames % 5 === 0) $("status").textContent = `${frames}장 처리 (${t.toFixed(0)}/${end.toFixed(0)}초)`;
+    mark = performance.now();
+  };
+  const how = $("read").value;
+  if (how === "play") await readByPlay(v, end, onFrame);
+  else for (let t = 0; t < end; t += 1 / FPS) { await seek(v, t); await onFrame(t); }
+  const total = (performance.now() - t0) / 1000, per = total / frames;
+  $("status").textContent = "끝났어요.";
+  $("stats").innerHTML =
+    row("영상", `${W}×${H}, ${(dur / 60).toFixed(1)}분`) + row("계산 방식", epUsed) + row("프레임 읽기", how === "play" ? `재생하며 (${RATE}배속)` : "0.5초마다 이동") + row("검출 배율", `${scale}배 (모델 입력 ${pw}×${ph})`) +
+    row("처리한 프레임", `${frames}장 (${end.toFixed(0)}초 × 2fps)`) + row("찾은 얼굴", `${faces}개`) +
+    row("걸린 시간", `${total.toFixed(1)}초, 장당 ${(per * 1000).toFixed(0)}ms`) +
+    row("나눠 보면 (장당)", `프레임 읽기 ${(T.seek / frames).toFixed(0)}ms · 준비 ${(T.prep / frames).toFixed(0)}ms · 얼굴 찾기 ${(T.infer / frames).toFixed(0)}ms · 흐리기 ${(T.blur / frames).toFixed(0)}ms`) +
+    row("10분 영상이면", `약 ${(per * 1200 / 60).toFixed(1)}분`) + row("1시간 영상이면", `약 ${(per * 7200 / 60).toFixed(1)}분`) +
+    row("영상 다시 쓰기(WebCodecs)", `VideoEncoder ${typeof VideoEncoder === "function" ? "있음" : "없음"}, VideoDecoder ${typeof VideoDecoder === "function" ? "있음" : "없음"}`) +
+    row("WebGPU", navigator.gpu ? "있음" : "없음") + row("기기", navigator.userAgent);
+  $("result").textContent = JSON.stringify({ ep: epUsed, read: how, scale, W, H, frames, total, per, T, results });
+  $("run").disabled = false;
+}
+
+$("file").onchange = () => { $("run").disabled = !$("file").files[0]; };
+$("run").onclick = () => run(URL.createObjectURL($("file").files[0]));
+// 맥에서 자동 시험: ?src=/static/lab/sample.mp4&scale=1&secs=60&ep=wasm&read=play
+if (q.get("src")) {
+  for (const k of ["scale", "secs", "ep", "read"]) if (q.get(k)) $(k).value = q.get(k);
+  run(q.get("src"));
+}
+</script>
+</body>
+</html>

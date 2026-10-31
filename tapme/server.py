@@ -8,26 +8,59 @@
 
 from __future__ import annotations
 
+import os
 import threading
+import time
 import traceback
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from tapme import jobs, muse, render, score
+from tapme import access, jobs, muse, render, scan, score
 
-app = FastAPI(title="tap-me-volleyball")
+# 끝난 작업 영상을 이 시간 뒤에 지운다. 배포 서버에서만 켠다(이 맥의 시험 작업은 지우지 않게)
+DELETE_AFTER_HOURS = float(os.environ.get("TAPME_DELETE_AFTER_HOURS", "0"))
+
+
+def _sweep() -> None:
+    while True:
+        try:
+            jobs.delete_old_jobs(DELETE_AFTER_HOURS)
+        except Exception:  # noqa: BLE001 - 지우기가 실패해도 서버는 계속
+            traceback.print_exc()
+        time.sleep(600)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    if DELETE_AFTER_HOURS > 0:
+        threading.Thread(target=_sweep, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="tap-me-volleyball", lifespan=_lifespan)
 # 테스트에서 가짜 API 클라이언트로 바꾼다
 client_factory: Callable[[], Any] = muse.client_from_env
 _step_lock = threading.Lock()
 _SERVER_PATHS = ("sam_clip", "clip_video", "video")  # 서버 안 경로는 화면에 내보내지 않는다
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")  # 아이콘·홈 화면 설정
+
+
+@app.middleware("http")
+async def _isolate_lab(request, call_next):
+    """브라우저 처리 시험 페이지(/static/lab/)만 교차 출처 격리: 이래야 WASM이 여러 스레드를 쓴다."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static/lab/"):
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    return response
 
 
 class RenderOptions(BaseModel):
@@ -133,17 +166,21 @@ def _run(job_id: str, step: Callable[..., Any], *args: Any, **kwargs: Any) -> No
 
 def _run_scan(job_id: str, client: Any) -> None:
     """랠리 찾기는 장면 단계와 따로 돈다. 1시간 영상은 오래 걸려, 찾은 랠리부터 골라 장면을 만들 수 있게(10/30).
-    같은 job.json은 Job.save가 서로 바꾼 항목만 합쳐 쓴다."""
-    job = jobs.load_job(job_id)
-    try:
-        jobs.find_rallies(job, client)
-        job.error = None
-    except jobs.BudgetExceeded as e:
-        job.error = str(e)
-    except Exception as e:  # noqa: BLE001 - 서버가 죽지 않고 화면에 알린다
-        traceback.print_exc()
-        job.error = f"처리 중 오류: {e}"
-    job.save()
+    같은 job.json은 Job.save가 서로 바꾼 항목만 합쳐 쓴다. 여러 사용자가 올리면 온 순서대로(jobs.SCAN_TURNS).
+    못 찾고 끝나면 올리기 횟수를 돌려준다."""
+    with jobs.SCAN_TURNS.turn(job_id):
+        job = jobs.load_job(job_id)
+        try:
+            jobs.find_rallies(job, client)
+            job.error = None
+        except (jobs.BudgetExceeded, ValueError) as e:
+            job.error = str(e)
+        except Exception as e:  # noqa: BLE001 - 서버가 죽지 않고 화면에 알린다
+            traceback.print_exc()
+            job.error = f"처리 중 오류: {e}"
+        if job.error:
+            access.refund(job.code, "uploads")
+        job.save()
 
 
 def _run_highlight(job_id: str, index: int, *args: Any) -> None:
@@ -161,6 +198,7 @@ def _run_highlight(job_id: str, index: int, *args: Any) -> None:
     scene = job.scenes.get(str(index), {})
     if job.error and scene.get("status") in ("queued", "rendering"):
         scene["status"] = "failed"
+        access.refund(job.code, "highlights")
     job.save()
 
 
@@ -169,9 +207,53 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
 
 
+class AccessRequest(BaseModel):
+    code: str = Field(default="", max_length=20)
+
+
+def _closed_reason() -> str | None:
+    """새 영상을 받을 수 없는 이유. 랠리 찾기 대기가 꽉 찼거나 전체 비용이 30분 영상 하나도 못 훑을 만큼 남았을 때."""
+    if jobs.SCAN_TURNS.waiting() >= jobs.MAX_WAITING_SCANS:
+        return "지금 사용자가 많아요. 잠시 뒤 다시 와 주세요"
+    if jobs.total_spent() + scan.estimate_usd(jobs.MAX_SCAN_SEC) > jobs.MAX_USD_TOTAL:
+        return "이번 행사에 준비한 AI 비용을 다 써서 더 받을 수 없어요"
+    return None
+
+
+@app.post("/access")
+def check_access(req: AccessRequest) -> dict[str, Any]:
+    """올리기 전에 묻는다: 코드가 맞는지, 남은 횟수, 지금 받을 수 있는지(2GB를 올린 뒤 거절하지 않게)."""
+    out: dict[str, Any] = {"required": access.REQUIRED, "waiting": jobs.SCAN_TURNS.waiting(), "closed": _closed_reason()}
+    if access.REQUIRED and req.code:
+        try:
+            out["left"] = access.left(req.code)
+        except access.AccessDenied as e:
+            out["denied"] = str(e)
+    return out
+
+
+@app.get("/admin/summary")
+def admin_summary(x_admin_token: str = Header("")) -> dict[str, Any]:
+    """운영자용: 코드별 사용 횟수·전체 비용·대기. TAPME_ADMIN_TOKEN을 둔 서버에서만."""
+    token = os.environ.get("TAPME_ADMIN_TOKEN", "")
+    if not token or x_admin_token != token:
+        raise HTTPException(404)
+    return {"spent_usd": round(jobs.total_spent(), 3), "max_usd": jobs.MAX_USD_TOTAL, "limits": access.LIMITS,
+            "waiting_scans": jobs.SCAN_TURNS.waiting(), "waiting_renders": jobs.RENDER_TURNS.waiting(),
+            "codes": access._load()}
+
+
 @app.post("/jobs")
-def upload(file: UploadFile, background: BackgroundTasks, match: str = Form("")) -> dict[str, Any]:
-    job = jobs.create_job(file.filename or "video.mp4", file.file, match)
+def upload(file: UploadFile, background: BackgroundTasks, match: str = Form(""),
+           start: float = Form(0.0), end: float = Form(0.0), code: str = Form("")) -> dict[str, Any]:
+    """start·end: 훑을 구간(초). 30분(jobs.MAX_SCAN_SEC)보다 긴 영상은 화면에서 고른다. code: 사용 코드(배포 서버)."""
+    if reason := _closed_reason():
+        raise HTTPException(503, reason)
+    try:
+        access.use(code, "uploads")
+    except access.AccessDenied as e:
+        raise HTTPException(403, str(e)) from e
+    job = jobs.create_job(file.filename or "video.mp4", file.file, match, start, end, access.normalize(code))
     background.add_task(_run_scan, job.id, client_factory())
     return {"id": job.id}
 
@@ -181,13 +263,22 @@ def status(job_id: str) -> dict[str, Any]:
     job = _job(job_id)
     return {"id": job.id, "status": job.status, "error": job.error, "spent_usd": round(job.spent_usd, 4),
             "progress": job.progress, "duration_sec": job.duration_sec, "estimate_usd": job.estimate_usd,
-            "unread": job.unread, "match_name": job.match_name, "scan": job.scan,
+            "unread": job.unread, "match_name": job.match_name, "scan": job.scan, "scan_range": job.scan_range,
+            "queue": jobs.SCAN_TURNS.position(job.id), "left": _left(job),
+            "render_turns": {k: p for k in job.scenes if (p := jobs.RENDER_TURNS.position(f"{job.id}/{k}"))},
             "rallies": [{k: r.get(k) for k in ("index", "start_sec", "end_sec", "point_sec", "is_rally", "confidence",
                                                "reason", "uncertain")}
                         for r in job.rallies],
             "scenes": {k: {f: v for f, v in s.items() if f not in _SERVER_PATHS}
                        for k, s in job.scenes.items()},
             "reel": {k: v for k, v in job.reel.items() if k != "video"}}
+
+
+def _left(job: jobs.Job) -> dict[str, int] | None:
+    try:
+        return access.left(job.code) if access.REQUIRED and job.code else None
+    except access.AccessDenied:
+        return None
 
 
 def _rally_media(job_id: str, index: int) -> tuple[Path, Path]:
@@ -274,6 +365,10 @@ def highlight(job_id: str, index: int, req: TapRequest, background: BackgroundTa
     active = sum(sc.get("status") in ("queued", "rendering") for sc in job.scenes.values())
     if active >= jobs.MAX_ACTIVE_SCENES:
         raise HTTPException(429, f"한 번에 {jobs.MAX_ACTIVE_SCENES}개까지 만들 수 있어요. 앞의 장면이 끝나면 다시 예약해 주세요")
+    try:
+        access.use(job.code, "highlights")  # 실패하면 _run_highlight가 돌려준다
+    except access.AccessDenied as e:
+        raise HTTPException(403, str(e)) from e
     scene["status"] = "queued"  # 예약됨. 여러 장면을 이어서 예약할 수 있다(일괄 만들기)
     job.save()
     background.add_task(_run_highlight, job_id, index, [t.as_tuple() for t in req.taps], req.team, req.languages, req.role,

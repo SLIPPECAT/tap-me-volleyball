@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -316,7 +317,8 @@ def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs
     monkeypatch.setattr(scan, "duration_sec", lambda v: 3600.0)
     seen: list = []
 
-    def fake_scan(c, v, duration, d, progress):
+    def fake_scan(c, v, duration, d, progress, offset):
+        assert (duration, offset) == (1800.0, 0.0)  # 구간 없이 온 1시간 영상은 앞 30분만 훑는다
         progress(1, 72, 0.02, [{"start": 0.0, "answer": {"rallies": [{"start_sec": 5.5, "point_sec": 12.5,
                                                                        "confidence": 0.9}]}}])
         now = jobs.load_job(job.id)
@@ -330,8 +332,9 @@ def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs
     monkeypatch.setattr(jobs, "make_preview", lambda j, i: None)
     jobs.find_rallies(job, SimpleNamespace())
     saved = jobs.load_job(job.id)
-    # 1시간 영상: 상한이 길이에 비례($0.05/분 → $3)해 예상 비용(약 $2.3)으로 막히지 않는다
-    assert saved.budget_usd == pytest.approx(3.0) and 2.0 < saved.estimate_usd < 3.0
+    # 훑는 30분에 비례한 상한($0.05/분 → $1.5)이 예상 비용(약 $1.1)을 막지 않는다
+    assert saved.scan_range == [0.0, 1800.0]
+    assert saved.budget_usd == pytest.approx(1.5) and 1.0 < saved.estimate_usd < 1.5
     # 찾는 동안 찾은 랠리·진행·쓴 돈을 조각마다 저장한다(찾은 랠리부터 고를 수 있게)
     assert seen == [({"done": 1, "total": 72}, 0.02, [12.5])]
     assert saved.scan == {} and len(saved.rallies) == 1  # 끝난 뒤 같은 득점이 두 번 붙지 않는다
@@ -351,9 +354,30 @@ def test_short_video_keeps_the_minimum_budget(job: jobs.Job, monkeypatch: pytest
     from tapme import scan
 
     monkeypatch.setattr(scan, "duration_sec", lambda v: 60.0)
-    monkeypatch.setattr(scan, "scan_video", lambda *a: ([], []))
+    monkeypatch.setattr(scan, "scan_video", lambda *a, **k: ([], []))
     jobs.find_rallies(job, SimpleNamespace())
     assert jobs.load_job(job.id).budget_usd == jobs.MAX_USD_PER_JOB
+
+
+def test_scan_range_stays_inside_the_video_and_under_the_limit() -> None:
+    assert jobs.scan_range(600.0, 0, 0) == [0.0, 600.0]
+    assert jobs.scan_range(4000.0, 1200, 0) == [1200.0, 3000.0]  # 넘치면 끝을 당긴다
+    assert jobs.scan_range(4000.0, 3500, 9999) == [3500.0, 4000.0]
+    with pytest.raises(ValueError):
+        jobs.scan_range(600.0, 700, 0)
+
+
+def test_find_rallies_scans_only_the_picked_range(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tapme import scan
+
+    monkeypatch.setattr(scan, "duration_sec", lambda v: 4000.0)
+    calls: list = []
+    monkeypatch.setattr(scan, "scan_video", lambda c, v, dur, d, p, offset: calls.append((dur, offset)) or ([], []))
+    job.scan_range = [1500.0, 2700.0]
+    jobs.find_rallies(job, SimpleNamespace())
+    saved = jobs.load_job(job.id)
+    assert calls == [(1200.0, 1500.0)] and saved.scan_range == [1500.0, 2700.0]
+    assert saved.budget_usd == pytest.approx(max(jobs.MAX_USD_PER_JOB, 1.0))  # 20분 × $0.05
 
 
 def test_highlights_are_numbered_in_the_order_they_were_made(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -476,3 +500,59 @@ def test_at_most_two_sam_trackings_run_at_once(job: jobs.Job, monkeypatch: pytes
     for th in threads:
         th.join()
     assert peak[0] == 2
+
+
+def test_turns_go_in_arrival_order_and_report_positions() -> None:
+    import threading
+
+    turns, order = jobs.Turns(1), []
+    gate = threading.Event()
+
+    def first() -> None:
+        with turns.turn("a"):
+            gate.wait(2)
+            order.append("a")
+
+    def later(key: str) -> None:
+        with turns.turn(key):
+            order.append(key)
+
+    threads = [threading.Thread(target=first)]
+    threads[0].start()
+    time.sleep(0.05)
+    for key in ("b", "c", "d"):
+        threads.append(threading.Thread(target=later, args=(key,)))
+        threads[-1].start()
+        time.sleep(0.05)  # 온 순서를 정한다
+    assert (turns.position("a"), turns.position("b"), turns.position("d"), turns.waiting()) == (None, 1, 3, 3)
+    gate.set()
+    for th in threads:
+        th.join()
+    assert order == ["a", "b", "c", "d"]
+
+
+def test_spending_of_all_jobs_is_capped(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(jobs, "MAX_USD_TOTAL", 1.0)
+    job.spent_usd = 0.6
+    job.save()
+    other = jobs.create_job("b.mp4", b"x")
+    other.spent_usd = 0.3
+    other.save()
+    other.spent_usd = 0.35  # 바뀐 만큼만 더한다
+    other.save()
+    assert jobs.total_spent() == pytest.approx(0.95)
+    with pytest.raises(jobs.BudgetExceeded, match="전체"):
+        other.charge(0.1)
+    shutil.rmtree(job.dir)  # 작업을 지워도 장부는 남는다
+    assert jobs.total_spent() == pytest.approx(0.95)
+
+
+def test_old_jobs_are_deleted_but_ledgers_stay(job: jobs.Job) -> None:
+    import os
+
+    fresh = jobs.create_job("b.mp4", b"x")
+    old = time.time() - 25 * 3600
+    os.utime(job.dir / "job.json", (old, old))
+    (jobs.JOBS_DIR / "_access.json").write_text("{}")
+    assert jobs.delete_old_jobs(24) == [job.id]
+    assert not job.dir.exists() and fresh.dir.exists() and (jobs.JOBS_DIR / "_access.json").exists()

@@ -64,3 +64,18 @@ def test_cut_off_answer_is_asked_again_then_reported(tmp_path, monkeypatch) -> N
     assert [r["point_sec"] for r in rallies] == [9.0]
     assert scan.unread_ranges(chunks) == [[50.0, 75.0]]
     assert sum(c["usd"] for c in chunks) == 0.12  # 다시 물은 값도 센다
+
+
+def test_scanning_a_range_reports_times_in_the_whole_video(tmp_path, monkeypatch) -> None:
+    from tapme import muse
+
+    cuts: list = []
+    monkeypatch.setattr(scan, "blurred_chunk", lambda v, s, sec, out: cuts.append((s, sec)) or out)
+    monkeypatch.setattr(muse, "ask_about_video", lambda c, clip, prompt: muse.MuseReply(
+        text='{"rallies": [{"start_sec": 1, "point_sec": 9, "confidence": 0.8}]}',
+        input_tokens=1, output_tokens=1, usd=0.01, seconds=0))
+    monkeypatch.setattr(scan, "PARALLEL", 1)
+    rallies, chunks = scan.scan_video(None, tmp_path / "v.mp4", 75.0, tmp_path, offset=1200.0)
+    assert cuts == [(1200.0, 60.0), (1250.0, 25.0)]  # 구간 끝(1275초)을 넘겨 자르지 않는다
+    assert [r["point_sec"] for r in rallies] == [1209.0, 1259.0]
+    assert scan.unread_ranges(chunks) == []

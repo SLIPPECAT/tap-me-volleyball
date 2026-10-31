@@ -79,6 +79,14 @@ summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2
 .drop.has-file { min-height: 112px; }
 .drop.has-file span { background: none; color: var(--color-ink); border: var(--rule-hair) solid var(--color-rule); }
 .picked { display: grid; gap: var(--space-sm); padding: var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); }
+/* 30분보다 긴 영상: 훑을 구간 고르기 */
+.range { display: grid; gap: var(--space-xs); }
+.range video { width: 100%; max-height: 40vh; background: var(--color-paper-3); }
+.range-bar { position: relative; height: 0.5rem; background: var(--color-paper-3); border: var(--rule-hair) solid var(--color-rule); }
+.range-bar > div { position: absolute; top: 0; bottom: 0; background: var(--color-accent); }
+.range-label { font-family: var(--font-outlier); font-variant-numeric: tabular-nums; }
+.range-btns { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.range.unknown > :not(#range-note) { display: none; }
 #picked-name { font-family: var(--font-outlier); font-size: var(--text-sm); overflow-wrap: anywhere; white-space: pre-wrap; }
 .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 

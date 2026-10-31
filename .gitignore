@@ -33,3 +33,7 @@ internal/
 
 # Hallmark 디자인 도구 기록·캡처(로컬)
 .hallmark/
+
+# 브라우저 처리 가능성 시험용 모델·영상(용량·회원 얼굴, git 제외)
+tapme/static/lab/*.onnx
+tapme/static/lab/*.mp4

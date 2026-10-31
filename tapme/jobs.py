@@ -15,7 +15,10 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -28,6 +31,12 @@ JOBS_DIR = Path(os.environ.get("TAPME_JOBS_DIR", "data/jobs"))
 MAX_USD_PER_JOB = float(os.environ.get("TAPME_MAX_USD_PER_JOB", "1.0"))
 # 긴 영상도 처리하도록 상한을 길이에 비례해 올린다(10/30 사용자 결정: 1분에 $0.05, 1시간 $3). 짧은 영상은 MAX_USD_PER_JOB
 MAX_USD_PER_MIN = float(os.environ.get("TAPME_MAX_USD_PER_MIN", "0.05"))
+# 한 번에 훑는 길이. 30분이면 동호회 경기 한 세트가 넉넉히 들어가고 랠리 찾기 약 21분·약 $1.1(10/31 사용자 결정).
+# 더 긴 영상은 화면에서 구간을 고르고, 구간 없이 오면 앞에서부터 이만큼만 훑는다
+MAX_SCAN_SEC = 30 * 60
+# 모든 작업을 합친 Meta API 비용 상한(10/31 사용자: 지원 크레딧 중 $100까지만). 작업이 지워져도 장부(_spend.json)는 남는다.
+# 쓰기 전에 예상 금액으로 막지만 동시에 도는 작업끼리는 그 예상만큼 넘을 수 있다
+MAX_USD_TOTAL = float(os.environ.get("TAPME_MAX_USD_TOTAL", "100"))
 # 랠리 찾기: scan(기본, 60초 조각 훑어보기) 또는 whistle(정모 휘슬에 맞춘 예전 방식, 실험 H-17~H-33 기록·비교용)
 RALLY_MODE = os.environ.get("TAPME_RALLY_MODE", "scan")
 WINDOW_BEFORE_SEC = 7.0  # SAM은 50프레임보다 짧아도 50으로 과금된다(비용 원장 R-10·R-17)
@@ -45,9 +54,49 @@ CLIP_MIN_AFTER_SEC = 4.0
 REEL_BEFORE_SEC = 5.0  # 모음 영상에는 장면마다 득점 5초 전~4초 뒤만. 3장면이면 약 27초
 REEL_AFTER_SEC = 4.0
 _lock = threading.Lock()
-# 렌더는 맥 CPU를 다 써서 한 번에 하나만(동시에 돌리면 서로 느려졌다, H-42). SAM 추적·해설(네트워크)은 여러 장면이 겹쳐도 된다.
-# 일괄 만들기에서 한 장면을 렌더하는 동안 다음 장면들의 추적이 끝나 있게 한다(10/30 사용자)
-RENDER_LOCK = threading.Lock()
+
+
+class Turns:
+    """먼저 온 순서대로 slots개까지 동시에 돌린다. 기다리는 순서를 화면에 보여 준다(threading.Lock은 순서를 지키지 않는다)."""
+
+    def __init__(self, slots: int) -> None:
+        self.slots = slots
+        self._cv = threading.Condition()
+        self._waiting: list[str] = []
+        self._running = 0
+
+    @contextmanager
+    def turn(self, key: str) -> Iterator[None]:
+        with self._cv:
+            self._waiting.append(key)
+            self._cv.wait_for(lambda: self._waiting[0] == key and self._running < self.slots)
+            self._waiting.pop(0)
+            self._running += 1
+            self._cv.notify_all()
+        try:
+            yield
+        finally:
+            with self._cv:
+                self._running -= 1
+                self._cv.notify_all()
+
+    def position(self, key: str) -> int | None:
+        """기다리는 중이면 앞에서부터 몇 번째(1부터), 아니면 None."""
+        with self._cv:
+            return self._waiting.index(key) + 1 if key in self._waiting else None
+
+    def waiting(self) -> int:
+        with self._cv:
+            return len(self._waiting)
+
+
+# 렌더는 CPU를 다 써서 한 번에 하나만(동시에 돌리면 서로 느려졌다, H-42). SAM 추적·해설(네트워크)은 여러 장면이 겹쳐도 된다.
+# 일괄 만들기에서 한 장면을 렌더하는 동안 다음 장면들의 추적이 끝나 있게 한다(10/30 사용자). 여러 사용자는 온 순서대로
+RENDER_TURNS = Turns(1)
+# 랠리 찾기도 얼굴 흐리기가 CPU를 다 써서 사용자 여럿이 한꺼번에 올리면 모두 느려진다 → 온 순서대로 이만큼씩(10/31)
+SCAN_TURNS = Turns(int(os.environ.get("TAPME_SCAN_SLOTS", "1")))
+# 랠리 찾기 대기가 이보다 많으면 새 영상을 받지 않는다(올리기 전에 알려 2GB를 헛되이 올리지 않게)
+MAX_WAITING_SCANS = int(os.environ.get("TAPME_MAX_WAITING_SCANS", "5"))
 # 서버 제한(10/30 사용자 "제한 같은 걸 둬야"): SAM 추적은 동시에 둘까지(Meta API에 한꺼번에 몰리지 않게),
 # 한 작업에서 예약(대기·만드는 중)은 다섯 장면까지(한 사람이 줄을 오래 막지 않게)
 TRACK_SLOTS = threading.BoundedSemaphore(2)
@@ -79,6 +128,8 @@ class Job:
     unread: list[list[float]] = field(default_factory=list)  # AI가 답을 못 읽은 구간 [시작, 끝]. 화면에 알린다
     match_name: str = ""  # 저장 파일 이름 앞부분(경기이름_팀이름_하이라이트_01.mp4). 비우면 올린 파일 이름
     scan: dict[str, Any] = field(default_factory=dict)  # 랠리 찾기 진행 {"done", "total"}. 찾는 동안 장면 단계가 progress를 쓴다
+    code: str = ""  # 이 영상을 올린 사용 코드(하이라이트 횟수를 여기서 센다). 코드를 쓰지 않는 서버면 빈 값
+    scan_range: list[float] = field(default_factory=list)  # 훑을 구간 [시작, 끝](원본 초). 올릴 때 받은 값을 찾기 전에 영상 길이로 맞춘다
 
     def __post_init__(self) -> None:
         self._seen: dict[str, Any] | None = None  # 마지막으로 읽거나 쓴 이 객체의 내용(save가 바뀐 항목만 고르는 기준)
@@ -109,6 +160,7 @@ class Job:
             tmp = path.with_name(f"job.{threading.get_ident()}.tmp")
             tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2))
             os.replace(tmp, path)
+            _add_spend(mine["spent_usd"] - float((self._seen or {}).get("spent_usd") or 0))
             self._seen = mine
 
     def step(self, name: str, done: int = 0, total: int = 0) -> None:
@@ -119,14 +171,54 @@ class Job:
         limit = self.budget_usd or MAX_USD_PER_JOB
         if self.spent_usd + estimate_usd > limit:
             raise BudgetExceeded(f"작업당 상한 ${limit:.2f}을 넘는다 (쓴 돈 ${self.spent_usd:.3f} + 예상 ${estimate_usd:.3f})")
+        if total_spent() + estimate_usd > MAX_USD_TOTAL:
+            raise BudgetExceeded(f"서비스 전체 비용 상한 ${MAX_USD_TOTAL:.0f}에 닿아 더 만들 수 없어요")
+
+
+def _spend_path() -> Path:
+    return JOBS_DIR / "_spend.json"
+
+
+def total_spent() -> float:
+    """모든 작업이 쓴 Meta API 비용(지운 작업 포함)."""
+    path = _spend_path()
+    return float(json.loads(path.read_text())["usd"]) if path.exists() else 0.0
+
+
+def _add_spend(delta: float) -> None:
+    """Job.save가 _lock 안에서 부른다. 바뀐 만큼만 더해 같은 돈을 두 번 세지 않는다."""
+    if not delta:
+        return
+    path = _spend_path()
+    tmp = path.with_name(f"_spend.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps({"usd": round(total_spent() + delta, 6)}))
+    os.replace(tmp, path)
+
+
+def delete_old_jobs(hours: float, now: float | None = None) -> list[str]:
+    """마지막으로 바뀐 지 hours시간 지난 작업 폴더(원본·결과 영상)를 지운다. 도는 작업은 조각·장면마다 job.json을
+    저장해 hours(24시간) 동안 그대로일 수 없다 — 상태로 거르지 않는다(서버가 꺼져 멈춘 작업도 지우려고).
+    정모 영상에는 다른 회원 얼굴이 담겨 오래 두지 않는다(10/31 사용자 결정, 배포 서버에서만 켠다)."""
+    now = time.time() if now is None else now
+    gone = []
+    for d in JOBS_DIR.iterdir() if JOBS_DIR.exists() else []:
+        meta = d / "job.json"
+        if not d.is_dir() or not meta.exists() or now - meta.stat().st_mtime < hours * 3600:
+            continue
+        shutil.rmtree(d)
+        gone.append(d.name)
+    return gone
 
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
 
 
-def create_job(filename: str, data: bytes | BinaryIO, match_name: str = "") -> Job:
-    """data는 바이트 또는 파일 객체. 경기 영상은 GB 단위일 수 있어 파일 객체는 조금씩 옮겨 쓴다."""
-    job = Job(id=uuid.uuid4().hex[:12], video="", match_name=match_name.strip()[:40] or Path(filename).stem[:40])
+def create_job(filename: str, data: bytes | BinaryIO, match_name: str = "", start: float = 0.0, end: float = 0.0,
+               code: str = "") -> Job:
+    """data는 바이트 또는 파일 객체. 경기 영상은 GB 단위일 수 있어 파일 객체는 조금씩 옮겨 쓴다.
+    start·end: 훑을 구간(초, end 0이면 끝까지)."""
+    job = Job(id=uuid.uuid4().hex[:12], video="", match_name=match_name.strip()[:40] or Path(filename).stem[:40],
+              scan_range=[start, end], code=code)
     job.dir.mkdir(parents=True, exist_ok=True)
     suffix = Path(filename).suffix.lower()
     src = job.dir / f"source{suffix if suffix in VIDEO_SUFFIXES else '.mp4'}"
@@ -166,16 +258,27 @@ def _cut_blurred(video: Path, start: float, duration: float, out: Path, fps: int
     return out
 
 
+def scan_range(duration: float, start: float, end: float) -> list[float]:
+    """훑을 구간을 영상 안, MAX_SCAN_SEC 이하로 맞춘다. 넘치면 끝을 당긴다."""
+    start = min(max(0.0, start), duration)
+    end = duration if end <= 0 else min(end, duration)
+    if end - start < 1.0:
+        raise ValueError(f"훑을 구간이 영상 밖이거나 너무 짧다 ({start:.0f}~{end:.0f}초, 영상 {duration:.0f}초)")
+    return [round(start, 2), round(min(end, start + MAX_SCAN_SEC), 2)]
+
+
 def find_rallies(job: Job, client: Any) -> None:
     job.status = "finding_rallies"
     job.duration_sec = round(scan.duration_sec(Path(job.video)), 2)
-    job.budget_usd = round(max(MAX_USD_PER_JOB, MAX_USD_PER_MIN * job.duration_sec / 60), 2)
-    if RALLY_MODE == "whistle":
+    job.scan_range = scan_range(job.duration_sec, *(job.scan_range or [0.0, 0.0]))
+    start, length = job.scan_range[0], job.scan_range[1] - job.scan_range[0]
+    job.budget_usd = round(max(MAX_USD_PER_JOB, MAX_USD_PER_MIN * length / 60), 2)
+    if RALLY_MODE == "whistle":  # 남겨 둔 대안(정모 영상용). 구간 없이 영상 전체
         job.rallies = [{**r, "index": i} for i, r in enumerate(_rallies_by_whistle(job, client))]
     else:
         job.rallies = []
-        job.estimate_usd = round(scan.estimate_usd(job.duration_sec), 3)
-        total = len(scan.chunk_starts(job.duration_sec))
+        job.estimate_usd = round(scan.estimate_usd(length), 3)
+        total = len(scan.chunk_starts(length))
         job.scan = {"done": 0, "total": total}
         job.charge(job.estimate_usd)
         job.save()
@@ -188,7 +291,7 @@ def find_rallies(job: Job, client: Any) -> None:
             job.scan = {"done": done, "total": total}
             job.save()
 
-        found, chunks = scan.scan_video(client, Path(job.video), job.duration_sec, job.dir / "rallies", progress)
+        found, chunks = scan.scan_video(client, Path(job.video), length, job.dir / "rallies", progress, offset=start)
         job.spent_usd = base + sum(c["usd"] for c in chunks)
         _add_rallies(job, found)
         job.unread = scan.unread_ranges(chunks)
@@ -363,7 +466,8 @@ def scene_render_inputs(job: Job, scene: dict[str, Any], languages: list[str], p
 def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy: str, zoom: float,
                   face_mosaic: bool, client: Any, max_fps: int = 0) -> Path:
     src, by, masks, cues = scene_render_inputs(job, scene, languages, privacy, client)
-    with RENDER_LOCK:
+    key = next((f"{job.id}/{k}" for k, v in job.scenes.items() if v is scene), f"{job.id}/?")  # 화면에 보일 대기 순서
+    with RENDER_TURNS.turn(key):
         return _render_locked(job, scene, src, by, masks, cues, zoom, privacy, face_mosaic, max_fps)
 
 

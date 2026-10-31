@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from tapme import jobs, render, server
+from tapme import access, jobs, render, server
 
 
 @pytest.fixture
@@ -33,6 +33,11 @@ def test_upload_lists_rally_candidates(client: TestClient) -> None:
     assert "clip" not in body["rallies"][0]  # 서버 안 경로는 내보내지 않는다
 
 
+def test_upload_keeps_the_picked_scan_range(client: TestClient) -> None:
+    job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}, data={"start": "1500", "end": "3300"}).json()["id"]
+    assert client.get(f"/jobs/{job_id}").json()["scan_range"] == [1500.0, 3300.0]
+
+
 @pytest.mark.parametrize("bad", [{"privacy": "none"}, {"zoom": 3.0}, {"languages": ["zh"]}, {"role": "captain"}])
 def test_invalid_options_are_rejected(client: TestClient, bad: dict) -> None:
     job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
@@ -57,6 +62,14 @@ def test_index_page_is_served(client: TestClient) -> None:
     r = client.get("/")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
     assert "Tap Me Volleyball" in r.text
+
+
+def test_only_lab_pages_are_cross_origin_isolated(client: TestClient) -> None:
+    lab = client.get("/static/lab/blurtest.html")
+    assert lab.status_code == 200
+    assert lab.headers["cross-origin-opener-policy"] == "same-origin"
+    assert lab.headers["cross-origin-embedder-policy"] == "require-corp"
+    assert "cross-origin-embedder-policy" not in client.get("/").headers
 
 
 def test_upload_streams_to_disk_with_safe_suffix(client: TestClient, tmp_path: Path) -> None:
@@ -229,3 +242,62 @@ def test_one_job_queues_at_most_five_scenes(client: TestClient, monkeypatch: pyt
     monkeypatch.setattr(jobs, "make_highlight", lambda *a: None)
     r = client.post(f"/jobs/{job_id}/rallies/0/highlight", json={"taps": [{"which": "score", "x": 1, "y": 2}], "team": "검정"})
     assert r.status_code == 429 and "5" in r.json()["detail"]
+
+
+TAP = {"taps": [{"which": "score", "x": 1, "y": 2}], "team": "검정"}
+
+
+def test_codes_limit_uploads_and_highlights(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 사용자 결정: 배구구 회원에게 준 코드로만, 코드당 영상 2편 + 하이라이트 3개
+    job_id = _awaiting_tap(client, monkeypatch)  # 코드를 켜기 전에 만든 장면 하나
+    monkeypatch.setattr(access, "REQUIRED", True)
+    code = access.new_codes(1)[0]
+    assert client.post("/access", json={"code": "nope"}).json()["denied"]
+    assert client.post("/access", json={"code": f"{code[:4]}-{code[4:].lower()}"}).json()["left"] == {"uploads": 2, "highlights": 3}
+    assert client.post("/jobs", files={"file": ("m.mp4", b"v")}).status_code == 403  # 코드 없이
+    for _ in range(2):
+        assert client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": code}).status_code == 200
+    r = client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": code})
+    assert r.status_code == 403 and "2편" in r.json()["detail"]
+
+    job = jobs.load_job(job_id)
+    job.code = code
+    job.save()
+    monkeypatch.setattr(jobs, "make_highlight", lambda job, i, *a: job.scenes[str(i)].update(status="done"))
+    url = f"/jobs/{job_id}/rallies/0/highlight"
+    assert [client.post(url, json=TAP).status_code for _ in range(4)] == [200, 200, 200, 403]
+    assert client.get(f"/jobs/{job_id}").json()["left"] == {"uploads": 0, "highlights": 0}
+
+
+def test_failed_work_gives_the_count_back(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    job_id = _awaiting_tap(client, monkeypatch)
+    monkeypatch.setattr(access, "REQUIRED", True)
+    code = access.new_codes(1)[0]
+    job = jobs.load_job(job_id)
+    job.code = code
+    job.save()
+
+    def boom(*a):
+        raise RuntimeError("SAM 연결 끊김")
+
+    monkeypatch.setattr(jobs, "make_highlight", boom)
+    client.post(f"/jobs/{job_id}/rallies/0/highlight", json=TAP)
+    monkeypatch.setattr(jobs, "find_rallies", boom)
+    client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": code})
+    assert access.left(code) == {"uploads": 2, "highlights": 3}
+
+
+def test_full_queue_or_spent_budget_turns_new_videos_away(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(jobs, "MAX_WAITING_SCANS", 0)
+    assert "많아요" in client.post("/access", json={}).json()["closed"]
+    assert client.post("/jobs", files={"file": ("m.mp4", b"v")}).status_code == 503
+    monkeypatch.setattr(jobs, "MAX_WAITING_SCANS", 5)
+    monkeypatch.setattr(jobs, "MAX_USD_TOTAL", 0.5)  # 30분 영상 하나(약 $1.1)도 못 훑는다
+    assert "비용" in client.post("/access", json={}).json()["closed"]
+
+
+def test_admin_summary_needs_the_token(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert client.get("/admin/summary").status_code == 404  # 토큰을 두지 않은 서버
+    monkeypatch.setenv("TAPME_ADMIN_TOKEN", "t0ken")
+    assert client.get("/admin/summary", headers={"X-Admin-Token": "wrong"}).status_code == 404
+    assert client.get("/admin/summary", headers={"X-Admin-Token": "t0ken"}).json()["max_usd"] == jobs.MAX_USD_TOTAL

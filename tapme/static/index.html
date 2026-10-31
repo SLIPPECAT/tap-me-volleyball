@@ -45,10 +45,20 @@
   <section id="s-upload">
     <p data-t="uploadIntro"></p>
     <p class="muted" data-t="captureTip"></p>
+    <div class="field" id="code-field" hidden><label for="code" data-t="codeLabel"></label><input type="text" id="code" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
+    <p class="muted" id="access-status" aria-live="polite"></p>
     <div class="field"><label for="match-name" data-t="matchLabel"></label><input type="text" id="match-name" maxlength="40"></div>
     <label class="drop"><span data-t="pickVideo"></span><small data-t="dropHint"></small><input type="file" id="file" accept="video/*"></label>
     <div class="picked" id="picked" hidden>
       <p id="picked-name"></p>
+      <div class="range" id="range" hidden>
+        <p class="muted" id="range-note"></p>
+        <video id="range-video" muted playsinline controls preload="metadata"></video>
+        <div class="range-bar" aria-hidden="true"><div id="range-fill"></div></div>
+        <p class="range-label" id="range-label" aria-live="polite"></p>
+        <div class="range-btns"><button id="range-start" data-t="rangeStart"></button><button id="range-end" data-t="rangeEnd"></button></div>
+        <div class="range-btns"><button id="range-first"></button><button id="range-next"></button><button id="range-last"></button></div>
+      </div>
       <button class="primary" id="start-upload" data-t="startUpload"></button>
     </div>
     <div class="progress" id="up-progress" hidden><div></div></div>
@@ -64,6 +74,7 @@
       <button id="batch-toggle" data-t="batchToggle"></button>
       <p class="muted" id="batch-status" aria-live="polite"></p>
     </div>
+    <p class="muted" id="left-note" hidden></p>
     <p class="card muted" id="scan-note" aria-live="polite" hidden></p>
     <div id="rally-list"></div>
     <div class="batch-go" id="batch-go" hidden><button class="primary" id="batch-start"></button></div>
@@ -177,6 +188,8 @@
 <script>
 const T = {
   ko: {
+    rangeNote: "이 영상은 {d} 길이예요. 한 번에 {m}분까지 훑으니 훑을 구간을 골라 주세요 (세트마다 한 번씩 하면 좋아요).", rangeStart: "여기서 시작", rangeEnd: "여기서 끝", rangeFirst: "앞 {m}분", rangeNext: "다음 {m}분", rangeLast: "뒤 {m}분", rangeLabel: "{s} ~ {e} ({m}분)", rangeUnknown: "영상 길이를 읽지 못했어요. {m}분보다 길면 앞 {m}분만 훑어요.",
+    codeLabel: "사용 코드 (배구구에서 받은 코드)", codeNeed: "배구구에서 받은 사용 코드를 넣어 주세요.", codeWrong: "코드가 맞지 않아요.", codeLeft: "이 코드로 영상 {u}편 · 하이라이트 {h}개를 더 만들 수 있어요.", codeNoUploads: "이 코드로 올릴 수 있는 영상을 다 썼어요.", leftNote: "이 코드로 하이라이트 {h}개를 더 만들 수 있어요.", stQueue: "앞에 {n}명이 랠리 찾기를 기다리고 있어요. 화면을 닫아도 차례가 오면 진행돼요.", queuedTurn: "만들 차례를 기다리는 중이에요 (앞에 {n}개). 화면을 닫아도 돼요.",
     keepOpen: "업로드가 끝날 때까지 이 화면을 켜 두세요.", canClose: "화면을 닫아도 맥에서 계속 진행돼요. 이 링크로 다시 들어오면 이어서 볼 수 있어요.",
     copyLink: "이 작업 링크 복사", copied: "복사했어요", prefsTitle: "기다리는 동안 옵션 미리 정하기",
     stWhistles: "휘슬 소리를 찾는 중…", stRallies: "AI가 영상을 1분씩 훑으며 랠리를 찾는 중… {d}/{n}", scanNote: "아직 찾는 중이에요 ({d}/{n}). 지금까지 찾은 랠리부터 골라 만들 수 있어요.", waitCost: "영상 {m}분 · 예상 AI 비용 약 ${u}", stPreviews: "미리보기 만드는 중… {d}/{n}",
@@ -204,6 +217,8 @@ const T = {
     spent: "이 작업에 쓴 AI 비용 ${u}", reqFail: "요청 실패 ({c})",
   },
   ja: {
+    rangeNote: "動画が{d}あるので、一度に{m}分まで見ます。見る区間を選んでください（セットごとに1回ずつがおすすめ）。", rangeStart: "ここから", rangeEnd: "ここまで", rangeFirst: "最初の{m}分", rangeNext: "次の{m}分", rangeLast: "最後の{m}分", rangeLabel: "{s} 〜 {e}（{m}分）", rangeUnknown: "動画の長さを読めませんでした。{m}分より長い場合は最初の{m}分だけ見ます。",
+    codeLabel: "利用コード（Baeguguで受け取ったコード）", codeNeed: "Baeguguで受け取った利用コードを入力してください。", codeWrong: "コードが正しくありません。", codeLeft: "このコードで動画あと{u}本・ハイライトあと{h}本作れます。", codeNoUploads: "このコードでアップロードできる動画を使い切りました。", leftNote: "このコードでハイライトをあと{h}本作れます。", stQueue: "{n}人がラリー探しの順番を待っています。画面を閉じても順番が来たら進みます。", queuedTurn: "作る順番を待っています（前に{n}件）。画面を閉じても大丈夫です。",
     keepOpen: "アップロードが終わるまでこの画面を開いたままにしてください。", canClose: "画面を閉じてもMacで処理は続きます。このリンクから戻れば続きが見られます。",
     copyLink: "この作業のリンクをコピー", copied: "コピーしました", prefsTitle: "待っている間にオプションを決めておく",
     stWhistles: "ホイッスルの音を探しています…", stRallies: "AIが動画を1分ずつ見てラリーを探しています… {d}/{n}", scanNote: "まだ探しています（{d}/{n}）。見つかったラリーから選んで作れます。", waitCost: "動画 {m}分 · AI費用の見込み 約${u}", stPreviews: "プレビューを作っています… {d}/{n}",
@@ -231,6 +246,8 @@ const T = {
     spent: "この作業のAI費用 ${u}", reqFail: "リクエスト失敗 ({c})",
   },
   en: {
+    rangeNote: "This video is {d} long. Up to {m} minutes are scanned at a time, so pick the part to scan (one set at a time works well).", rangeStart: "Start here", rangeEnd: "End here", rangeFirst: "First {m} min", rangeNext: "Next {m} min", rangeLast: "Last {m} min", rangeLabel: "{s} – {e} ({m} min)", rangeUnknown: "Couldn't read the video length. If it's longer than {m} minutes, only the first {m} are scanned.",
+    codeLabel: "Access code (from Baegugu)", codeNeed: "Enter the access code you got from Baegugu.", codeWrong: "That code isn't right.", codeLeft: "This code can make {u} more videos and {h} more highlights.", codeNoUploads: "This code has used up its video uploads.", leftNote: "This code can make {h} more highlights.", stQueue: "{n} ahead of you in line for rally finding. You can close this screen; it continues when it's your turn.", queuedTurn: "Waiting for its turn ({n} ahead). You can close this screen.",
     keepOpen: "Keep this screen open until the upload finishes.", canClose: "You can close this screen; your Mac keeps working. Open this link again to continue.",
     copyLink: "Copy link to this job", copied: "Copied", prefsTitle: "Set options while you wait",
     stWhistles: "Finding whistles…", stRallies: "AI is scanning the video a minute at a time for rallies… {d}/{n}", scanNote: "Still scanning ({d}/{n}). You can pick from the rallies found so far.", waitCost: "{m}-minute video · estimated AI cost about ${u}", stPreviews: "Making previews… {d}/{n}",
@@ -277,6 +294,7 @@ function applyLang() {
   document.querySelectorAll("[data-t]").forEach((el) => { el.textContent = t(el.dataset.t); });
   document.querySelectorAll(".langs-ui button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lang === state.lang)));
   $("team").placeholder = t("teamPh");
+  renderRange();
   $("rally-list").dataset.key = "";  // 판정 이유를 새 언어로 다시 그린다
   if (state.last) render(state.last);
 }
@@ -359,9 +377,10 @@ function renderWait(s) {
     const pct = pr.total ? Math.round(100 * pr.done / pr.total) : 0;
     $("wait-step").textContent = t(T[state.lang][key] ? key : "stWorking", { d: pr.done || 0, n: pr.total || 0, p: pct });
     $("wait-progress").hidden = !pr.total;
+    if (s.status === "uploaded" && s.queue) $("wait-step").textContent = t("stQueue", { n: s.queue });
     // 긴 영상은 오래 걸리고 비용도 커서 랠리 찾는 동안 길이와 예상 비용을 보여 준다
     $("wait-cost").hidden = !(s.status === "finding_rallies" && s.estimate_usd);
-    if (!$("wait-cost").hidden) $("wait-cost").textContent = t("waitCost", { m: Math.max(1, Math.round(s.duration_sec / 60)), u: s.estimate_usd.toFixed(2) });
+    if (!$("wait-cost").hidden) $("wait-cost").textContent = t("waitCost", { m: Math.max(1, Math.round(((s.scan_range || []).length === 2 ? s.scan_range[1] - s.scan_range[0] : s.duration_sec) / 60)), u: s.estimate_usd.toFixed(2) });
     $("wait-progress").firstElementChild.style.transform = `scaleX(${pct / 100})`;
     if (!$("opts-prefs").children.length) {
       mountOptions("opts-prefs", state.prefs.options);
@@ -393,6 +412,8 @@ function render(s) {
   state.active = active;
   renderWait(s);
   $("spent").textContent = t("spent", { u: s.spent_usd.toFixed(3) });
+  $("left-note").hidden = !s.left;
+  if (s.left) $("left-note").textContent = t("leftNote", { h: s.left.highlights });
   if (state.rally === null) return renderRallies(s);
   const scene = s.scenes[String(state.rally)];
   if (!scene || scene.status === "preparing") {
@@ -401,7 +422,8 @@ function render(s) {
     show("s-tap"); renderTap();
     $("make").textContent = batchLabel() || t("make");
   } else if (scene.status === "queued") {
-    show("s-tap"); $("tap-status").textContent = t("queuedMsg"); $("tap-box").hidden = true;
+    const turn = (s.render_turns || {})[String(state.rally)];
+    show("s-tap"); $("tap-status").textContent = turn ? t("queuedTurn", { n: turn }) : t("queuedMsg"); $("tap-box").hidden = true;
   } else if (scene.status === "rendering") {
     if ($("s-result").hidden) { show("s-tap"); $("tap-status").textContent = t("rendering"); $("tap-box").hidden = true; }
     else { $("result-status").textContent = t("rerenderBusy"); }
@@ -485,7 +507,8 @@ function renderRallies(s) {
 // 한 번에 예약은 BATCH_MAX개까지(서버 jobs.MAX_ACTIVE_SCENES와 같게). 이미 대기·만드는 중인 장면도 센다
 const BATCH_MAX = 5;
 function batchRoom(s) {
-  return BATCH_MAX - Object.values((s && s.scenes) || {}).filter((x) => x.status === "queued" || x.status === "rendering").length;
+  const room = BATCH_MAX - Object.values((s && s.scenes) || {}).filter((x) => x.status === "queued" || x.status === "rendering").length;
+  return Math.min(room, s && s.left ? s.left.highlights : room);  // 코드의 남은 하이라이트 수까지만
 }
 function renderBatchBar(s) {
   $("batch-toggle").textContent = t(state.batchMode ? "batchCancel" : "batchToggle");
@@ -719,6 +742,8 @@ for (const id of ["back-rallies", "back-rallies2"]) {
 // 업로드: 진행률을 보여 주려고 XHR을 쓴다. 파일 고르기와 끌어다 놓기가 함께 쓴다
 function uploadVideo(f) {
   const form = new FormData(); form.append("file", f); form.append("match", $("match-name").value);
+  if (state.range) { form.append("start", state.range[0].toFixed(2)); form.append("end", state.range[1].toFixed(2)); }
+  form.append("code", $("code").value.trim());
   const xhr = new XMLHttpRequest();
   $("up-progress").hidden = false; $("upload-warn").hidden = false; setError("");
   xhr.upload.onprogress = (e) => {
@@ -728,15 +753,52 @@ function uploadVideo(f) {
   };
   xhr.onload = () => {
     $("upload-warn").hidden = true;
-    if (xhr.status !== 200) { setError(t("uploadFail", { c: xhr.status })); $("start-upload").disabled = false; $("up-progress").hidden = true; return; }
+    if (xhr.status !== 200) { let d = ""; try { d = JSON.parse(xhr.responseText).detail; } catch {} setError(d || t("uploadFail", { c: xhr.status })); $("start-upload").disabled = false; $("up-progress").hidden = true; return; }
     state.job = JSON.parse(xhr.responseText).id; state.rally = null; setHash(); startPolling();
   };
   xhr.onerror = () => { $("upload-warn").hidden = true; setError(t("uploadFail", { c: "network" })); $("start-upload").disabled = false; $("up-progress").hidden = true; };
   xhr.open("POST", "/jobs"); xhr.send(form);
 }
+// 한 번에 훑는 길이(서버 jobs.MAX_SCAN_SEC와 같게). 더 긴 영상은 구간을 고른다 — 파일을 자르지 않고 그 구간만 훑는다(10/31 사용자)
+const MAX_SCAN_MIN = 30, MAX_SCAN = MAX_SCAN_MIN * 60;
+const rangeVideo = $("range-video");
+function setRange(s, e) {
+  const d = rangeVideo.duration;
+  s = Math.min(Math.max(0, s), d - 1);
+  e = Math.min(Math.max(e, s + 1), d, s + MAX_SCAN);
+  state.range = [s, e]; renderRange();
+}
+function renderRange() {
+  const d = rangeVideo.duration;
+  if (!state.range || !d) return;
+  const [s, e] = state.range, m = MAX_SCAN_MIN;
+  $("range-note").textContent = t("rangeNote", { d: fmt(d), m });
+  $("range-label").textContent = t("rangeLabel", { s: fmt(s), e: fmt(e), m: Math.round((e - s) / 60) });
+  $("range-fill").style.left = `${100 * s / d}%`; $("range-fill").style.width = `${100 * (e - s) / d}%`;
+  $("range-first").textContent = t("rangeFirst", { m }); $("range-next").textContent = t("rangeNext", { m }); $("range-last").textContent = t("rangeLast", { m });
+  $("range-next").disabled = e >= d - 1;
+}
+// 시작을 옮기면 끝은 그대로 두되 30분을 넘으면 당기고, 끝을 옮기면 시작을 당긴다
+$("range-start").onclick = () => { const s = rangeVideo.currentTime, e = state.range[1]; setRange(s, e > s && e - s <= MAX_SCAN ? e : s + MAX_SCAN); };
+$("range-end").onclick = () => { const e = rangeVideo.currentTime, s = state.range[0]; setRange(s < e && e - s <= MAX_SCAN ? s : e - MAX_SCAN, e); };
+$("range-first").onclick = () => setRange(0, MAX_SCAN);
+$("range-next").onclick = () => { const e = state.range[1]; setRange(e, e + MAX_SCAN); rangeVideo.currentTime = e; };
+$("range-last").onclick = () => { const d = rangeVideo.duration; setRange(d - MAX_SCAN, d); rangeVideo.currentTime = d - MAX_SCAN; };
+// 브라우저에서 영상 길이를 읽어 30분보다 길 때만 구간 고르기를 보인다. 못 읽으면 서버가 앞 30분만 훑는다
+function checkLength(f) {
+  state.range = null; $("range").hidden = true; $("range").classList.remove("unknown"); $("range-note").textContent = "";
+  if (rangeVideo.src) URL.revokeObjectURL(rangeVideo.src);
+  rangeVideo.onloadedmetadata = () => {
+    if (rangeVideo.duration > MAX_SCAN) { $("range").hidden = false; setRange(0, MAX_SCAN); }
+  };
+  rangeVideo.onerror = () => { $("range").hidden = false; $("range").classList.add("unknown"); $("range-note").textContent = t("rangeUnknown", { m: MAX_SCAN_MIN }); };
+  rangeVideo.src = URL.createObjectURL(f);
+}
+
 // 고르거나 끌어다 놓으면 바로 올리지 않고, 파일을 보여 준 뒤 "시작"을 눌러야 올린다(10/30 사용자)
 function pickVideo(f) {
   state.pending = f;
+  checkLength(f);
   const mb = f.size / (1024 * 1024);
   $("picked-name").textContent = `${f.name}  ${mb >= 1024 ? (mb / 1024).toFixed(2) + " GB" : mb.toFixed(0) + " MB"}`;
   $("picked").hidden = false;
@@ -745,11 +807,34 @@ function pickVideo(f) {
   setError("");
 }
 $("file").addEventListener("change", () => { const f = $("file").files[0]; if (f) pickVideo(f); });
-$("start-upload").onclick = () => {
+$("start-upload").onclick = async () => {
   if (!state.pending) return;
   $("start-upload").disabled = true;
-  uploadVideo(state.pending);
+  await checkAccess();  // 올리는 사이 대기가 차거나 비용이 다했을 수 있다
+  if (state.access.ok) uploadVideo(state.pending);
 };
+
+// 사용 코드(배포 서버, 10/31 사용자): 올리기 전에 코드·남은 횟수·지금 받을 수 있는지 묻는다(2GB를 올린 뒤 거절하지 않게)
+state.access = { ok: true };
+async function checkAccess() {
+  const code = $("code").value.trim();
+  let a;
+  try { a = await postJson("/access", { code }); } catch { return; }
+  $("code-field").hidden = !a.required;
+  const ok = !a.closed && (!a.required || Boolean(a.left && a.left.uploads > 0));
+  let msg = a.closed || "";
+  if (!msg && a.required) {
+    msg = !code ? t("codeNeed") : a.denied ? t("codeWrong") : a.left.uploads > 0 ? t("codeLeft", { u: a.left.uploads, h: a.left.highlights }) : t("codeNoUploads");
+  }
+  $("access-status").textContent = msg;
+  state.access = { ok };
+  if (ok && a.required) storeSet("code", code);
+  $("start-upload").disabled = !ok;
+}
+let codeTimer = 0;
+$("code").addEventListener("input", () => { clearTimeout(codeTimer); codeTimer = setTimeout(checkAccess, 400); });
+$("code").value = storeGet("code") || "";
+checkAccess();
 
 // 끌어다 놓기(웹에서 더 편함, 10/30 사용자): 올리기 화면이 보이고 아직 올리는 중이 아닐 때, 화면 어디에 놓아도 올린다
 const dropZone = document.querySelector(".drop");

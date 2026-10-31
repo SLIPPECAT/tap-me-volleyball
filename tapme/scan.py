@@ -111,18 +111,21 @@ def blurred_chunk(video: Path, start: float, seconds: float, out: Path) -> Path:
 def scan_video(
     client: Any, video: Path, duration: float, work_dir: Path,
     on_progress: Callable[[int, int, float, list[dict[str, Any]]], None] | None = None,
+    offset: float = 0.0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """(랠리 목록, 조각별 답·비용). 흐리기는 CPU를 다퉈 하나씩, Muse 질문만 겹친다(H-31).
+    offset초부터 duration초만 훑는다(긴 영상은 사용자가 고른 구간). 시각은 모두 원본 영상 기준.
     on_progress(끝난 조각 수, 전체, 지금까지 쓴 돈, 끝난 조각들): 1시간 영상은 오래 걸려 찾은 랠리부터 보여 준다.
     한 번에 하나씩 부른다(여러 질문 스레드가 같은 작업을 동시에 바꾸지 않게)."""
-    starts = chunk_starts(duration)
+    starts = [offset + s for s in chunk_starts(duration)]
+    end = offset + duration
     done, spent = 0, 0.0
     finished: list[dict[str, Any]] = []
     lock = threading.Lock()
 
     def ask(i: int, start: float, clip: Path) -> dict[str, Any]:
         nonlocal done, spent
-        seconds = min(CHUNK_SEC, duration - start)
+        seconds = min(CHUNK_SEC, end - start)
         replies, answer = [], None
         while answer is None and len(replies) < MAX_ATTEMPTS:
             replies.append(muse.ask_about_video(client, clip, SCAN_PROMPT.format(dur=seconds)))
@@ -145,7 +148,7 @@ def scan_video(
 
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
         futures = [
-            pool.submit(ask, i, s, blurred_chunk(video, s, min(CHUNK_SEC, duration - s), work_dir / f"chunk{i:03d}_blur.mp4"))
+            pool.submit(ask, i, s, blurred_chunk(video, s, min(CHUNK_SEC, end - s), work_dir / f"chunk{i:03d}_blur.mp4"))
             for i, s in enumerate(starts)
         ]
         chunks = [f.result() for f in futures]

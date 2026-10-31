@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>운영 현황</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .admin { display: grid; gap: var(--space-md); max-width: 44rem; margin-inline: auto; }
+  .admin table { border-collapse: collapse; font-family: var(--font-outlier); font-size: var(--text-sm); width: 100%; }
+  .admin td, .admin th { padding: var(--space-2xs) var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule-2); text-align: left; }
+</style>
+</head>
+<body>
+<header class="bar"><div class="bar-in"><h1>운영 현황</h1></div></header>
+<main class="admin">
+  <!-- 운영자만: 서버의 TAPME_ADMIN_TOKEN. 이 탭에만 기억한다(sessionStorage) -->
+  <div class="field"><label for="token">관리 토큰</label><input type="password" id="token" autocomplete="off"></div>
+  <button class="primary" id="load">보기</button>
+  <p class="muted" id="status" aria-live="polite"></p>
+  <table id="summary"></table>
+  <table id="codes"></table>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+try { $("token").value = sessionStorage.getItem("adminToken") || ""; } catch { /* 저장소를 못 쓰면 매번 입력 */ }
+async function load() {
+  const token = $("token").value;
+  const r = await fetch("/admin/summary", { headers: { "X-Admin-Token": token } });
+  if (!r.ok) { $("status").textContent = "토큰이 맞지 않거나 이 서버에서 꺼져 있어요."; return; }
+  try { sessionStorage.setItem("adminToken", token); } catch { /* 위와 같음 */ }
+  const s = await r.json(), codes = Object.entries(s.codes);
+  const used = (k) => codes.reduce((a, [, e]) => a + e[k], 0);
+  $("status").textContent = `${new Date().toLocaleTimeString()} 기준`;
+  $("summary").innerHTML = [
+    ["AI 비용", `$${s.spent_usd.toFixed(2)} / $${s.max_usd.toFixed(0)}`],
+    ["대기", `랠리 찾기 ${s.waiting_scans}명 · 렌더 ${s.waiting_renders}개`],
+    ["코드", `${codes.length}개 (쓴 코드 ${codes.filter(([, e]) => e.uploads).length}개)`],
+    ["올린 영상", `${used("uploads")}편`], ["만든 하이라이트", `${used("highlights")}개`],
+  ].map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join("");
+  $("codes").innerHTML = "<tr><th>코드</th><th>영상</th><th>하이라이트</th><th>메모</th></tr>" + codes.map(([c, e]) =>
+    `<tr><td>${esc(c.slice(0, 4) + "-" + c.slice(4))}</td><td>${e.uploads}/${s.limits.uploads}</td><td>${e.highlights}/${s.limits.highlights}</td><td>${esc(e.label)}</td></tr>`).join("");
+}
+$("load").onclick = load;
+</script>
+</body>
+</html>
