@@ -103,7 +103,8 @@ def check_scene(job_id: str, index: int = 0) -> dict[str, Any]:
     src, by, masks, cues = jobs.scene_render_inputs(job, scene, languages, privacy, client=None)
     out_dir = Path(scene["sam_clip"]).parent
     qa_video = render.render_video(src, out_dir / "qa.mp4", by, masks, track.TAPPED_ID, scene["sam_fps"], cues, zoom,
-                                   privacy, face_mosaic=True, keep_my_face=False)
+                                   privacy, face_mosaic=True, keep_my_face=False,
+                                   people_by_sam=_people(job, scene))
     clip_start, clip_end = scene["clip"]
     score_at = scene["score_sec"] - clip_start
     sheet = contact_sheet(qa_video, out_dir / "qa_sheet.jpg", score_at, cues)
@@ -123,6 +124,13 @@ def check_scene(job_id: str, index: int = 0) -> dict[str, Any]:
     }
     (out_dir / "qa.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
     return report
+
+
+def _people(job: jobs.Job, scene: dict[str, Any]) -> dict[int, list[track.Box]] | None:
+    """결과 영상처럼 몸 위에 잡힌 옆얼굴을 거른다(H-48). 품질 확인은 돈을 쓰지 않아, 만들 때 저장한 선수 추적이 있을 때만."""
+    if not (Path(scene["sam_clip"]).parent / "others_wire.txt").exists():
+        return None
+    return jobs.scene_people(job, scene, None)
 
 
 def main() -> None:

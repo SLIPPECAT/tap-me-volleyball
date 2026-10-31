@@ -691,19 +691,29 @@ def scene_render_inputs(job: Job, scene: dict[str, Any], languages: list[str], p
     return Path(scene["clip_video"]), by, masks, cues
 
 
+def scene_people(job: Job, scene: dict[str, Any], client: Any) -> dict[int, list[track.Box]]:
+    """SAM 프레임별(렌더할 클립 기준) 모든 선수 상자. 모자이크에서 몸 위에 잡힌 옆얼굴을 거르는 데 쓴다(H-48).
+    '몸 실루엣' 가리기와 같은 추적이라 장면마다 한 번(약 $0.024), 저장해 다시 쓴다."""
+    sam_clip = Path(scene["sam_clip"])
+    by = track.boxes_by_frame(track.parse(_track_others(job, client, sam_clip).read_text()))
+    f0 = round((scene["clip"][0] - scene["window"][0]) * scene["sam_fps"])
+    return {k - f0: v for k, v in by.items() if k >= f0}
+
+
 def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy: str, zoom: float,
                   face_mosaic: bool, client: Any, max_fps: int = 0) -> Path:
     src, by, masks, cues = scene_render_inputs(job, scene, languages, privacy, client)
+    people = scene_people(job, scene, client) if face_mosaic else None
     key = next((f"{job.id}/{k}" for k, v in job.scenes.items() if v is scene), f"{job.id}/?")  # 화면에 보일 대기 순서
     with RENDER_TURNS.turn(key):
-        return _render_locked(job, scene, src, by, masks, cues, zoom, privacy, face_mosaic, max_fps)
+        return _render_locked(job, scene, src, by, masks, cues, zoom, privacy, face_mosaic, max_fps, people)
 
 
 def _render_locked(job: Job, scene: dict[str, Any], src: Path, by: Any, masks: Any, cues: Any, zoom: float, privacy: str,
-                   face_mosaic: bool, max_fps: int) -> Path:
+                   face_mosaic: bool, max_fps: int, people: dict[int, list[track.Box]] | None = None) -> Path:
     out = render.render_video(src, Path(scene["sam_clip"]).parent / "highlight.mp4", by, masks,
                               track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy, face_mosaic,
-                              on_progress=lambda d, n: job.step("render", d, n), max_fps=max_fps)
+                              on_progress=lambda d, n: job.step("render", d, n), max_fps=max_fps, people_by_sam=people)
     job.progress = {}
     return out
 

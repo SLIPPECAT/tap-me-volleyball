@@ -74,6 +74,17 @@ def detect_faces(
 
     YuNet은 DETECT_UPSCALE배로 키운 프레임에서 찾고, profile이 있으면 옆얼굴도 양쪽 방향으로 찾는다.
     """
+    front, side = detect_faces_split(frame, detector, profile, profile_scale)
+    return front + side
+
+
+def detect_faces_split(
+    frame: np.ndarray,
+    detector: cv2.FaceDetectorYN,
+    profile: cv2.CascadeClassifier | None = None,
+    profile_scale: float = PROFILE_SCALE_FACTOR,
+) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
+    """(YuNet 얼굴, 옆얼굴 Haar 얼굴). 옆얼굴 Haar는 유니폼 등·다리를 얼굴로 잡는 일이 있어(H-48) 결과 영상에서 따로 거른다."""
     h, w = frame.shape[:2]
     big_w, big_h = int(w * DETECT_UPSCALE), int(h * DETECT_UPSCALE)
     big = frame if (big_w, big_h) == (w, h) else cv2.resize(frame, (big_w, big_h))
@@ -82,14 +93,15 @@ def detect_faces(
     boxes = [] if faces is None else [
         tuple(int(v / DETECT_UPSCALE) for v in f[:4]) for f in faces
     ]
+    side: list[tuple[int, int, int, int]] = []
     if profile is not None:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         for flipped in (False, True):
             img = cv2.flip(gray, 1) if flipped else gray
             for x, y, bw, bh in profile.detectMultiScale(img, scaleFactor=profile_scale, minNeighbors=PROFILE_MIN_NEIGHBORS):
                 x = w - int(x) - int(bw) if flipped else int(x)
-                boxes.append((x, int(y), int(bw), int(bh)))
-    return boxes
+                side.append((x, int(y), int(bw), int(bh)))
+    return boxes, side
 
 
 def load_plain_detector() -> cv2.FaceDetectorYN:

@@ -120,7 +120,7 @@ def test_face_mosaic_off_skips_face_detection(tmp_path: Path, monkeypatch: pytes
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=0.5",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
     calls: list = []
-    monkeypatch.setattr(anonymize, "detect_faces", lambda *a, **k: calls.append(1) or [])
+    monkeypatch.setattr(anonymize, "detect_faces_split", lambda *a, **k: calls.append(1) or ([], []))
     render.render_video(src, tmp_path / "a.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=False)
     assert calls == []
     render.render_video(src, tmp_path / "b.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=True)
@@ -151,7 +151,7 @@ def test_face_found_once_stays_mosaicked_for_a_moment(tmp_path: Path, monkeypatc
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=0.5",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
     calls = iter(range(1000))
-    monkeypatch.setattr(anonymize, "detect_faces", lambda *a, **k: [(100, 40, 60, 60)] if next(calls) == 0 else [])
+    monkeypatch.setattr(anonymize, "detect_faces_split", lambda *a, **k: ([(100, 40, 60, 60)] if next(calls) == 0 else [], []))
     monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a, **k: [])
     plain_out, mos_out = tmp_path / "plain.mp4", tmp_path / "m.mp4"
     render.render_video(src, plain_out, {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=False)
@@ -197,7 +197,7 @@ def test_my_moving_face_never_gets_a_held_mosaic(tmp_path: Path, monkeypatch: py
     # 내가 프레임마다 오른쪽으로 8px씩 움직인다(몸 박스와 얼굴이 같이)
     by = {i: [Box(track.TAPPED_ID, 60 + 8 * i, 100, 140 + 8 * i, 400)] for i in range(12)}
     calls = iter(range(1000))
-    monkeypatch.setattr(anonymize, "detect_faces", lambda *a, **k: [(85 + 8 * next(calls), 105, 30, 30)])
+    monkeypatch.setattr(anonymize, "detect_faces_split", lambda *a, **k: ([(85 + 8 * next(calls), 105, 30, 30)], []))
     monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a, **k: [])
     plain_out, mos_out = tmp_path / "plain.mp4", tmp_path / "m.mp4"
     render.render_video(src, plain_out, by, {}, track.TAPPED_ID, sam_fps=30, zoom=1.0, face_mosaic=False)
@@ -250,3 +250,11 @@ def test_sixty_fps_source_can_be_rendered_at_thirty(tmp_path: Path) -> None:
     assert round(cap.get(cv2.CAP_PROP_FPS)) == 30 and 28 <= int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) <= 31
     same = render.render_video(src, tmp_path / "p.mp4", {}, {}, "me", sam_fps=10, zoom=1.0, face_mosaic=False)
     assert round(cv2.VideoCapture(str(same)).get(cv2.CAP_PROP_FPS)) == 60  # 기본은 원본 그대로
+
+
+def test_side_faces_on_bodies_are_dropped_but_front_faces_kept() -> None:
+    # H-48: 옆얼굴 Haar가 유니폼 등·다리를 얼굴로 잡아 모자이크가 몸에 생겼다. 사람 상자 위 35% 아래에 잡힌 옆얼굴만 뺀다
+    person = Box("o1", 100, 100, 200, 400)  # 키 300 → 205부터 몸
+    head, back, leg, outside = (130, 110, 30, 30), (140, 230, 30, 30), (140, 350, 30, 30), (400, 300, 30, 30)
+    assert render.off_bodies([head, back, leg, outside], [person]) == [head, outside]
+    assert render.off_bodies([back], []) == [back]  # 선수 위치를 모르면 그대로 가린다

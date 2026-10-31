@@ -293,7 +293,7 @@ def _worker_init(threads: int, two_detectors: bool) -> None:
     _W["plain"] = anonymize.load_plain_detector() if two_detectors else None
 
 
-def _worker_faces(args: tuple) -> list[tuple[int, int, int, int]]:
+def _worker_faces(args: tuple) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
     buf, width, height, crop, out_size = args
     bgr = np.ascontiguousarray(np.frombuffer(buf, np.uint8).reshape(height, width, 3)[..., ::-1])
     return _find_faces(bgr, _W["detector"], _W["profile"], _W["plain"], crop, out_size)  # type: ignore[arg-type]
@@ -301,10 +301,10 @@ def _worker_faces(args: tuple) -> list[tuple[int, int, int, int]]:
 
 def _find_faces(bgr: np.ndarray, detector: cv2.FaceDetectorYN, profile: cv2.CascadeClassifier | None,
                 plain: cv2.FaceDetectorYN | None, crop: tuple[int, int, int, int],
-                out_size: tuple[int, int]) -> list[tuple[int, int, int, int]]:
-    """한 프레임의 얼굴(원본 좌표). 매 프레임 화면 전체에서 찾는다. 3프레임마다(실험 H-27)나 결과 화면 안만(H-28) 찾으면
-    놓치는 얼굴이 늘었다."""
-    faces = anonymize.detect_faces(bgr, detector, profile)
+                out_size: tuple[int, int]) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
+    """한 프레임의 (얼굴, 옆얼굴 Haar 얼굴)(원본 좌표). 매 프레임 화면 전체에서 찾는다. 3프레임마다(실험 H-27)나
+    결과 화면 안만(H-28) 찾으면 놓치는 얼굴이 늘었다. 옆얼굴은 사람 몸 위에 잡힌 것을 렌더에서 거른다(H-48)."""
+    faces, side = anonymize.detect_faces_split(bgr, detector, profile)
     if plain is not None:  # 두 설정은 놓치는 얼굴이 달라 합친다(H-29)
         faces = faces + anonymize.detect_faces_plain(bgr, plain)
     x0, y0, cw, ch = crop
@@ -314,7 +314,19 @@ def _find_faces(bgr: np.ndarray, detector: cv2.FaceDetectorYN, profile: cv2.Casc
         part = cv2.resize(bgr[y0:y0 + ch, x0:x0 + cw], (out_w, out_h))
         faces = faces + [(int(x / sx) + x0, int(y / sx) + y0, int(w / sx), int(h / sx))
                          for x, y, w, h in anonymize.detect_faces(part, detector)]
-    return faces
+    return faces, side
+
+
+BODY_FROM = 0.35  # 사람 상자 위에서 이만큼 아래부터는 몸(어깨 아래). 얼굴은 그 위에 있다
+
+
+def off_bodies(side: list[tuple[int, int, int, int]], people: list[Box]) -> list[tuple[int, int, int, int]]:
+    """옆얼굴 Haar가 사람 몸 아래쪽(유니폼 등·등번호·다리)에 잡은 자리를 뺀다(H-48: 거기 생긴 모자이크가 눈에 띄었다).
+    YuNet 얼굴은 빼지 않는다 — 앞사람 몸 뒤로 보이는 진짜 머리도 그 자리에 잡혀, 빼면 얼굴이 드러날 수 있다."""
+    def on_body(b: tuple[int, int, int, int]) -> bool:
+        cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
+        return any(p.left <= cx <= p.right and p.top + BODY_FROM * (p.bottom - p.top) < cy <= p.bottom for p in people)
+    return [b for b in side if not on_body(b)]
 
 
 def render_video(
@@ -333,6 +345,7 @@ def render_video(
     keep_my_face: bool = True,
     two_detectors: bool = True,
     max_fps: int = 0,
+    people_by_sam: dict[int, list[Box]] | None = None,
 ) -> Path:
     """subtitles = [(시작초, 끝초, 글자), ...]. 장면에 맞춰 바뀌는 해설 자막(score.subtitle_cues). 없으면 자막 없음.
     face_mosaic이면 '나'를 뺀 얼굴을 모자이크한다(src는 원본 클립). 얼굴은 face_every 프레임마다 찾고 사이는 이어 쓴다."""
@@ -397,10 +410,13 @@ def render_video(
                 rgb = np.asarray(frame)
                 if i % face_every == 0:
                     if job is not None:
-                        faces = job.result()
+                        faces, side = job.result()
                     else:
                         bgr = np.ascontiguousarray(rgb[..., ::-1])  # 검출기는 BGR
-                        faces = _find_faces(bgr, detector, profile, plain, crops[k], (out_w, out_h))
+                        faces, side = _find_faces(bgr, detector, profile, plain, crops[k], (out_w, out_h))
+                    if people_by_sam is not None:  # 다른 선수까지 추적했으면 몸 위에 잡힌 옆얼굴을 거른다(H-48)
+                        side = off_bodies(side, people_by_sam.get(round(i * sam_fps / fps), []))
+                    faces = faces + side
                     mine = next((b for b in boxes[k] if b.object_id == me), None)
                     # 내 얼굴은 찾은 그 프레임에서 뺀다. 모아 둔 뒤에 빼면 0.2초 전 내 얼굴 자리가 남아 탭한 나에게
                     # 모자이크가 붙었다(10/30 사용자). keep_my_face=False는 품질 확인용(qa.py) — '나'까지 가린다

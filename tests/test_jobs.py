@@ -105,7 +105,8 @@ def test_tap_sends_points_from_both_scenes_and_keeps_visible_span(job: jobs.Job,
                                 client=None)
     # 두 장면의 탭이 한 선수의 점으로 간다(득점 순간 = SAM 프레임 4, 시작 = 0)
     assert "<4f>0<|point;x=240;y=240" in sam[0] and "<0f>0<|point;x=175;y=240" in sam[0]
-    assert len(sam) == 1  # 얼굴만 가리기는 다른 선수 추적이, 자막을 끄면 해설(Muse)이 필요 없다
+    # '나' 추적 + 다른 선수 추적(몸 위에 잡힌 옆얼굴 모자이크를 거르려고, H-48). 자막을 끄면 해설(Muse)은 없다
+    assert len(sam) == 2 and sam[1] == "volleyball player"
     # '나'는 SAM 프레임 0·1(5.5~5.7초)에만 있다. 영상은 그 구간과 최소 득점 4초 전~4초 뒤(8.5~16.5초)를 모두 담는다
     # (득점 시각이 ±4초 어긋나도 실제 득점이 들어가게, H-43)
     assert scene["span_frames"] == [0, 1] and scene["clip"] == [5.5, 16.5]
@@ -135,17 +136,17 @@ def test_rerender_pays_only_when_something_new_is_needed(job: jobs.Job, monkeypa
     calls: list = []
     _prepared(job, monkeypatch, calls)
     jobs.make_highlight(job, 0, [("score", 240, 240)], "검정", [], "", "face", 2.0, client=None)
-    assert calls == [calls[0]]  # SAM('나') 한 번뿐, 자막을 껐으니 Muse 없음
+    assert calls == [calls[0], "volleyball player"]  # SAM '나' + 다른 선수(H-48) 한 번씩, 자막을 껐으니 Muse 없음
     spent = jobs.load_job(job.id).spent_usd
 
     jobs.rerender(job, 0, [], "", "background", 1.0)  # 비용 없음
-    assert len(calls) == 1 and jobs.load_job(job.id).spent_usd == spent
+    assert len(calls) == 2 and jobs.load_job(job.id).spent_usd == spent
     jobs.rerender(job, 0, ["ko"], "assist", "face", 2.0)  # 자막을 처음 켬 → 해설 한 번
     jobs.rerender(job, 0, ["ja", "en"], "assist", "face", 2.0)  # 언어만 바꿈 → 다시 묻지 않음
     jobs.rerender(job, 0, ["ko"], "defense", "face", 2.0)  # 역할을 바꿈 → 다시 묻는다
-    scene = jobs.rerender(job, 0, ["ko"], "defense", "silhouette", 2.0)  # 다른 선수 추적을 처음 한 번
-    jobs.rerender(job, 0, ["en"], "defense", "silhouette", 1.5)  # 저장해 둔 것을 다시 씀
-    assert calls[1:] == ["muse:assist", "muse:defense", "volleyball player"]
+    scene = jobs.rerender(job, 0, ["ko"], "defense", "silhouette", 2.0)  # 다른 선수 추적은 처음 만들 때 저장해 둔 것
+    jobs.rerender(job, 0, ["en"], "defense", "silhouette", 1.5)
+    assert calls[2:] == ["muse:assist", "muse:defense"]
     assert scene["options"] == {"languages": ["en"], "role": "defense", "privacy": "silhouette", "zoom": 1.5,
                                 "face_mosaic": True, "fps": 0}
     scene = jobs.rerender(job, 0, ["en"], "defense", "face", 1.5, face_mosaic=False)  # 모자이크 끄기도 비용 없음
@@ -274,8 +275,9 @@ def test_unreadable_commentary_is_retried_then_skipped(job: jobs.Job, monkeypatc
     spent = jobs.load_job(job.id).spent_usd
     scene = jobs.make_highlight(job, 0, [("score", 240, 240)], "검정", ["ko"], "", "face", 2.0, client=None)
     assert scene["status"] == "done" and scene["commentary"] == [] and scene["commentary_failed"]
-    # 두 번 다 실패해도 낸 돈(SAM 0.01 + Muse 2회)은 센다
-    assert jobs.load_job(job.id).spent_usd == pytest.approx(spent + 0.01 + 0.02)
+    # 두 번 다 실패해도 낸 돈(SAM '나' 0.01 + 다른 선수 추적 + Muse 2회)은 센다
+    others = track.estimate_usd(50)
+    assert jobs.load_job(job.id).spent_usd == pytest.approx(spent + 0.01 + others + 0.02)
 
 
 def test_picking_a_player_card_sends_that_players_box(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -465,6 +467,7 @@ def test_renders_run_one_at_a_time_while_tracking_overlaps(job: jobs.Job, monkey
 
     monkeypatch.setattr(render, "render_video", fake_render)
     monkeypatch.setattr(jobs, "scene_render_inputs", lambda *a: (Path("src.mp4"), {}, {}, []))
+    monkeypatch.setattr(jobs, "scene_people", lambda *a: {})
     scene = {"sam_clip": str(job.dir / "scene00" / "sam_blur.mp4"), "sam_fps": 10}
     threads = [threading.Thread(target=jobs._render_scene, args=(job, scene, [], "face", 1.0, True, None)) for _ in range(3)]
     for th in threads:
