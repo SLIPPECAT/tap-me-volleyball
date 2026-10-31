@@ -62,16 +62,12 @@
     <p data-t="uploadIntro"></p>
     <p class="muted" data-t="captureTip"></p>
     <p><a href="/static/guide.html" id="guide-link" data-t="guideLink"></a></p>
-    <div class="bench" id="bench-box" hidden>
-      <button id="bench-go"></button>
-      <div class="progress" id="bench-progress" hidden><div></div></div>
-      <p class="muted" id="bench-result" aria-live="polite"></p>
-    </div>
     <div class="field" id="code-field" hidden><label for="code" data-t="codeLabel"></label><input type="text" id="code" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
     <p class="muted" id="access-status" aria-live="polite"></p>
     <p class="muted" id="wipe-note" hidden></p>
     <div class="consent" id="consent">
-      <p><strong data-t="consentTitle"></strong></p>
+      <p class="consent-agreed"><span data-t="consentAgreed"></span> <button class="linklike" id="consent-show" data-t="consentShow"></button></p>
+      <p class="consent-title"><strong data-t="consentTitle"></strong></p>
       <ul><li data-t="consent1"></li><li data-t="consent2"></li><li data-t="consent3"></li><li data-t="consent4"></li></ul>
       <label class="check"><input type="checkbox" id="consent-check"> <span data-t="consentCheck"></span></label>
     </div>
@@ -96,12 +92,21 @@
         <p class="muted" id="push-hint" hidden></p>
         <button class="option" id="choose-device"><strong data-t="optDevice"></strong><span id="device-est"></span><small data-t="optDeviceHint"></small></button>
         <button class="option" id="choose-server"><strong data-t="optServer"></strong><span id="server-est"></span><small data-t="optServerHint"></small></button>
+        <button class="linklike" id="device-more" hidden></button>
       </div>
     </div>
     <div class="progress" id="up-progress" hidden><div></div></div>
     <p class="muted" id="up-status" aria-live="polite"></p>
     <button class="primary" id="resume-upload" data-t="resumeUpload" hidden></button>
     <p class="error" id="upload-warn" data-t="keepOpen" hidden></p>
+    <!-- 덜 쓰는 것은 영상 고르기 아래로(10/31: 첫 화면에서 영상 고르기가 아래로 밀렸다) -->
+    <details class="bench" id="bench-box" hidden>
+      <summary data-t="benchTitle"></summary>
+      <button id="bench-go"></button>
+      <div class="progress" id="bench-progress" hidden><div></div></div>
+      <p class="muted" id="bench-result" aria-live="polite"></p>
+    </details>
+    <details class="code-help" id="code-help" hidden><summary data-t="codeHelp"></summary><p class="muted" id="code-help-text"></p></details>
   </section>
 
   <!-- 2. 랠리 후보 -->
@@ -118,6 +123,7 @@
     </div>
     <p class="muted" id="left-note" hidden></p>
     <p class="card muted" id="scan-note" aria-live="polite" hidden></p>
+    <p id="reel-hint-box" hidden><button class="primary" id="reel-hint"></button></p>
     <div id="rally-list"></div>
     <div class="batch-go" id="batch-go" hidden><button class="primary" id="batch-start"></button></div>
     <p class="card muted" id="no-rallies" data-t="noRallies" hidden></p>
@@ -139,6 +145,7 @@
   <section id="s-tap" hidden>
     <h2 data-t="tapTitle"></h2>
     <p class="muted" id="tap-status" aria-live="polite"></p>
+    <p id="wait-other-box" hidden><button id="back-rallies3" data-t="waitOther"></button></p>
     <div id="tap-box" hidden>
       <div class="tap-main">
         <div class="moments" id="moments" role="tablist"></div>
@@ -168,6 +175,7 @@
         <div class="actions" id="result-actions" hidden>
           <button id="share" data-t="share"></button><a id="download" download="highlight.mp4"><button style="width:100%" data-t="save"></button></a>
         </div>
+        <p class="muted" id="save-hint" hidden></p>
         <!-- 결과마다 한 번에 의견(10/31 사용자: 베타 의견 받기) -->
         <div class="rate" id="rate" hidden>
           <p data-t="rateQ"></p>
@@ -248,7 +256,7 @@
 const T = {
   ko: {
     rangeNote: "이 영상은 {d} 길이예요. 한 번에 {m}분까지 훑으니 훑을 구간을 골라 주세요 (세트마다 한 번씩 하면 좋아요).", rangeStart: "여기서 시작", rangeEnd: "여기서 끝", rangeFirst: "앞 {m}분", rangeNext: "다음 {m}분", rangeLast: "뒤 {m}분", rangeLabel: "{s} ~ {e} ({m}분)", rangeUnknown: "영상 길이를 읽지 못했어요. {m}분보다 길면 앞 {m}분만 훑어요.",
-    codeIssued: "코드가 발급됐어요: {c} — 다른 기기에서 쓰려면 적어 두세요.", consentTitle: "올리기 전에 확인해 주세요", consent1: "랠리 찾기와 선수 추적에 Meta의 AI(Muse Spark, SAM 3.1)를 써요. AI로 보내는 장면은 모든 얼굴을 블러 처리한 뒤 보내지만, 아주 작거나 가려진 얼굴은 블러가 빠질 수 있어요.", consent2: "AI에 올린 파일은 답을 받은 뒤 바로 지워요. 다만 무료 크레딧으로 처리한 장면은 Meta의 제품 개선에 쓰일 수 있어요.", consent3: "영상에 나오는 사람들의 동의를 받은 영상만 올려 주세요. 미성년자가 나오는 영상은 올리지 마세요.", consent4: "결과 영상에서 다른 사람 얼굴 모자이크는 기본으로 켜져 있어요. 끄고 공유할 때는 함께 나온 사람의 동의를 받아 주세요.", consentCheck: "위 내용을 확인했고 동의해요", probing: "이 기기의 처리 속도를 재는 중… (10초 안팎)", preparing2: "준비 중…", uploadPaused: "업로드가 멈췄어요(화면이 꺼졌거나 연결이 끊겼어요). '이어 올리기'를 누르면 받은 곳부터 이어서 올려요.", resumeUpload: "이어 올리기", uploadResumed: "이전에 올리던 곳({p}%)부터 이어서 올려요", resumeLocal: "이어서 처리하기", resumeNote: "기기 처리가 멈췄어요. 같은 영상을 다시 고르면 멈춘 곳부터 이어서 처리해요.", resumeNoteHave: "기기 처리가 멈췄어요. 멈춘 곳부터 이어서 처리할 수 있어요.", probeLibs: "처리 도구를 받는 중… ({s}초)", probeOpen: "영상을 여는 중… ({s}초)", probeModel: "얼굴 찾는 도구를 준비하는 중… ({s}초)", probeMeasure: "이 기기의 속도를 재는 중 {n}/{t}장 ({s}초)", probeNet: "업로드 속도를 재는 중… ({s}초)", startedDevice: "기기에서 처리를 시작했어요. 진행 상황은 화면 위에 보여요 ↑", startedServer: "서버로 올리는 중이에요. 진행 상황은 아래에 보여요 ↓", choiceNote: "기기 속도를 재 봤어요. 둘 중 하나를 골라 주세요.", speedNote: "(이 기기: 장당 {s}초 · {ep} · {k}조각)", epGpu: "그래픽칩", epCpu: "일반", optDevice: "이 기기에서 처리", optDeviceHint: "원본이 기기 밖으로 나가지 않아요 · 끝날 때까지 화면을 켜 둬야 해요", optServer: "서버에 맡기기", optServerHint: "올리기만 끝나면 폰을 써도 돼요 · 원본이 서버에 올라가요", estDevice: "약 {m} · {c}쯤 랠리 목록", estServer: "올리기 약 {u} + 처리 약 {p} · {c}쯤 랠리 목록", recommended: "추천", chargeTip: "시간이 걸리는 영상이라 충전기를 연결해 두면 좋아요.", pushHintIos: "아이폰은 사파리 공유 버튼 → '홈 화면에 추가'로 열면 끝났을 때 알림을 받을 수 있어요.", pushHint: "끝나면 알림으로 알려 드려요. 알림 허용을 물으면 '허용'을 눌러 주세요.", etaLeft: "약 {m} 남음 · {c}쯤", guideLink: "처음이라면: 사용 안내 보기", benchGo: "영상 없이 내 폰 속도 미리 재기 (약 20초)", benchAgain: "다시 재기", benchNote: "사람이 없는 시험 화면을 이 기기 안에서만 처리해 봐요. 서버로 보내는 것은 없어요.", benchMake: "시험 화면을 만드는 중… ({s}초)", benchResult: "이 기기: 장당 {s}초 ({d}에 잼). 10분 영상이면 이 기기에서 약 {dm}, 서버는 처리 약 {sm} + 원본 올리는 시간이에요. 4K 영상은 이 기기에서 약 4배 걸려요.", benchGood: "→ 이 기기에서 처리해도 괜찮아요.", benchSlow: "→ 서버에 맡기는 쪽이 빨라요.", benchFail: "이 기기에서는 잴 수 없었어요. 영상은 서버에서 처리하면 돼요.", benchUsed: "미리 잰 값", renderAlmost: "곧 끝나요", loginLink: "배구구 로그인하기", scanLate: "예상보다 조금 더 걸리고 있어요", rateQ: "이 하이라이트 어땠어요?", rateGood: "좋아요", rateBad: "아쉬워요", feedbackTitle: "의견 남기기", fbPlaceholder: "좋았던 점, 불편했던 점, 이상하게 나온 장면 등 무엇이든 적어 주세요.", fbContact: "답을 받을 곳 (선택: 카톡 아이디·이메일)", fbSend: "보내기", fbThanks: "고마워요! 운영자가 읽고 고칠게요.", fbEmpty: "좋아요/아쉬워요를 고르거나 내용을 적어 주세요.", localPrep: "기기에서 처리할 준비 중…", localStep: "기기에서 얼굴을 흐리는 중 {p}% · 남은 시간 약 {m} · {c}쯤 끝나요 (원본은 기기 밖으로 나가지 않아요)", localKeepOpen: "끝날 때까지 이 화면을 켜 두세요. 화면을 끄거나 다른 앱으로 가면 멈춰요.", localSlow: "이 기기는 처리가 느려 영상을 서버로 올려 처리할게요.", localDone: "기기 처리가 끝났어요. 남은 조각은 서버가 보고 있어요.", localFail: "기기에서 처리하다 멈췄어요: {e}", localNoFile: "미리보기·장면 만들기는 처음 고른 영상이 있어야 해요 (화면을 새로 열었다면 같은 영상을 다시 골라 주세요)", segUploading: "고른 랠리 구간을 원본 화질로 올리는 중…", refileNote: "이 작업의 영상은 기기에만 있어요. 미리보기와 장면 만들기를 하려면 처음 고른 영상을 다시 골라 주세요.", refileWrong: "처음 고른 영상과 다른 파일이에요.", min: "{n}분", sec: "{n}초", wipeNote: "올린 영상과 만든 하이라이트는 매일 새벽 {h}시에 모두 지워져요. 하이라이트는 만들자마자 저장해 주세요.", codeLabel: "사용 코드 (배구구에서 받은 코드)", codeNeed: "배구구에서 받은 사용 코드를 넣어 주세요.", codeWrong: "코드가 맞지 않아요.", codeLeft: "이 코드로 영상 {u}편 · 하이라이트 {h}개를 더 만들 수 있어요.", codeNoUploads: "이 코드로 올릴 수 있는 영상을 다 썼어요.", leftNote: "이 코드로 하이라이트 {h}개를 더 만들 수 있어요.", stQueue: "앞에 {n}명이 랠리 찾기를 기다리고 있어요. 화면을 닫아도 차례가 오면 진행돼요.", queuedTurn: "만들 차례를 기다리는 중이에요 (앞에 {n}개). 화면을 닫아도 돼요.",
+    codeIssued: "코드가 발급됐어요: {c} — 다른 기기에서 쓰려면 적어 두세요.", consentTitle: "올리기 전에 확인해 주세요", consent1: "랠리 찾기와 선수 추적에 Meta의 AI(Muse Spark, SAM 3.1)를 써요. AI로 보내는 장면은 모든 얼굴을 블러 처리한 뒤 보내지만, 아주 작거나 가려진 얼굴은 블러가 빠질 수 있어요.", consent2: "AI에 올린 파일은 답을 받은 뒤 바로 지워요. 다만 무료 크레딧으로 처리한 장면은 Meta의 제품 개선에 쓰일 수 있어요.", consent3: "영상에 나오는 사람들의 동의를 받은 영상만 올려 주세요. 미성년자가 나오는 영상은 올리지 마세요.", consent4: "결과 영상에서 다른 사람 얼굴 모자이크는 기본으로 켜져 있어요. 끄고 공유할 때는 함께 나온 사람의 동의를 받아 주세요.", consentCheck: "위 내용을 확인했고 동의해요", probing: "이 기기의 처리 속도를 재는 중… (10초 안팎)", preparing2: "준비 중…", uploadPaused: "업로드가 멈췄어요(화면이 꺼졌거나 연결이 끊겼어요). '이어 올리기'를 누르면 받은 곳부터 이어서 올려요.", resumeUpload: "이어 올리기", uploadResumed: "이전에 올리던 곳({p}%)부터 이어서 올려요", resumeLocal: "이어서 처리하기", resumeNote: "기기 처리가 멈췄어요. 같은 영상을 다시 고르면 멈춘 곳부터 이어서 처리해요.", resumeNoteHave: "기기 처리가 멈췄어요. 멈춘 곳부터 이어서 처리할 수 있어요.", probeLibs: "처리 도구를 받는 중… ({s}초)", probeOpen: "영상을 여는 중… ({s}초)", probeModel: "얼굴 찾는 도구를 준비하는 중… ({s}초)", probeMeasure: "이 기기의 속도를 재는 중 {n}/{t}장 ({s}초)", probeNet: "업로드 속도를 재는 중… ({s}초)", startedDevice: "기기에서 처리를 시작했어요. 진행 상황은 화면 위에 보여요 ↑", startedServer: "서버로 올리는 중이에요. 진행 상황은 아래에 보여요 ↓", choiceNote: "기기 속도를 재 봤어요. 둘 중 하나를 골라 주세요.", speedNote: "(이 기기: 장당 {s}초{ep})", choiceNoteServer: "서버에 맡기면 돼요. 아래를 누르면 시작해요.", epGpu: "그래픽칩", epCpu: "일반", optDevice: "이 기기에서 처리", optDeviceHint: "원본이 기기 밖으로 나가지 않아요 · 끝날 때까지 화면을 켜 둬야 해요", optServer: "서버에 맡기기", optServerHint: "올리기만 끝나면 폰을 써도 돼요 · 원본이 서버에 올라가요", estDevice: "약 {m} · {c}쯤 랠리 목록", estServer: "올리기 약 {u} + 처리 약 {p} · {c}쯤 랠리 목록", recommended: "추천", chargeTip: "시간이 걸리는 영상이라 충전기를 연결해 두면 좋아요.", pushHintIos: "아이폰은 사파리 공유 버튼 → '홈 화면에 추가'로 열면 끝났을 때 알림을 받을 수 있어요.", pushHint: "끝나면 알림으로 알려 드려요. 알림 허용을 물으면 '허용'을 눌러 주세요.", etaLeft: "약 {m} 남음 · {c}쯤", guideLink: "처음이라면: 사용 안내 보기", benchGo: "영상 없이 내 폰 속도 미리 재기 (약 20초)", benchAgain: "다시 재기", benchNote: "사람이 없는 시험 화면을 이 기기 안에서만 처리해 봐요. 서버로 보내는 것은 없어요.", benchMake: "시험 화면을 만드는 중… ({s}초)", benchResult: "이 기기: 장당 {s}초 ({d}에 잼). 10분 영상이면 이 기기에서 약 {dm}, 서버는 처리 약 {sm} + 원본 올리는 시간이에요. 4K 영상은 이 기기에서 약 4배 걸려요.", benchGood: "→ 이 기기에서 처리해도 괜찮아요.", benchSlow: "→ 서버에 맡기는 쪽이 빨라요.", benchFail: "이 기기에서는 잴 수 없었어요. 영상은 서버에서 처리하면 돼요.", benchUsed: "미리 잰 값", renderAlmost: "곧 끝나요", codeHelp: "홈 화면에 추가한 앱이나 다른 기기에서 쓰려면", codeHelpText: "들어가는 화면에서 이 코드를 넣으면 돼요: {c}", consentAgreed: "AI 사용·삭제 안내에 동의했어요.", consentShow: "내용 다시 보기", benchTitle: "내 폰 속도 미리 재기", deviceMore: "이 기기에서 처리하기 (약 {m}) — 원본이 기기 밖으로 나가지 않아요", reelHint: "완성 {n}개 · 득점 장면만 모은 영상 만들기 ↓", waitOther: "기다리는 동안 다른 랠리 고르기", saveToPhotos: "사진첩에 저장", saveFile: "파일로 저장", saveHintIos: "‘사진첩에 저장’을 누르고 나오는 화면에서 ‘비디오 저장’을 고르세요.", loginLink: "배구구 로그인하기", scanLate: "예상보다 조금 더 걸리고 있어요", rateQ: "이 하이라이트 어땠어요?", rateGood: "좋아요", rateBad: "아쉬워요", feedbackTitle: "의견 남기기", fbPlaceholder: "좋았던 점, 불편했던 점, 이상하게 나온 장면 등 무엇이든 적어 주세요.", fbContact: "답을 받을 곳 (선택: 카톡 아이디·이메일)", fbSend: "보내기", fbThanks: "고마워요! 운영자가 읽고 고칠게요.", fbEmpty: "좋아요/아쉬워요를 고르거나 내용을 적어 주세요.", localPrep: "기기에서 처리할 준비 중…", localStep: "기기에서 얼굴을 흐리는 중 {p}% · 남은 시간 약 {m} · {c}쯤 끝나요 (원본은 기기 밖으로 나가지 않아요)", localKeepOpen: "끝날 때까지 이 화면을 켜 두세요. 화면을 끄거나 다른 앱으로 가면 멈춰요.", localSlow: "이 기기는 처리가 느려 영상을 서버로 올려 처리할게요.", localDone: "기기 처리가 끝났어요. 남은 조각은 서버가 보고 있어요.", localFail: "기기에서 처리하다 멈췄어요: {e}", localNoFile: "미리보기·장면 만들기는 처음 고른 영상이 있어야 해요 (화면을 새로 열었다면 같은 영상을 다시 골라 주세요)", segUploading: "고른 랠리 구간을 원본 화질로 올리는 중…", refileNote: "이 작업의 영상은 기기에만 있어요. 미리보기와 장면 만들기를 하려면 처음 고른 영상을 다시 골라 주세요.", refileWrong: "처음 고른 영상과 다른 파일이에요.", min: "{n}분", sec: "{n}초", wipeNote: "올린 영상과 만든 하이라이트는 매일 새벽 {h}시에 모두 지워져요. 하이라이트는 만들자마자 저장해 주세요.", codeLabel: "사용 코드 (배구구에서 받은 코드)", codeNeed: "배구구에서 받은 사용 코드를 넣어 주세요.", codeWrong: "코드가 맞지 않아요.", codeLeft: "앞으로 영상 {u}편 · 하이라이트 {h}개를 더 만들 수 있어요.", codeNoUploads: "올릴 수 있는 영상을 다 썼어요.", leftNote: "하이라이트 {h}개를 더 만들 수 있어요.", stQueue: "앞에 {n}명이 랠리 찾기를 기다리고 있어요. 화면을 닫아도 차례가 오면 진행돼요.", queuedTurn: "만들 차례를 기다리는 중이에요 (앞에 {n}개). 화면을 닫아도 돼요.",
     keepOpen: "업로드가 끝날 때까지 이 화면을 켜 두세요.", canClose: "화면을 닫거나 폰을 써도 서버에서 계속 진행돼요. 끝나면 알림으로 알려 드리고, 이 링크로 다시 들어와도 이어서 볼 수 있어요.",
     copyLink: "이 작업 링크 복사", copied: "복사했어요", prefsTitle: "기다리는 동안 옵션 미리 정하기",
     stWhistles: "휘슬 소리를 찾는 중…", stRallies: "AI가 영상을 1분씩 훑으며 랠리를 찾는 중… {d}/{n}", scanNote: "아직 찾는 중이에요 ({d}/{n}). 지금까지 찾은 랠리부터 골라 만들 수 있어요.", waitCost: "영상 {m}분 · 예상 AI 비용 약 ${u}", stPreviews: "미리보기 만드는 중… {d}/{n}",
@@ -277,7 +285,7 @@ const T = {
   },
   ja: {
     rangeNote: "動画が{d}あるので、一度に{m}分まで見ます。見る区間を選んでください（セットごとに1回ずつがおすすめ）。", rangeStart: "ここから", rangeEnd: "ここまで", rangeFirst: "最初の{m}分", rangeNext: "次の{m}分", rangeLast: "最後の{m}分", rangeLabel: "{s} 〜 {e}（{m}分）", rangeUnknown: "動画の長さを読めませんでした。{m}分より長い場合は最初の{m}分だけ見ます。",
-    codeIssued: "コードを発行しました: {c} — 別の端末で使うときのためにメモしてください。", consentTitle: "アップロードの前にご確認ください", consent1: "ラリー探しと選手の追跡にMetaのAI（Muse Spark、SAM 3.1）を使います。AIに送るシーンはすべての顔をぼかしてから送りますが、とても小さい顔や隠れた顔はぼかしが漏れることがあります。", consent2: "AIにアップロードしたファイルは回答を受け取ったらすぐ削除します。ただし無料クレジットで処理したシーンはMetaの製品改善に使われることがあります。", consent3: "映っている人の同意を得た動画だけをアップロードしてください。未成年が映っている動画はアップロードしないでください。", consent4: "完成動画では他の人の顔モザイクが最初からオンです。オフにして共有するときは、一緒に映っている人の同意を得てください。", consentCheck: "上の内容を確認し、同意します", probing: "この端末の処理速度を測っています…（10秒ほど）", preparing2: "準備中…", uploadPaused: "アップロードが止まりました（画面が消えたか接続が切れました）。「続きをアップロード」で受け取った所から続けます。", resumeUpload: "続きをアップロード", uploadResumed: "前回の続き（{p}%）からアップロードします", resumeLocal: "続きを処理する", resumeNote: "端末での処理が止まりました。同じ動画を選び直すと止まった所から続けます。", resumeNoteHave: "端末での処理が止まりました。止まった所から続けられます。", probeLibs: "処理ツールを読み込み中…（{s}秒）", probeOpen: "動画を開いています…（{s}秒）", probeModel: "顔検出の準備中…（{s}秒）", probeMeasure: "この端末の速度を測っています {n}/{t}枚（{s}秒）", probeNet: "アップロード速度を測っています…（{s}秒）", startedDevice: "端末で処理を始めました。進み具合は画面の上に出ます ↑", startedServer: "サーバーにアップロード中です。進み具合は下に出ます ↓", choiceNote: "端末の速度を測りました。どちらかを選んでください。", speedNote: "（この端末: 1枚{s}秒 · {ep} · {k}分割）", epGpu: "GPU", epCpu: "通常", optDevice: "この端末で処理", optDeviceHint: "元の動画は端末の外に出ません · 終わるまで画面を点けたままにします", optServer: "サーバーに任せる", optServerHint: "アップロードが終われば携帯を使えます · 元の動画がサーバーに送られます", estDevice: "約{m} · {c}ごろラリー一覧", estServer: "アップロード約{u} + 処理約{p} · {c}ごろラリー一覧", recommended: "おすすめ", chargeTip: "時間がかかる動画なので、充電器につないでおくと安心です。", pushHintIos: "iPhoneはSafariの共有ボタン →「ホーム画面に追加」から開くと、終わったときに通知を受け取れます。", pushHint: "終わったら通知でお知らせします。通知の許可を聞かれたら「許可」を押してください。", etaLeft: "残り約{m} · {c}ごろ", guideLink: "はじめての方: 使い方を見る", benchGo: "動画なしで端末の速度を先に測る（約20秒）", benchAgain: "もう一度測る", benchNote: "人が映っていないテスト画面をこの端末の中だけで処理します。サーバーには何も送りません。", benchMake: "テスト画面を作っています…（{s}秒）", benchResult: "この端末: 1枚{s}秒（{d}に測定）。10分の動画なら、この端末で約{dm}、サーバーは処理約{sm} + 元の動画のアップロード時間です。4K動画はこの端末で約4倍かかります。", benchGood: "→ この端末で処理しても大丈夫です。", benchSlow: "→ サーバーに任せるほうが速いです。", benchFail: "この端末では測れませんでした。動画はサーバーで処理できます。", benchUsed: "先に測った値", renderAlmost: "もうすぐ終わります", loginLink: "Baeguguにログイン", scanLate: "予想より少し時間がかかっています", rateQ: "このハイライトはどうでしたか？", rateGood: "よかった", rateBad: "いまいち", feedbackTitle: "ご意見を送る", fbPlaceholder: "よかった点、不便だった点、変になったシーンなど、何でも書いてください。", fbContact: "返信先（任意: カカオID・メール）", fbSend: "送る", fbThanks: "ありがとうございます！運営者が読んで直します。", fbEmpty: "よかった/いまいちを選ぶか、内容を書いてください。", localPrep: "端末で処理する準備をしています…", localStep: "端末で顔をぼかしています {p}% · 残り約{m} · {c}ごろ完了（元の動画は端末の外に出ません）", localKeepOpen: "終わるまでこの画面を開いたままにしてください。画面を消したり別のアプリに移ると止まります。", localSlow: "この端末では処理が遅いため、動画をサーバーに送って処理します。", localDone: "端末での処理が終わりました。残りはサーバーが確認しています。", localFail: "端末での処理が止まりました: {e}", localNoFile: "プレビューとシーン作成には最初に選んだ動画が必要です（画面を開き直した場合は同じ動画を選び直してください）", segUploading: "選んだラリーの区間を元の画質でアップロードしています…", refileNote: "この作業の動画は端末にだけあります。プレビューとシーン作成には、最初に選んだ動画をもう一度選んでください。", refileWrong: "最初に選んだ動画と違うファイルです。", min: "{n}分", sec: "{n}秒", wipeNote: "アップロードした動画と作ったハイライトは毎日午前{h}時（韓国時間）にすべて削除されます。ハイライトはできたらすぐ保存してください。", codeLabel: "利用コード（Baeguguで受け取ったコード）", codeNeed: "Baeguguで受け取った利用コードを入力してください。", codeWrong: "コードが正しくありません。", codeLeft: "このコードで動画あと{u}本・ハイライトあと{h}本作れます。", codeNoUploads: "このコードでアップロードできる動画を使い切りました。", leftNote: "このコードでハイライトをあと{h}本作れます。", stQueue: "{n}人がラリー探しの順番を待っています。画面を閉じても順番が来たら進みます。", queuedTurn: "作る順番を待っています（前に{n}件）。画面を閉じても大丈夫です。",
+    codeIssued: "コードを発行しました: {c} — 別の端末で使うときのためにメモしてください。", consentTitle: "アップロードの前にご確認ください", consent1: "ラリー探しと選手の追跡にMetaのAI（Muse Spark、SAM 3.1）を使います。AIに送るシーンはすべての顔をぼかしてから送りますが、とても小さい顔や隠れた顔はぼかしが漏れることがあります。", consent2: "AIにアップロードしたファイルは回答を受け取ったらすぐ削除します。ただし無料クレジットで処理したシーンはMetaの製品改善に使われることがあります。", consent3: "映っている人の同意を得た動画だけをアップロードしてください。未成年が映っている動画はアップロードしないでください。", consent4: "完成動画では他の人の顔モザイクが最初からオンです。オフにして共有するときは、一緒に映っている人の同意を得てください。", consentCheck: "上の内容を確認し、同意します", probing: "この端末の処理速度を測っています…（10秒ほど）", preparing2: "準備中…", uploadPaused: "アップロードが止まりました（画面が消えたか接続が切れました）。「続きをアップロード」で受け取った所から続けます。", resumeUpload: "続きをアップロード", uploadResumed: "前回の続き（{p}%）からアップロードします", resumeLocal: "続きを処理する", resumeNote: "端末での処理が止まりました。同じ動画を選び直すと止まった所から続けます。", resumeNoteHave: "端末での処理が止まりました。止まった所から続けられます。", probeLibs: "処理ツールを読み込み中…（{s}秒）", probeOpen: "動画を開いています…（{s}秒）", probeModel: "顔検出の準備中…（{s}秒）", probeMeasure: "この端末の速度を測っています {n}/{t}枚（{s}秒）", probeNet: "アップロード速度を測っています…（{s}秒）", startedDevice: "端末で処理を始めました。進み具合は画面の上に出ます ↑", startedServer: "サーバーにアップロード中です。進み具合は下に出ます ↓", choiceNote: "端末の速度を測りました。どちらかを選んでください。", speedNote: "（この端末: 1枚{s}秒{ep}）", choiceNoteServer: "サーバーに任せましょう。下を押すと始まります。", epGpu: "GPU", epCpu: "通常", optDevice: "この端末で処理", optDeviceHint: "元の動画は端末の外に出ません · 終わるまで画面を点けたままにします", optServer: "サーバーに任せる", optServerHint: "アップロードが終われば携帯を使えます · 元の動画がサーバーに送られます", estDevice: "約{m} · {c}ごろラリー一覧", estServer: "アップロード約{u} + 処理約{p} · {c}ごろラリー一覧", recommended: "おすすめ", chargeTip: "時間がかかる動画なので、充電器につないでおくと安心です。", pushHintIos: "iPhoneはSafariの共有ボタン →「ホーム画面に追加」から開くと、終わったときに通知を受け取れます。", pushHint: "終わったら通知でお知らせします。通知の許可を聞かれたら「許可」を押してください。", etaLeft: "残り約{m} · {c}ごろ", guideLink: "はじめての方: 使い方を見る", benchGo: "動画なしで端末の速度を先に測る（約20秒）", benchAgain: "もう一度測る", benchNote: "人が映っていないテスト画面をこの端末の中だけで処理します。サーバーには何も送りません。", benchMake: "テスト画面を作っています…（{s}秒）", benchResult: "この端末: 1枚{s}秒（{d}に測定）。10分の動画なら、この端末で約{dm}、サーバーは処理約{sm} + 元の動画のアップロード時間です。4K動画はこの端末で約4倍かかります。", benchGood: "→ この端末で処理しても大丈夫です。", benchSlow: "→ サーバーに任せるほうが速いです。", benchFail: "この端末では測れませんでした。動画はサーバーで処理できます。", benchUsed: "先に測った値", renderAlmost: "もうすぐ終わります", codeHelp: "ホーム画面に追加したアプリや別の端末で使うには", codeHelpText: "入口の画面でこのコードを入れてください: {c}", consentAgreed: "AIの利用・削除の案内に同意しました。", consentShow: "内容をもう一度見る", benchTitle: "端末の速度を先に測る", deviceMore: "この端末で処理する（約{m}）— 元の動画は端末の外に出ません", reelHint: "完成{n}本 · 得点シーンだけのまとめ動画を作る ↓", waitOther: "待つあいだに別のラリーを選ぶ", saveToPhotos: "写真に保存", saveFile: "ファイルに保存", saveHintIos: "「写真に保存」を押し、出てきた画面で「ビデオを保存」を選んでください。", loginLink: "Baeguguにログイン", scanLate: "予想より少し時間がかかっています", rateQ: "このハイライトはどうでしたか？", rateGood: "よかった", rateBad: "いまいち", feedbackTitle: "ご意見を送る", fbPlaceholder: "よかった点、不便だった点、変になったシーンなど、何でも書いてください。", fbContact: "返信先（任意: カカオID・メール）", fbSend: "送る", fbThanks: "ありがとうございます！運営者が読んで直します。", fbEmpty: "よかった/いまいちを選ぶか、内容を書いてください。", localPrep: "端末で処理する準備をしています…", localStep: "端末で顔をぼかしています {p}% · 残り約{m} · {c}ごろ完了（元の動画は端末の外に出ません）", localKeepOpen: "終わるまでこの画面を開いたままにしてください。画面を消したり別のアプリに移ると止まります。", localSlow: "この端末では処理が遅いため、動画をサーバーに送って処理します。", localDone: "端末での処理が終わりました。残りはサーバーが確認しています。", localFail: "端末での処理が止まりました: {e}", localNoFile: "プレビューとシーン作成には最初に選んだ動画が必要です（画面を開き直した場合は同じ動画を選び直してください）", segUploading: "選んだラリーの区間を元の画質でアップロードしています…", refileNote: "この作業の動画は端末にだけあります。プレビューとシーン作成には、最初に選んだ動画をもう一度選んでください。", refileWrong: "最初に選んだ動画と違うファイルです。", min: "{n}分", sec: "{n}秒", wipeNote: "アップロードした動画と作ったハイライトは毎日午前{h}時（韓国時間）にすべて削除されます。ハイライトはできたらすぐ保存してください。", codeLabel: "利用コード（Baeguguで受け取ったコード）", codeNeed: "Baeguguで受け取った利用コードを入力してください。", codeWrong: "コードが正しくありません。", codeLeft: "あと動画{u}本・ハイライト{h}本作れます。", codeNoUploads: "アップロードできる動画を使い切りました。", leftNote: "ハイライトをあと{h}本作れます。", stQueue: "{n}人がラリー探しの順番を待っています。画面を閉じても順番が来たら進みます。", queuedTurn: "作る順番を待っています（前に{n}件）。画面を閉じても大丈夫です。",
     keepOpen: "アップロードが終わるまでこの画面を開いたままにしてください。", canClose: "画面を閉じたり携帯を使ったりしても、サーバーで処理は続きます。終わったら通知でお知らせします。このリンクから戻っても続きが見られます。",
     copyLink: "この作業のリンクをコピー", copied: "コピーしました", prefsTitle: "待っている間にオプションを決めておく",
     stWhistles: "ホイッスルの音を探しています…", stRallies: "AIが動画を1分ずつ見てラリーを探しています… {d}/{n}", scanNote: "まだ探しています（{d}/{n}）。見つかったラリーから選んで作れます。", waitCost: "動画 {m}分 · AI費用の見込み 約${u}", stPreviews: "プレビューを作っています… {d}/{n}",
@@ -306,7 +314,7 @@ const T = {
   },
   en: {
     rangeNote: "This video is {d} long. Up to {m} minutes are scanned at a time, so pick the part to scan (one set at a time works well).", rangeStart: "Start here", rangeEnd: "End here", rangeFirst: "First {m} min", rangeNext: "Next {m} min", rangeLast: "Last {m} min", rangeLabel: "{s} – {e} ({m} min)", rangeUnknown: "Couldn't read the video length. If it's longer than {m} minutes, only the first {m} are scanned.",
-    codeIssued: "Your code: {c} — write it down to use it on another device.", consentTitle: "Please read before uploading", consent1: "Rally finding and player tracking use Meta's AI (Muse Spark, SAM 3.1). Every face is blurred before a scene is sent to the AI, but very small or hidden faces can slip through.", consent2: "Files sent to the AI are deleted as soon as the answer comes back. Scenes processed with free credits may still be used to improve Meta's products.", consent3: "Only upload videos that the people in them have agreed to. Don't upload videos with minors in them.", consent4: "Pixelation of other people's faces is on by default in the final video. If you turn it off before sharing, get the agreement of the people in it.", consentCheck: "I have read the above and agree", probing: "Measuring this device's speed… (about 10 seconds)", preparing2: "Getting ready…", uploadPaused: "The upload stopped (the screen turned off or the connection dropped). Tap \"Resume upload\" to continue from where it left off.", resumeUpload: "Resume upload", uploadResumed: "Resuming from {p}%", resumeLocal: "Continue processing", resumeNote: "Processing on this device stopped. Pick the same video again to continue from where it stopped.", resumeNoteHave: "Processing on this device stopped. You can continue from where it stopped.", probeLibs: "Loading processing tools… ({s}s)", probeOpen: "Opening the video… ({s}s)", probeModel: "Preparing face detection… ({s}s)", probeMeasure: "Measuring this device {n}/{t} frames ({s}s)", probeNet: "Measuring upload speed… ({s}s)", startedDevice: "Started on this device. Progress is shown at the top ↑", startedServer: "Uploading to the server. Progress is shown below ↓", choiceNote: "We measured this device. Pick one.", speedNote: "(this device: {s}s per frame · {ep} · {k} tiles)", epGpu: "GPU", epCpu: "CPU", optDevice: "Process on this device", optDeviceHint: "The original never leaves your device · keep the screen on until it finishes", optServer: "Let the server do it", optServerHint: "Use your phone once the upload finishes · the original is uploaded", estDevice: "about {m} · rally list around {c}", estServer: "upload about {u} + processing about {p} · rally list around {c}", recommended: "Recommended", chargeTip: "This takes a while, so plugging in a charger helps.", pushHintIos: "On iPhone, open this from Safari's Share button → 'Add to Home Screen' to get a notification when it's done.", pushHint: "We'll notify you when it's done. Tap 'Allow' if asked about notifications.", etaLeft: "about {m} left · around {c}", guideLink: "New here? Read the guide", benchGo: "Test this phone's speed first, no video needed (about 20 s)", benchAgain: "Test again", benchNote: "This processes a test screen with no people in it, only on this device. Nothing is sent to the server.", benchMake: "Making the test screen… ({s}s)", benchResult: "This device: {s}s per frame (tested {d}). A 10-minute video would take about {dm} here, or about {sm} of processing on the server plus the time to upload the original. 4K videos take about 4× longer here.", benchGood: "→ Processing on this device works fine.", benchSlow: "→ The server will be faster.", benchFail: "Couldn't test this device. The server can process your video.", benchUsed: "measured earlier", renderAlmost: "almost done", loginLink: "Log in to Baegugu", scanLate: "taking a bit longer than expected", rateQ: "How was this highlight?", rateGood: "Good", rateBad: "Not great", feedbackTitle: "Send feedback", fbPlaceholder: "Anything: what you liked, what was annoying, scenes that came out wrong.", fbContact: "Where to reply (optional: KakaoTalk ID or email)", fbSend: "Send", fbThanks: "Thanks! We read every note and fix things.", fbEmpty: "Pick Good/Not great or write something.", localPrep: "Getting ready to process on this device…", localStep: "Blurring faces on this device {p}% · about {m} left, done around {c} (the original never leaves your device)", localKeepOpen: "Keep this screen open until it finishes. Turning the screen off or switching apps pauses it.", localSlow: "This device is slow at processing, so the video will be uploaded and processed on the server.", localDone: "Done on this device. The server is checking the last pieces.", localFail: "Processing on this device stopped: {e}", localNoFile: "Previews and making scenes need the video you picked first (if you reopened the page, pick the same video again)", segUploading: "Uploading the picked rally in original quality…", refileNote: "This job's video stays on your device. To preview and make scenes, pick the same video again.", refileWrong: "That is not the video you picked first.", min: "{n} min", sec: "{n} s", wipeNote: "Uploaded videos and made highlights are all deleted every day at {h}:00 (Korea time). Save your highlights as soon as they're made.", codeLabel: "Access code (from Baegugu)", codeNeed: "Enter the access code you got from Baegugu.", codeWrong: "That code isn't right.", codeLeft: "This code can make {u} more videos and {h} more highlights.", codeNoUploads: "This code has used up its video uploads.", leftNote: "This code can make {h} more highlights.", stQueue: "{n} ahead of you in line for rally finding. You can close this screen; it continues when it's your turn.", queuedTurn: "Waiting for its turn ({n} ahead). You can close this screen.",
+    codeIssued: "Your code: {c} — write it down to use it on another device.", consentTitle: "Please read before uploading", consent1: "Rally finding and player tracking use Meta's AI (Muse Spark, SAM 3.1). Every face is blurred before a scene is sent to the AI, but very small or hidden faces can slip through.", consent2: "Files sent to the AI are deleted as soon as the answer comes back. Scenes processed with free credits may still be used to improve Meta's products.", consent3: "Only upload videos that the people in them have agreed to. Don't upload videos with minors in them.", consent4: "Pixelation of other people's faces is on by default in the final video. If you turn it off before sharing, get the agreement of the people in it.", consentCheck: "I have read the above and agree", probing: "Measuring this device's speed… (about 10 seconds)", preparing2: "Getting ready…", uploadPaused: "The upload stopped (the screen turned off or the connection dropped). Tap \"Resume upload\" to continue from where it left off.", resumeUpload: "Resume upload", uploadResumed: "Resuming from {p}%", resumeLocal: "Continue processing", resumeNote: "Processing on this device stopped. Pick the same video again to continue from where it stopped.", resumeNoteHave: "Processing on this device stopped. You can continue from where it stopped.", probeLibs: "Loading processing tools… ({s}s)", probeOpen: "Opening the video… ({s}s)", probeModel: "Preparing face detection… ({s}s)", probeMeasure: "Measuring this device {n}/{t} frames ({s}s)", probeNet: "Measuring upload speed… ({s}s)", startedDevice: "Started on this device. Progress is shown at the top ↑", startedServer: "Uploading to the server. Progress is shown below ↓", choiceNote: "We measured this device. Pick one.", speedNote: "(this device: {s}s per frame{ep})", choiceNoteServer: "Let the server do it. Tap below to start.", epGpu: "GPU", epCpu: "CPU", optDevice: "Process on this device", optDeviceHint: "The original never leaves your device · keep the screen on until it finishes", optServer: "Let the server do it", optServerHint: "Use your phone once the upload finishes · the original is uploaded", estDevice: "about {m} · rally list around {c}", estServer: "upload about {u} + processing about {p} · rally list around {c}", recommended: "Recommended", chargeTip: "This takes a while, so plugging in a charger helps.", pushHintIos: "On iPhone, open this from Safari's Share button → 'Add to Home Screen' to get a notification when it's done.", pushHint: "We'll notify you when it's done. Tap 'Allow' if asked about notifications.", etaLeft: "about {m} left · around {c}", guideLink: "New here? Read the guide", benchGo: "Test this phone's speed first, no video needed (about 20 s)", benchAgain: "Test again", benchNote: "This processes a test screen with no people in it, only on this device. Nothing is sent to the server.", benchMake: "Making the test screen… ({s}s)", benchResult: "This device: {s}s per frame (tested {d}). A 10-minute video would take about {dm} here, or about {sm} of processing on the server plus the time to upload the original. 4K videos take about 4× longer here.", benchGood: "→ Processing on this device works fine.", benchSlow: "→ The server will be faster.", benchFail: "Couldn't test this device. The server can process your video.", benchUsed: "measured earlier", renderAlmost: "almost done", codeHelp: "To use this in a home-screen app or on another device", codeHelpText: "enter this code on the entry screen: {c}", consentAgreed: "You agreed to how AI is used and when files are deleted.", consentShow: "Read again", benchTitle: "Test this phone's speed first", deviceMore: "Process on this device instead (about {m}) — the original never leaves your device", reelHint: "{n} done · make one video of just the scoring moments ↓", waitOther: "Pick another rally while you wait", saveToPhotos: "Save to Photos", saveFile: "Save as file", saveHintIos: "Tap 'Save to Photos', then choose 'Save Video' on the next screen.", loginLink: "Log in to Baegugu", scanLate: "taking a bit longer than expected", rateQ: "How was this highlight?", rateGood: "Good", rateBad: "Not great", feedbackTitle: "Send feedback", fbPlaceholder: "Anything: what you liked, what was annoying, scenes that came out wrong.", fbContact: "Where to reply (optional: KakaoTalk ID or email)", fbSend: "Send", fbThanks: "Thanks! We read every note and fix things.", fbEmpty: "Pick Good/Not great or write something.", localPrep: "Getting ready to process on this device…", localStep: "Blurring faces on this device {p}% · about {m} left, done around {c} (the original never leaves your device)", localKeepOpen: "Keep this screen open until it finishes. Turning the screen off or switching apps pauses it.", localSlow: "This device is slow at processing, so the video will be uploaded and processed on the server.", localDone: "Done on this device. The server is checking the last pieces.", localFail: "Processing on this device stopped: {e}", localNoFile: "Previews and making scenes need the video you picked first (if you reopened the page, pick the same video again)", segUploading: "Uploading the picked rally in original quality…", refileNote: "This job's video stays on your device. To preview and make scenes, pick the same video again.", refileWrong: "That is not the video you picked first.", min: "{n} min", sec: "{n} s", wipeNote: "Uploaded videos and made highlights are all deleted every day at {h}:00 (Korea time). Save your highlights as soon as they're made.", codeLabel: "Access code (from Baegugu)", codeNeed: "Enter the access code you got from Baegugu.", codeWrong: "That code isn't right.", codeLeft: "You can make {u} more videos and {h} more highlights.", codeNoUploads: "You have used up your video uploads.", leftNote: "You can make {h} more highlights.", stQueue: "{n} ahead of you in line for rally finding. You can close this screen; it continues when it's your turn.", queuedTurn: "Waiting for its turn ({n} ahead). You can close this screen.",
     keepOpen: "Keep this screen open until the upload finishes.", canClose: "You can close this screen or use your phone; the server keeps working. We'll notify you when it's done, and this link brings you back.",
     copyLink: "Copy link to this job", copied: "Copied", prefsTitle: "Set options while you wait",
     stWhistles: "Finding whistles…", stRallies: "AI is scanning the video a minute at a time for rallies… {d}/{n}", scanNote: "Still scanning ({d}/{n}). You can pick from the rallies found so far.", waitCost: "{m}-minute video · estimated AI cost about ${u}", stPreviews: "Making previews… {d}/{n}",
@@ -497,6 +505,8 @@ function render(s) {
   if (s.left) $("left-note").textContent = t("leftNote", { h: s.left.highlights });
   if (state.rally === null) return renderRallies(s);
   const scene = s.scenes[String(state.rally)];
+  // 만드는 동안(5분 남짓) 다른 랠리를 고를 수 있다고 알린다(10/31)
+  $("wait-other-box").hidden = !(scene && ["queued", "rendering"].includes(scene.status));
   if (!scene || scene.status === "preparing") {
     show("s-tap"); $("tap-status").textContent = s.error ? "" : t(state.segUploading === state.rally ? "segUploading" : "preparing"); $("tap-box").hidden = true;
   } else if (scene.status === "awaiting_tap" || scene.status === "failed") {
@@ -550,7 +560,7 @@ function renderRallies(s) {
     const img = document.createElement("img"); img.loading = "lazy"; img.alt = "";
     if (s.mode !== "browser") img.src = `/jobs/${state.job}/rallies/${r.index}/thumb`;
     else if (state.local) localThumb((r.start_sec + r.end_sec) / 2).then((u) => { img.src = u; });  // 원본은 기기에만 있다
-    const play = document.createElement("span"); play.textContent = "▶";
+    const play = document.createElement("span"); play.textContent = "▶ " + t("preview");  // ▶만 있어 고르기 버튼과 헷갈렸다(10/31)
     thumb.append(img, play);
     thumb.onclick = () => {
       // 미리보기를 보는 동안 뒤에서 장면을 미리 준비한다(비용 없을 때만, 서버가 판단). 고르면 탭 화면이 바로 뜬다
@@ -691,6 +701,9 @@ function batchLabel() {
 
 function renderReel(s) {
   const done = Object.values(s.scenes).filter((sc) => sc.status === "done").sort((a, b) => a.score_sec - b.score_sec);
+  // 모음 영상은 목록 아래라 지나치기 쉬웠다(10/31): 2개 이상 완성되고 아직 안 만들었으면 목록 위에 안내
+  $("reel-hint-box").hidden = !(done.length >= 2 && !(s.reel && ["done", "rendering"].includes(s.reel.status)));
+  $("reel-hint").textContent = t("reelHint", { n: done.length });
   $("reel-box").hidden = done.length < 2;
   if (done.length < 2) return;
   const key = done.map((d) => d.index).join(",") + state.lang;
@@ -710,12 +723,14 @@ function renderReel(s) {
     const url = `/jobs/${state.job}/reel/video?v=${reel.order.join("-")}`;
     if ($("reel").dataset.src !== url) { $("reel").src = url; $("reel").dataset.src = url; }
     $("reel").hidden = $("reel-actions").hidden = false;
+  if (IOS) { $("reel-share").textContent = t("saveToPhotos"); $("reel-download").firstElementChild.textContent = t("saveFile"); }
     $("reel-download").href = url;
     const first = s.scenes[String(reel.order[0])] || {};
     $("reel-download").download = fileName(s, first.team, t("fileReel"));
   }
 }
 
+$("reel-hint").onclick = () => $("reel-box").scrollIntoView({ block: "start", behavior: "smooth" });
 $("make-reel").onclick = async () => {
   const order = [...$("reel-pick").querySelectorAll("input:checked")].map((c) => Number(c.value));
   if (order.length < 1) { setError(t("pickOne")); return; }
@@ -849,6 +864,9 @@ function renderResult(scene) {
   $("result").hidden = $("result-actions").hidden = false;
   if (state.ratedFor !== `${state.job}/${state.rally}`) { $("rate").hidden = false; state.ratedFor = `${state.job}/${state.rally}`; }
   $("download").href = url;
+  // 아이폰은 '저장'이 파일 앱으로 가고 사진첩은 공유 → 비디오 저장이라, 사진첩 저장을 앞세운다(10/31)
+  if (IOS) { $("share").textContent = t("saveToPhotos"); $("download").firstElementChild.textContent = t("saveFile"); }
+  $("save-hint").hidden = !IOS; $("save-hint").textContent = IOS ? t("saveHintIos") : "";
   $("download").download = fileName(state.last, scene.team, t("fileHighlight"), scene.number);
   const lines = (scene.options.languages.length && scene.commentary) || [];
   $("result-status").textContent = lines.length ? t("commentary", { c: lines.map((l) => l[state.lang] || l.en).join(" → ") }) : "";
@@ -886,7 +904,7 @@ function fileName(s, team, kind, number) {
   return parts.join("_") + ".mp4";
 }
 
-for (const id of ["back-rallies", "back-rallies2"]) {
+for (const id of ["back-rallies", "back-rallies2", "back-rallies3"]) {
   $(id).onclick = () => { state.rally = null; $("opts-result").replaceChildren(); $("opts-tap").replaceChildren(); setHash(); startPolling(); };
 }
 
@@ -1067,9 +1085,14 @@ async function showChoice(f) {
   // 추천: 예상 완료가 서버보다 20% 넘게 늦지 않으면 기기(원본이 안 나가고 큰 업로드가 없다). 절대 기준(장당 1초)만 보면
   // 갤럭시 S22도 서버가 추천으로 나왔다(10/31 사용자)
   const recommend = deviceOk && deviceSec <= serverSec * 1.2 ? "device" : "server";
-  $("choice-note").textContent = t("choiceNote") + (deviceOk ? " " + t("speedNote", { s: per.toFixed(2), ep: (probed.ep === "webgpu" ? t("epGpu") : t("epCpu")) + (probed.saved ? " · " + t("benchUsed") : ""), k: probed.tiles }) : "");
+  // 선택지가 하나로 보일 때는 '둘 중 하나'라 하지 않는다. 처리 방식(일반·조각 수)은 사용자에게 뜻이 없어 뺐다(10/31)
+  $("choice-note").textContent = t(recommend === "server" ? "choiceNoteServer" : "choiceNote")
+    + (deviceOk ? " " + t("speedNote", { s: per.toFixed(2), ep: probed.saved ? " · " + t("benchUsed") : "" }) : "");
   pushHint();
-  $("choose-device").hidden = !deviceOk; $("choose-server").hidden = false;
+  // 서버가 추천이면 선택지를 하나로: 기기 처리는 작은 링크로 접어 둔다(아이폰 11·갤럭시 S20+·S22 모두 서버 추천, 10/31)
+  $("choose-device").hidden = !deviceOk || recommend === "server"; $("choose-server").hidden = false;
+  $("device-more").hidden = !(deviceOk && recommend === "server");
+  if (deviceOk) $("device-more").textContent = t("deviceMore", { m: fmtLeft(deviceSec) });
   $("device-est").textContent = deviceOk ? t("estDevice", { m: fmtLeft(deviceSec), c: clockAt(deviceSec) }) : "";
   $("server-est").textContent = t("estServer", { u: fmtLeft(uploadSec), p: fmtLeft(serverSec - uploadSec), c: clockAt(serverSec) });
   for (const [id, key] of [["choose-device", "device"], ["choose-server", "server"]]) {
@@ -1115,6 +1138,7 @@ function started(key, target) {
   setTimeout(() => $(target).scrollIntoView({ block: "start", behavior: "smooth" }), 50);
 }
 $("choose-device").onclick = () => { askPush(); started("startedDevice", "local-box"); startBrowser(state.pending); };
+$("device-more").onclick = () => { $("device-more").hidden = true; $("choose-device").hidden = false; };
 $("choose-server").onclick = () => { askPush(); started("startedServer", "up-progress"); uploadVideo(state.pending); };
 
 // 완료 알림(웹 푸시, 10/31 사용자: 끝나면 알려 주고 다음 할 일을 안내). 안드로이드 크롬은 브라우저에서 바로, 아이폰은
@@ -1244,7 +1268,7 @@ async function checkAccess() {
   const code = $("code").value.trim();
   let a;
   try { a = await postJson("/access", { code }); } catch { return; }
-  $("code-field").hidden = !a.required;
+  $("code-field").hidden = !a.required;  // 쓸 수 있는 코드가 있으면 아래에서 숨긴다
   $("wipe-note").hidden = a.wipe_hour == null;
   if (a.wipe_hour != null) $("wipe-note").textContent = t("wipeNote", { h: a.wipe_hour });
   const ok = !a.closed && (!a.required || Boolean(a.left && a.left.uploads > 0));
@@ -1252,7 +1276,10 @@ async function checkAccess() {
   if (!msg && a.required) {
     msg = !code ? t("codeNeed") : a.denied ? t("codeWrong") : a.left.uploads > 0 ? t("codeLeft", { u: a.left.uploads, h: a.left.highlights }) : t("codeNoUploads");
   }
-  if (state.claimed) msg = t("codeIssued", { c: state.claimed }) + " " + msg;
+  // 회원은 코드를 몰라도 된다(배너로 들어오면 알아서 받는다). 코드는 홈 화면 앱·다른 기기 안내 안에서만 보인다(10/31)
+  if (ok && a.required) $("code-field").hidden = true;
+  $("code-help").hidden = !(ok && a.required && code);
+  if (code) $("code-help-text").textContent = t("codeHelpText", { c: code.toUpperCase() });
   else if (state.claimError) msg = state.claimError + " " + msg;
   $("access-status").textContent = msg;
   if (state.needLogin) $("access-status").append(" ", Object.assign(document.createElement("a"), { href: "https://baegugu.com/login?returnUrl=%2F", textContent: t("loginLink") }));
@@ -1263,7 +1290,10 @@ async function checkAccess() {
 // 동의(10/31 사용자 결정): 어떤 AI로 무엇이 가는지 보고 동의해야 올릴 수 있다. 한 번 동의하면 이 기기에서 기억한다
 const CONSENT_KEY = "consent-v1";  // 안내 내용을 바꾸면 v2로 올려 다시 묻는다
 $("consent-check").checked = storeGet(CONSENT_KEY) === "yes";
-$("consent-check").onchange = () => { storeSet(CONSENT_KEY, $("consent-check").checked ? "yes" : ""); updateStart(); };
+// 이미 동의했으면 긴 안내를 접어 첫 화면을 줄인다(10/31). '내용 다시 보기'로 펼친다
+$("consent").classList.toggle("done", $("consent-check").checked);
+$("consent-show").onclick = () => $("consent").classList.remove("done");
+$("consent-check").onchange = () => { storeSet(CONSENT_KEY, $("consent-check").checked ? "yes" : ""); if (!$("consent-check").checked) $("consent").classList.remove("done"); updateStart(); };
 function updateStart() { $("start-upload").disabled = !(state.access.ok && $("consent-check").checked); }
 let codeTimer = 0;
 $("code").addEventListener("input", () => { clearTimeout(codeTimer); codeTimer = setTimeout(checkAccess, 400); });
