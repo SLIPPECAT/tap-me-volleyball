@@ -566,6 +566,68 @@ def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeyp
     assert client.post(f"/jobs/{long_id}/auto", json={"t": 1, "x": 1, "y": 1, "team": "a"}).status_code == 400  # 20분까지
 
 
+def test_one_shot_starts_when_settings_arrive_during_the_scan_and_resumes_after_restart(
+        client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 아이폰: 찾기는 올리자마자 시작돼 맡기기 설정(몇 초 뒤 저장)을 모른 채 끝나 멈췄다 → 끝날 때 디스크에서 다시 본다.
+    # 서버가 다시 켜지면(배포) 멈춘 맡기기를 잇되, 찾은 결과·예약한 장면은 다시 하지 않는다
+    import time as _time
+
+    from tapme import auto, push
+
+    settings = {"state": "waiting", "me": {"t": 1, "x": 1, "y": 1}, "hint": "", "team": "초록", "options": {}, "max": 8,
+                "found": {}, "made": [], "review": []}
+
+    def scan_while_settings_arrive(job: jobs.Job, client) -> None:
+        other = jobs.load_job(job.id)  # 화면이 맡기기를 보낸 것(찾기 중에)
+        other.auto = dict(settings)
+        other.save()
+        job.rallies = [{"index": i, "start_sec": 10.0 * i, "end_sec": 10.0 * i + 8, "point_sec": 10.0 * i + 7, "is_rally": True}
+                       for i in range(2)]
+        job.status = "rallies_ready"
+        job.save()
+
+    monkeypatch.setattr(jobs, "find_rallies", scan_while_settings_arrive)
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    asked: list[int] = []
+
+    def find_me(job, i, ref, hint, c):
+        asked.append(i)
+        return {"card": 0, "confidence": 0.9}
+
+    monkeypatch.setattr(auto, "find_me", find_me)
+    monkeypatch.setattr(jobs, "prepare_scene", lambda job, i, c: job.scenes.__setitem__(str(i), {"index": i, "status": "awaiting_tap"}))
+
+    def fake_render(job_id: str, i: int, card: int, a: dict, c) -> None:
+        job = jobs.load_job(job_id)
+        job.scenes[str(i)]["status"] = "done"
+        job.save()
+
+    monkeypatch.setattr(server, "_auto_render", fake_render)
+    monkeypatch.setattr(jobs, "make_reel", lambda job, order: job.reel.update({"status": "done", "order": order}))
+    monkeypatch.setattr(push, "notify", lambda *a, **k: None)
+
+    def wait_done(job_id: str) -> dict:
+        for _ in range(100):
+            a = jobs.load_job(job_id).auto
+            if a.get("state") == "done":
+                return a
+            _time.sleep(0.05)
+        return jobs.load_job(job_id).auto
+
+    job_id = _send(client).json()["id"]
+    assert wait_done(job_id)["made"] == [0, 1] and asked == [0, 1]
+    # 서버가 다시 켜진 경우: 랠리 0은 찾고 만든 뒤, 1은 찾기만 하고 멈췄다
+    job = jobs.load_job(job_id)
+    job.auto = {**job.auto, "state": "finding", "made": [0], "found": {"0": {"card": 0, "confidence": 0.9},
+                                                                      "1": {"card": 2, "confidence": 0.8}}}
+    job.scenes["1"]["status"] = "awaiting_tap"
+    job.save()
+    asked.clear()
+    server._resume_autos()
+    a = wait_done(job_id)
+    assert a["made"] == [0, 1] and asked == []  # 찾은 것은 다시 묻지 않고, 만든 것은 다시 만들지 않는다
+
+
 def test_judge_codes_skip_the_daily_limit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(access, "REQUIRED", True)
     monkeypatch.setattr(jobs, "MAX_UPLOADS_PER_DAY", 1)

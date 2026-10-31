@@ -59,6 +59,7 @@ def _sweep() -> None:
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if DAILY_WIPE:
         threading.Thread(target=_sweep, daemon=True).start()
+    threading.Thread(target=_resume_autos, daemon=True).start()
     yield
 
 
@@ -327,7 +328,8 @@ def _run_scan(job_id: str, client: Any) -> None:
             access.refund(job.code, "uploads")
         job.save()
         if job.status == "rallies_ready":
-            if job.auto:  # 한 번에 맡기기: 랠리 목록 알림 대신 바로 이어 만든다(끝나면 한 번 알린다)
+            # 맡기기 설정은 올린 뒤 몇 초 늦게 저장된다 — 찾기를 시작할 때 읽은 job에는 없어 디스크에서 다시 본다(10/31 실기기)
+            if jobs.load_job(job_id).auto:  # 한 번에 맡기기: 랠리 목록 알림 대신 바로 이어 만든다(끝나면 한 번 알린다)
                 _start_auto(job_id, client)
             else:
                 _notify_rallies(job)
@@ -376,6 +378,19 @@ def _auto_set(job_id: str, **kv: Any) -> jobs.Job:
     job.auto = {**job.auto, **kv}
     job.save()
     return job
+
+
+def _resume_autos() -> None:
+    """서버가 다시 켜지면(배포·재시작) 끝나지 않은 한 번에 맡기기를 잇는다. 찾은 결과·예약한 장면은 다시 하지 않는다."""
+    for d in sorted(jobs.JOBS_DIR.glob("*/job.json")):
+        try:
+            job = jobs.load_job(d.parent.name)
+        except (KeyError, ValueError):
+            continue
+        if job.auto.get("state") in ("reference", "finding", "making"):
+            _auto_set(job.id, state="waiting")  # 중간에 멈춘 것: 처음부터 다시 돌되 찾은 것·예약한 것은 건너뛴다
+        if job.auto.get("state") in ("waiting", "reference", "finding", "making"):
+            _start_auto(job.id, client_factory())
 
 
 def _start_auto(job_id: str, client: Any) -> None:
@@ -428,13 +443,19 @@ def _auto_steps(job_id: str, client: Any) -> None:
     for n, i in enumerate(order):
         if len(made) >= a["max"]:
             break
-        with _step_lock:
-            job = jobs.load_job(job_id)
-            if job.scenes.get(str(i), {}).get("status") not in ("awaiting_tap", "done", "failed"):
-                jobs.prepare_scene(job, i, client)
-            found = auto.find_me(job, i, ref, a.get("hint", ""), client)
-            job.auto = {**job.auto, "found": {**job.auto.get("found", {}), str(i): found}, "done": n + 1}
-            job.save()
+        job = jobs.load_job(job_id)
+        if job.scenes.get(str(i), {}).get("status") in ("queued", "rendering", "done"):  # 다시 켜졌을 때: 이미 예약·완성
+            made.append(i)
+            continue
+        found = job.auto.get("found", {}).get(str(i))
+        if found is None:
+            with _step_lock:
+                job = jobs.load_job(job_id)
+                if job.scenes.get(str(i), {}).get("status") not in ("awaiting_tap", "done", "failed"):
+                    jobs.prepare_scene(job, i, client)
+                found = auto.find_me(job, i, ref, a.get("hint", ""), client)
+                job.auto = {**job.auto, "found": {**job.auto.get("found", {}), str(i): found}, "done": n + 1}
+                job.save()
         decision = auto.decide(found)
         if decision == "review":
             review.append(i)
