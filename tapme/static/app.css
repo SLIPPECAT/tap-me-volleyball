@@ -188,3 +188,18 @@ video { width: 100%; background: var(--color-paper-3); }
   .tap-side, .result-side { position: sticky; top: calc(var(--space-3xl) - var(--space-md)); }
   #result { max-height: calc(100dvh - 260px); }
 }
+
+/* 한 번에 맡기기(10/31) */
+.mode-pick { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-xs); margin-block: var(--space-sm); }
+.mode-pick .option[aria-checked="true"] { border-color: var(--color-accent); }
+.me-box { display: grid; gap: var(--space-xs); margin-block: var(--space-sm); padding: var(--space-sm); border: var(--rule-hair) solid var(--color-rule); }
+.me-box video, .me-frame canvas { width: 100%; max-height: 60vh; object-fit: contain; background: var(--color-paper-3); }
+.me-frame { position: relative; }
+.me-frame canvas { display: block; height: auto; cursor: crosshair; }
+.auto-box { display: grid; gap: var(--space-xs); margin-block: var(--space-sm); }
+.auto-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-sm); }
+.auto-item { display: grid; gap: var(--space-2xs); }
+.auto-item video { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; background: var(--color-paper-3); }
+.auto-item .actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2xs); }
+.button-like { display: grid; place-items: center; min-height: 40px; border: var(--rule-hair) solid var(--color-rule); color: var(--color-ink); text-decoration: none; font-size: var(--text-sm); }
+#auto-review { display: grid; gap: var(--space-2xs); }
