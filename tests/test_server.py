@@ -492,6 +492,28 @@ def test_a_member_cannot_open_another_members_job(client: TestClient, monkeypatc
     assert client.get(f"/jobs/{job_id}").status_code == 404
 
 
+def test_judges_get_in_through_their_own_link(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 사용자: 심사위원 접근 경로. 심사용 초대 링크는 배구구 회원 확인 없이 입장 쿠키·코드를 주고, 자기 작업만 연다
+    monkeypatch.setattr(access, "REQUIRED", True)
+    monkeypatch.setattr(member, "CHECK", True)
+    monkeypatch.setattr(gate, "MEMBERS_ONLY", True)
+    monkeypatch.setattr(gate, "JUDGE_ACCESS", True)
+    monkeypatch.setattr(gate, "SECRET", "test-secret")
+    monkeypatch.setattr(member, "member_id", lambda cookies: None)  # 배구구 회원이 아니다
+    banner, judge = access.new_invite("banner"), access.new_invite("judge")
+    assert client.post("/access/claim", json={"invite": banner}).status_code == 401  # 배너는 여전히 회원만
+    r = client.post("/access/claim", json={"invite": judge})
+    assert r.status_code == 200 and gate.COOKIE in r.cookies
+    code = r.json()["code"]
+    client.cookies.set(gate.COOKIE, r.cookies[gate.COOKIE])
+    assert client.get("/", headers={"accept": "text/html"}).status_code == 200
+    up = client.post("/uploads", json={"filename": "m.mp4", "size": 1, "code": code})
+    assert up.status_code == 200  # 자기 코드로 올린다
+    client.cookies.clear()
+    entered = client.post("/access/enter", json={"code": code})  # 홈 화면 앱처럼 코드로 들어오기
+    assert entered.status_code == 200
+
+
 def test_judge_codes_skip_the_daily_limit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(access, "REQUIRED", True)
     monkeypatch.setattr(jobs, "MAX_UPLOADS_PER_DAY", 1)
