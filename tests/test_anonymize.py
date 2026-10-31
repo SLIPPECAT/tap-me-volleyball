@@ -107,3 +107,25 @@ def test_clips_for_meta_use_the_faster_profile_setting(tmp_path, monkeypatch) ->
     anonymize.anonymize_video(src, tmp_path / "out.mp4")
     assert seen and set(seen) == {anonymize.FAST_PROFILE_SCALE_FACTOR}
     assert anonymize.FAST_PROFILE_SCALE_FACTOR > anonymize.PROFILE_SCALE_FACTOR
+
+
+def test_parallel_blur_matches_single_process(tmp_path, monkeypatch) -> None:
+    # 10/31 클라우드: 얼굴 찾기를 여러 프로세스로 나눠도 프레임 순서·결과가 같아야 한다
+    import hashlib
+    import subprocess
+
+    src = tmp_path / "src.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=10:duration=2",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
+
+    def frames(p):
+        return hashlib.md5(subprocess.check_output(["ffmpeg", "-loglevel", "error", "-i", str(p), "-f", "rawvideo", "-"])).hexdigest()
+
+    one = tmp_path / "one.mp4"
+    anonymize.anonymize_video(src, one)
+    monkeypatch.setattr(anonymize, "BLUR_WORKERS", 2)
+    monkeypatch.setattr(anonymize, "_pool", None)
+    two = tmp_path / "two.mp4"
+    stats = anonymize.anonymize_video(src, two)
+    anonymize._pool.shutdown()
+    assert stats["frames"] == 20 and frames(one) == frames(two)

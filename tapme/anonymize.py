@@ -20,8 +20,12 @@ API 호출은 없다. 원본 오디오는 그대로 붙인다(Muse Spark가 오�
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 import subprocess
+import threading
+from collections import deque
+from concurrent.futures import Future, ProcessPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -122,6 +126,34 @@ def pixelate_boxes(
     return out
 
 
+# 얼굴 찾기를 여러 프로세스로(10/31): 클라우드 vCPU는 OpenCV 스레드를 늘려도 잘 안 빨라진다(렌더에서 8프로세스 × 1스레드가
+# 한 프로세스보다 36% 빨랐다). 프레임 순서대로 받아 결과는 같다. 이 맥은 1(지금 그대로, M4는 나누면 오히려 느렸다)
+BLUR_WORKERS = int(os.environ.get("TAPME_BLUR_WORKERS", "1"))
+_pool: ProcessPoolExecutor | None = None
+_pool_lock = threading.Lock()
+_W: dict[str, object] = {}
+
+
+def _worker_init() -> None:
+    cv2.setNumThreads(1)
+    _W["detector"], _W["profile"] = load_detector(), load_profile_detector()
+
+
+def _worker_detect(args: tuple) -> list[tuple[int, int, int, int]]:
+    buf, shape = args
+    frame = np.frombuffer(buf, np.uint8).reshape(shape)
+    return detect_faces(frame, _W["detector"], _W["profile"], FAST_PROFILE_SCALE_FACTOR)  # type: ignore[arg-type]
+
+
+def _blur_pool() -> ProcessPoolExecutor:
+    """랠리 찾기는 1분 조각마다 부르므로 프로세스를 한 번 띄워 계속 쓴다."""
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ProcessPoolExecutor(BLUR_WORKERS, mp_context=multiprocessing.get_context("spawn"), initializer=_worker_init)
+        return _pool
+
+
 def anonymize_video(src: Path, dst: Path) -> dict[str, int]:
     cap = cv2.VideoCapture(str(src))
     if not cap.isOpened():
@@ -134,17 +166,27 @@ def anonymize_video(src: Path, dst: Path) -> dict[str, int]:
 
     writer: cv2.VideoWriter | None = None
     stats = {"frames": 0, "frames_with_faces": 0, "face_boxes": 0}
-    try:
-        while True:
-            ok, frame = cap.read()
+    pool = _blur_pool() if BLUR_WORKERS > 1 else None
+    ahead: deque[tuple[np.ndarray, Future | None]] = deque()  # 미리 읽어 얼굴 찾기를 맡겨 둔 프레임(순서대로 꺼낸다)
+
+    def fill() -> None:
+        while len(ahead) < (BLUR_WORKERS * 2 if pool else 1):
+            ok, f = cap.read()
             if not ok:
-                break
+                return
+            ahead.append((f, pool.submit(_worker_detect, (f.tobytes(), f.shape)) if pool else None))
+
+    try:
+        fill()
+        while ahead:
+            frame, job = ahead.popleft()
+            fill()
             if writer is None:
                 h, w = frame.shape[:2]
                 writer = cv2.VideoWriter(
                     str(silent), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
                 )
-            boxes = detect_faces(frame, detector, profile, FAST_PROFILE_SCALE_FACTOR)
+            boxes = job.result() if job else detect_faces(frame, detector, profile, FAST_PROFILE_SCALE_FACTOR)
             stats["frames"] += 1
             if boxes:
                 stats["frames_with_faces"] += 1

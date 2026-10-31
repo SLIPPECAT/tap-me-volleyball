@@ -15,9 +15,12 @@ SAM은 5fps로만 돌리고(비용), 박스를 프레임 사이에 직선으로 
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
 import subprocess
 from collections import deque
 from collections.abc import Callable
+from concurrent.futures import Future, ProcessPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -117,15 +120,23 @@ def load_font(size: int, text: str) -> ImageFont.FreeTypeFont | ImageFont.ImageF
     return first or ImageFont.load_default()
 
 
+# SAM 모양(10fps)을 출력 프레임(30fps)마다 다시 풀어 렌더의 18%를 썼다(클라우드 프로파일 10/31) → 한 번 풀어 둔다.
+# 렌더 하나 동안만 두고 비운다. 레코드를 함께 쥐어 같은 id가 다른 레코드에 다시 쓰이지 않게
+_MASKS: dict[int, tuple[SegmentationMaskRecord, Image.Image | None]] = {}
+
+
 def _mask(rec: SegmentationMaskRecord | None, w: int, h: int) -> Image.Image | None:
     if rec is None or w <= 0 or h <= 0:
         return None
-    mw, mh = rec.mask.width, rec.mask.height
-    raster = decode_mask_to_raster(rec.mask)
-    if mw <= 0 or mh <= 0 or len(raster) != mw * mh:
-        return None
-    img = Image.frombytes("L", (mw, mh), bytes(255 if v else 0 for v in raster))
-    return img.resize((w, h), Image.Resampling.NEAREST)
+    hit = _MASKS.get(id(rec))
+    if hit is None or hit[0] is not rec:
+        mw, mh = rec.mask.width, rec.mask.height
+        raster = decode_mask_to_raster(rec.mask)  # 0/1 바이트
+        img = None
+        if mw > 0 and mh > 0 and len(raster) == mw * mh:
+            img = Image.fromarray(np.frombuffer(bytes(raster), np.uint8).reshape(mh, mw) * np.uint8(255), "L")
+        hit = _MASKS[id(rec)] = (rec, img)
+    return None if hit[1] is None else hit[1].resize((w, h), Image.Resampling.NEAREST)
 
 
 def _paste_region(dst: Image.Image, src: Image.Image, box: Box, rec: SegmentationMaskRecord | None) -> None:
@@ -269,6 +280,43 @@ def probe(video: Path) -> tuple[int, int, float, int]:
     return w, h, num / den, int(s["nb_read_frames"])
 
 
+# 얼굴 찾기를 여러 프로세스로(10/31): 클라우드 vCPU는 OpenCV 스레드를 늘려도 잘 안 빨라져(8스레드 → 16스레드가 오히려
+# 느림) 프레임을 나눠 동시에 찾는다. 결과는 한 프로세스와 같다(같은 검출기, 프레임 순서대로 받음). 이 맥은 1(지금 그대로)
+RENDER_WORKERS = int(os.environ.get("TAPME_RENDER_WORKERS", "1"))
+WORKER_CV_THREADS = int(os.environ.get("TAPME_RENDER_WORKER_THREADS", "2"))
+_W: dict[str, object] = {}
+
+
+def _worker_init(threads: int, two_detectors: bool) -> None:
+    cv2.setNumThreads(threads)
+    _W["detector"], _W["profile"] = anonymize.load_detector(), anonymize.load_profile_detector()
+    _W["plain"] = anonymize.load_plain_detector() if two_detectors else None
+
+
+def _worker_faces(args: tuple) -> list[tuple[int, int, int, int]]:
+    buf, width, height, crop, out_size = args
+    bgr = np.ascontiguousarray(np.frombuffer(buf, np.uint8).reshape(height, width, 3)[..., ::-1])
+    return _find_faces(bgr, _W["detector"], _W["profile"], _W["plain"], crop, out_size)  # type: ignore[arg-type]
+
+
+def _find_faces(bgr: np.ndarray, detector: cv2.FaceDetectorYN, profile: cv2.CascadeClassifier | None,
+                plain: cv2.FaceDetectorYN | None, crop: tuple[int, int, int, int],
+                out_size: tuple[int, int]) -> list[tuple[int, int, int, int]]:
+    """한 프레임의 얼굴(원본 좌표). 매 프레임 화면 전체에서 찾는다. 3프레임마다(실험 H-27)나 결과 화면 안만(H-28) 찾으면
+    놓치는 얼굴이 늘었다."""
+    faces = anonymize.detect_faces(bgr, detector, profile)
+    if plain is not None:  # 두 설정은 놓치는 얼굴이 달라 합친다(H-29)
+        faces = faces + anonymize.detect_faces_plain(bgr, plain)
+    x0, y0, cw, ch = crop
+    out_w, out_h = out_size
+    if cw < out_w:  # 확대하면 원본에서 작아 못 찾던 얼굴이 결과 화면에서는 커져 보인다(H-40)
+        sx = out_w / cw
+        part = cv2.resize(bgr[y0:y0 + ch, x0:x0 + cw], (out_w, out_h))
+        faces = faces + [(int(x / sx) + x0, int(y / sx) + y0, int(w / sx), int(h / sx))
+                         for x, y, w, h in anonymize.detect_faces(part, detector)]
+    return faces
+
+
 def render_video(
     src: Path,
     out: Path,
@@ -315,29 +363,44 @@ def render_video(
     )
     assert dec.stdout and enc.stdin
     size = width * height * 3
+    pool = None
+    if face_mosaic and RENDER_WORKERS > 1:
+        pool = ProcessPoolExecutor(RENDER_WORKERS, mp_context=multiprocessing.get_context("spawn"),
+                                   initializer=_worker_init, initargs=(WORKER_CV_THREADS, two_detectors))
+    # 앞으로 읽어 둔 프레임과 그 얼굴 찾기(여러 프로세스면 미리 맡겨 둔다). 프레임 순서대로 꺼낸다
+    ahead: deque[tuple[bytes, Future | None]] = deque()
+    depth, read_i = (RENDER_WORKERS * 2 if pool else 1), 0
+
+    def fill() -> None:
+        nonlocal read_i
+        while len(ahead) < depth and len(buf := dec.stdout.read(size)) == size:
+            job = None
+            if pool is not None and read_i % face_every == 0:
+                job = pool.submit(_worker_faces, (buf, width, height, crops[min(read_i, n - 1)], (out_w, out_h)))
+            ahead.append((buf, job))
+            read_i += 1
+
+    _MASKS.clear()
     try:
         i = 0
         faces: list[tuple[int, int, int, int]] = []
         recent: deque[list[tuple[int, int, int, int]]] = deque(maxlen=max(1, round(FACE_HOLD_SEC * fps)))
-        while len(buf := dec.stdout.read(size)) == size:
+        fill()
+        while ahead:
+            buf, job = ahead.popleft()
+            fill()
             k = min(i, n - 1)
             now = i / fps
             text = next((txt for start, end, txt in subtitles or [] if start <= now < end), "")
             frame = Image.frombytes("RGB", (width, height), buf)
             if face_mosaic:
                 rgb = np.asarray(frame)
-                # 매 프레임 화면 전체에서 찾는다. 3프레임마다(실험 H-27)나 결과 화면 안만(H-28) 찾으면 놓치는 얼굴이 늘었다
                 if i % face_every == 0:
-                    bgr = np.ascontiguousarray(rgb[..., ::-1])  # 검출기는 BGR
-                    faces = anonymize.detect_faces(bgr, detector, profile)
-                    if plain is not None:  # 두 설정은 놓치는 얼굴이 달라 합친다(H-29)
-                        faces = faces + anonymize.detect_faces_plain(bgr, plain)
-                    x0, y0, cw, ch = crops[k]
-                    if cw < out_w:  # 확대하면 원본에서 작아 못 찾던 얼굴이 결과 화면에서는 커져 보인다(H-40)
-                        sx = out_w / cw
-                        part = cv2.resize(bgr[y0:y0 + ch, x0:x0 + cw], (out_w, out_h))
-                        faces = faces + [(int(x / sx) + x0, int(y / sx) + y0, int(w / sx), int(h / sx))
-                                         for x, y, w, h in anonymize.detect_faces(part, detector)]
+                    if job is not None:
+                        faces = job.result()
+                    else:
+                        bgr = np.ascontiguousarray(rgb[..., ::-1])  # 검출기는 BGR
+                        faces = _find_faces(bgr, detector, profile, plain, crops[k], (out_w, out_h))
                     mine = next((b for b in boxes[k] if b.object_id == me), None)
                     # 내 얼굴은 찾은 그 프레임에서 뺀다. 모아 둔 뒤에 빼면 0.2초 전 내 얼굴 자리가 남아 탭한 나에게
                     # 모자이크가 붙었다(10/30 사용자). keep_my_face=False는 품질 확인용(qa.py) — '나'까지 가린다
@@ -352,6 +415,9 @@ def render_video(
             if on_progress and i % 30 == 0:
                 on_progress(i, n)
     finally:
+        _MASKS.clear()
+        if pool is not None:
+            pool.shutdown(cancel_futures=True)
         dec.stdout.close()
         dec.wait()
         enc.stdin.close()
