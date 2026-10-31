@@ -94,8 +94,13 @@
     // 아이폰 사파리 디코더는 처리 도중 "Decoder failure"로 멈췄다(5분 영상의 100~200장째, 10/31). 그러면 새 디코더로
     // 마지막으로 처리한 장의 다음부터 다시 푼다(최대 MAX_RESTARTS번). 첫 장도 못 풀면 설정을 바꿔 본다
     async frames(from, to, onFrame) {
-      const errors = [], state = { done: 0, last: null };
-      const counted = async (t, f) => { await onFrame(t, f); state.last = t; };
+      const errors = [], state = { done: 0, last: null, own: null };
+      // onFrame이 던진 것(속도 재기 멈춤·업로드 실패)은 디코더 고장이 아니라 그대로 올린다. 고장으로 보고 다시 풀면
+      // 속도 재기가 10장을 넘겨 "12/10장"이 됐다(10/31 아이폰)
+      const counted = async (t, f) => {
+        try { await onFrame(t, f); } catch (e) { state.own = e; throw e; }
+        state.last = t;
+      };
       let cur = from, restarts = 0;
       for (let k = 0; k < this.configs.length;) {
         const { useDts, ...config } = this.configs[k];
@@ -103,7 +108,7 @@
         try { ok = (await VideoDecoder.isConfigSupported(config)).supported; } catch { ok = false; }
         if (!ok) { k++; continue; }
         try { return await this.decode(cur, to, counted, config, useDts, state); } catch (e) {
-          if (e instanceof TooSlow) throw e;
+          if (e instanceof TooSlow || e === state.own) throw e;
           errors.push(String(e.message || e));
           if (state.done === 0) { k++; continue; }  // 첫 장도 못 풀었다: 다른 설정으로
           if (++restarts > MAX_RESTARTS) throw e;
@@ -248,9 +253,9 @@
   }
 
   // ---- 1분 조각 mp4 만들기(WebCodecs H.264 + mp4-muxer) ----
-  async function encoderConfig(W, H) {
+  async function encoderConfig(W, H, framerate = FPS, bitrate = BITRATE) {
     for (const codec of ["avc1.42E02A", "avc1.4D002A", "avc1.640028"]) {
-      const c = { codec, width: W, height: H, bitrate: BITRATE, framerate: FPS, avc: { format: "avc" } };
+      const c = { codec, width: W, height: H, bitrate, framerate, avc: { format: "avc" } };
       try { if ((await VideoEncoder.isConfigSupported(c)).supported) return c; } catch { /* 다음 후보 */ }
     }
     throw new Error("이 기기에서는 영상을 만들 수 없어요");
@@ -411,5 +416,47 @@
     return { per: n > 2 ? (performance.now() - t1) / 1000 / (n - 2) : Infinity, ep: blurrer.ep, tiles: blurrer.tiles.length };
   }
 
-  window.BrowserBlur = { supported, chunkPlan, run, probe, extractSegment, FPS, MAX_SEC_PER_FRAME, PROBE_FRAMES };
+  // 미리 재기(10/31 사용자: 영상을 올리기 전에 이 기기가 어느 정도인지 알고 싶다): 사람이 없는 1080p 30fps 시험 영상을
+  // 이 기기에서 만들어(밖으로 보내지 않음) probe와 똑같이 잰다. 계산은 화소 수에 비례해(조각 수는 같고 조각 크기가 커진다)
+  // 다른 해상도는 화소 수 비율로 바꿔 본다. 얼굴이 없어도 검출 시간은 거의 같다(모델 계산이 대부분)
+  const BENCH_W = 1920, BENCH_H = 1080, BENCH_FPS = 30;
+  async function benchFile() {
+    await loadScript(LIBS[2]);
+    const config = await encoderConfig(BENCH_W, BENCH_H, BENCH_FPS, 8_000_000);
+    const target = new Mp4Muxer.ArrayBufferTarget();
+    const muxer = new Mp4Muxer.Muxer({ target, video: { codec: "avc", width: BENCH_W, height: BENCH_H }, fastStart: "in-memory" });
+    let error = null;
+    const enc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { error = e; } });
+    enc.configure(config);
+    const canvas = new OffscreenCanvas(BENCH_W, BENCH_H), ctx = canvas.getContext("2d");
+    const n = Math.ceil((PROBE_FRAMES / FPS + 1.5) * BENCH_FPS);  // probe가 읽는 길이 + 여유
+    for (let i = 0; i < n; i++) {
+      // 체육관처럼 벽·바닥과 움직이는 공(사람 없음). 매 장면이 달라야 압축·풀기가 실제와 비슷하다
+      ctx.fillStyle = "#e8e4dc"; ctx.fillRect(0, 0, BENCH_W, BENCH_H);
+      ctx.fillStyle = "#c9a26b"; ctx.fillRect(0, BENCH_H * 0.45, BENCH_W, BENCH_H * 0.55);
+      for (let k = 0; k < 24; k++) {
+        ctx.fillStyle = `hsl(${k * 15} 60% 50%)`; ctx.beginPath();
+        ctx.arc((k * 83 + i * 9 * (1 + k % 3)) % BENCH_W, 200 + (k % 6) * 140 + 50 * Math.sin(i / 8 + k), 30 + k % 4 * 10, 0, 7); ctx.fill();
+      }
+      const vf = new VideoFrame(canvas, { timestamp: Math.round(i * 1e6 / BENCH_FPS), duration: Math.round(1e6 / BENCH_FPS) });
+      enc.encode(vf, { keyFrame: i % BENCH_FPS === 0 });
+      vf.close();
+      while (enc.encodeQueueSize > 4 && !error) await new Promise((ok) => setTimeout(ok, 5));
+      if (error) throw error;
+    }
+    await enc.flush();
+    enc.close();
+    if (error) throw error;
+    muxer.finalize();
+    return new File([target.buffer], "bench.mp4", { type: "video/mp4" });
+  }
+
+  // onStep: probe와 같은 단계 + 맨 앞 "make"(시험 영상 만들기). 돌려주는 per는 1080p 기준 장당 초
+  async function bench(onStep = () => {}) {
+    onStep("make", 0, PROBE_FRAMES);
+    const file = await benchFile();
+    return { ...(await probe(file, 0, onStep)), px: BENCH_W * BENCH_H };
+  }
+
+  window.BrowserBlur = { supported, chunkPlan, run, probe, bench, extractSegment, FPS, MAX_SEC_PER_FRAME, PROBE_FRAMES };
 })();
