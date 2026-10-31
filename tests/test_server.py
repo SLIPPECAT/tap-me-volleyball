@@ -146,6 +146,9 @@ def test_highlight_sends_taps_from_any_scenes(client: TestClient, monkeypatch: p
     assert got == [[("b2", 1, 2)], [("score", 2), ("start", 3, 4)]]
     for bad in ([], [{"which": "../x", "x": 1, "y": 1}], [{"which": "score"}]):
         assert client.post(url, json={"taps": bad, "team": "검정"}).status_code == 422
+    # 팀별 모자이크(11/1): 정해진 값만
+    assert client.post(url, json={"taps": [{"which": "b2", "x": 1, "y": 2}], "team": "검정",
+                                  "mosaic_team": "everyone"}).status_code == 422
 
 
 def test_tap_frame_kind_is_checked(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

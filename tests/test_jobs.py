@@ -148,9 +148,41 @@ def test_rerender_pays_only_when_something_new_is_needed(job: jobs.Job, monkeypa
     jobs.rerender(job, 0, ["en"], "defense", "silhouette", 1.5)
     assert calls[2:] == ["muse:assist", "muse:defense"]
     assert scene["options"] == {"languages": ["en"], "role": "defense", "privacy": "silhouette", "zoom": 1.5,
-                                "face_mosaic": True, "fps": 0}
+                                "face_mosaic": True, "fps": 0, "mosaic_team": "all"}
     scene = jobs.rerender(job, 0, ["en"], "defense", "face", 1.5, face_mosaic=False)  # 모자이크 끄기도 비용 없음
     assert scene["options"]["face_mosaic"] is False and len(calls) == 4
+
+
+def test_team_mosaic_asks_teams_once_and_clears_only_that_team(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/1 사용자: 상대 팀만(또는 우리 팀만) 모자이크. 다른 선수마다 '나'와 같은 유니폼인지 흐린 카드로 한 번 묻는다
+    from tapme import render
+
+    _prepared(job, monkeypatch, [])
+    jobs.make_highlight(job, 0, [("score", 240, 240)], "초록", [], "", "face", 2.0, client=None)
+    asked: list = []
+
+    def create(**kw):
+        asked.append(kw["input"][0]["content"])
+        return SimpleNamespace(output_text='{"teams": {"0": "same", "1": "other"}}',
+                               usage=SimpleNamespace(input_tokens=1000, output_tokens=100))
+
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    cleared: list = []
+    real = render.render_video
+    monkeypatch.setattr(render, "render_video", lambda *a, **k: (cleared.append(k.get("clear_ids")), real(*a, **k))[1])
+    spent = jobs.load_job(job.id).spent_usd
+
+    scene = jobs.rerender(job, 0, [], "", "face", 2.0, client, mosaic_team="opponent")
+    teams = scene["teams"]
+    assert sorted(teams.values()) == ["mine", "opponent"] and len(asked) == 1
+    assert "초록" in asked[0][0]["text"] and asked[0][1]["text"] == "나"  # 우리 팀 이름과 '나' 카드가 먼저
+    mine = {oid for oid, t in teams.items() if t == "mine"}
+    assert cleared[-1] == mine and scene["options"]["mosaic_team"] == "opponent"
+    assert jobs.load_job(job.id).spent_usd > spent
+    jobs.rerender(job, 0, [], "", "face", 2.0, client, mosaic_team="mine")  # 팀은 저장해 둔 것(다시 묻지 않음)
+    assert len(asked) == 1 and cleared[-1] == set(teams) - mine
+    jobs.rerender(job, 0, [], "", "face", 2.0, client, mosaic_team="all")
+    assert cleared[-1] is None
 
 
 def test_load_job_rejects_path_tricks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

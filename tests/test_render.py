@@ -258,3 +258,13 @@ def test_side_faces_on_bodies_are_dropped_but_front_faces_kept() -> None:
     head, back, leg, outside = (130, 110, 30, 30), (140, 230, 30, 30), (140, 350, 30, 30), (400, 300, 30, 30)
     assert render.off_bodies([head, back, leg, outside], [person]) == [head, outside]
     assert render.off_bodies([back], []) == [back]  # 선수 위치를 모르면 그대로 가린다
+
+
+def test_team_mosaic_clears_only_heads_of_that_team() -> None:
+    # 11/1 사용자: 팀별 모자이크. 풀어 줄 팀 선수의 머리 자리 얼굴만 빼고, 겹치거나 모르는 얼굴은 그대로 가린다
+    ours, theirs = Box("a", 100, 100, 200, 400), Box("b", 300, 100, 400, 400)
+    our_head, their_head, our_back, nobody = (130, 110, 30, 30), (330, 110, 30, 30), (140, 300, 30, 30), (600, 100, 30, 30)
+    faces = [our_head, their_head, our_back, nobody]
+    assert render.off_team(faces, [ours, theirs], {"a"}) == [their_head, our_back, nobody]
+    overlap = Box("c", 120, 90, 220, 400)  # 우리 팀 머리 자리에 다른 사람 머리도 겹치면 가린다
+    assert render.off_team([our_head], [ours, overlap], {"a"}) == [our_head]

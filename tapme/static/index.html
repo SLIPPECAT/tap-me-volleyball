@@ -258,7 +258,14 @@
         <option value="defense" data-t="roleDefense"></option>
       </select></div>
   </div>
-  <div class="field"><label class="switch"><input type="checkbox" class="face-mosaic" checked> <span data-t="faceMosaic"></span></label></div>
+  <div class="field"><label data-t="mosaic"></label>
+    <select class="mosaic">
+      <option value="all" data-t="mosaicAll"></option>
+      <option value="opponent" data-t="mosaicOpponent"></option>
+      <option value="mine" data-t="mosaicMine"></option>
+      <option value="none" data-t="mosaicNone"></option>
+    </select>
+    <p class="muted mosaic-note" data-t="mosaicNote" hidden></p></div>
   <div class="opts">
     <div class="field"><label data-t="privacy"></label>
       <select class="privacy">
@@ -304,7 +311,7 @@ const T = {
     teamLabel: "우리 팀 이름 (자막에 들어가요)", teamPh: "예: 검정", ourTeam: "우리 팀", make: "하이라이트 만들기", otherRally: "다른 랠리 고르기",
     resultTitle: "내 하이라이트", commentary: "해설: {c}", rerenderBusy: "다시 만드는 중…", share: "공유", save: "저장",
     changeOptions: "옵션 바꾸기", rerenderHint: "대부분 AI 비용 없이 다시 만들어요. 자막을 처음 켜거나 역할을 바꿀 때, 몸 실루엣을 처음 고를 때만 약 $0.01씩 들어요.", rerender: "다시 만들기",
-    faceMosaic: "다른 회원 얼굴 모자이크 (내 얼굴은 그대로)", subsOn: "자막 넣기 (중계 해설처럼)", subLangs: "자막 언어", role: "이 득점에서 내 역할 (선택)",
+    mosaic: "얼굴 모자이크 (내 얼굴은 그대로)", mosaicAll: "다른 회원 모두", mosaicOpponent: "상대 팀만 (우리 팀 얼굴은 그대로)", mosaicMine: "우리 팀만 (상대 팀 얼굴은 그대로)", mosaicNone: "가리지 않기", mosaicNote: "얼굴이 그대로 나오는 회원에게 저장·공유해도 되는지 먼저 물어봐 주세요. 팀을 알아보지 못한 사람은 그대로 가려요.", subsOn: "자막 넣기 (중계 해설처럼)", subLangs: "자막 언어", role: "이 득점에서 내 역할 (선택)",
     roleNone: "고르지 않음", roleScore: "내가 직접 득점", roleAssist: "연결 (리시브·토스)", roleDefense: "수비로 살림", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대", fps: "프레임 수", fpsSource: "원본 그대로", fps30: "30fps (빨리 만들기)",
     spent: "이 작업에 쓴 AI 비용 ${u}", reqFail: "요청 실패 ({c})",
   },
@@ -333,7 +340,7 @@ const T = {
     teamLabel: "自分のチーム名（字幕に入ります）", teamPh: "例：黒", ourTeam: "自分のチーム", make: "ハイライトを作る", otherRally: "ほかのラリーを選ぶ",
     resultTitle: "自分のハイライト", commentary: "実況：{c}", rerenderBusy: "作り直しています…", share: "共有", save: "保存",
     changeOptions: "オプションを変える", rerenderHint: "ほとんどAIの費用なしで作り直します。字幕を初めて入れる・役割を変える・体のシルエットを初めて選ぶときだけ約$0.01ずつかかります。", rerender: "作り直す",
-    faceMosaic: "ほかのメンバーの顔にモザイク（自分の顔はそのまま）", subsOn: "字幕を入れる（実況風）", subLangs: "字幕の言語", role: "この得点での自分の役割（任意）",
+    mosaic: "顔のモザイク（自分の顔はそのまま）", mosaicAll: "ほかのメンバー全員", mosaicOpponent: "相手チームだけ（自分のチームの顔はそのまま）", mosaicMine: "自分のチームだけ（相手チームの顔はそのまま）", mosaicNone: "隠さない", mosaicNote: "顔がそのまま映るメンバーに、保存・共有してよいか先に聞いてください。チームがわからなかった人は隠したままです。", subsOn: "字幕を入れる（実況風）", subLangs: "字幕の言語", role: "この得点での自分の役割（任意）",
     roleNone: "選ばない", roleScore: "自分で得点", roleAssist: "つなぎ（レシーブ・トス）", roleDefense: "守備でつないだ", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大", fps: "フレームレート", fpsSource: "元のまま", fps30: "30fps（早く作る）",
     spent: "この作業のAI費用 ${u}", reqFail: "リクエスト失敗 ({c})",
   },
@@ -362,7 +369,7 @@ const T = {
     teamLabel: "Your team name (shown in subtitles)", teamPh: "e.g. Black", ourTeam: "Our team", make: "Make highlight", otherRally: "Pick another rally",
     resultTitle: "Your highlight", commentary: "Commentary: {c}", rerenderBusy: "Re-rendering…", share: "Share", save: "Save",
     changeOptions: "Change options", rerenderHint: "Re-rendering is mostly free. About $0.01 only when you first turn on subtitles, change your role, or first pick body silhouettes.", rerender: "Re-render",
-    faceMosaic: "Pixelate other members' faces (yours stays clear)", subsOn: "Add subtitles (like live commentary)", subLangs: "Subtitle languages", role: "My role in this point (optional)",
+    mosaic: "Face pixelation (yours stays clear)", mosaicAll: "All other members", mosaicOpponent: "Opponents only (your team stays clear)", mosaicMine: "Your team only (opponents stay clear)", mosaicNone: "Don't pixelate", mosaicNote: "Ask the members whose faces show before you save or share. Anyone whose team we can't tell stays pixelated.", subsOn: "Add subtitles (like live commentary)", subLangs: "Subtitle languages", role: "My role in this point (optional)",
     roleNone: "Don't say", roleScore: "I scored it", roleAssist: "Set it up (pass/set)", roleDefense: "Saved it on defense", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom", fps: "Frame rate", fpsSource: "Same as source", fps30: "30fps (faster)",
     spent: "AI cost for this job ${u}", reqFail: "Request failed ({c})",
   },
@@ -426,7 +433,8 @@ function readOptions(box) {
     privacy: box.querySelector(".privacy").value,
     zoom: parseFloat(box.querySelector(".zoom").value),
     fps: parseInt(box.querySelector(".fps").value, 10),
-    face_mosaic: box.querySelector(".face-mosaic").checked,
+    face_mosaic: box.querySelector(".mosaic").value !== "none",
+    mosaic_team: box.querySelector(".mosaic").value === "none" ? "all" : box.querySelector(".mosaic").value,
   };
 }
 function mountOptions(boxId, o) {
@@ -439,11 +447,14 @@ function mountOptions(boxId, o) {
   on.checked = Boolean(o && o.languages.length);
   subsBox.hidden = !on.checked;
   on.onchange = () => { subsBox.hidden = !on.checked; };
+  const mosaic = box.querySelector(".mosaic"), note = box.querySelector(".mosaic-note");
+  mosaic.onchange = () => { note.hidden = mosaic.value === "all"; };
   if (o) {
     box.querySelector(".privacy").value = o.privacy; box.querySelector(".zoom").value = String(o.zoom); box.querySelector(".fps").value = String(o.fps || 0);
     box.querySelector(".role").value = o.role || "";
-    box.querySelector(".face-mosaic").checked = o.face_mosaic !== false;
+    mosaic.value = o.face_mosaic === false ? "none" : (o.mosaic_team || "all");
   }
+  note.hidden = mosaic.value === "all";
 }
 
 // 상태를 2초마다 보고 지금 단계의 화면을 그린다

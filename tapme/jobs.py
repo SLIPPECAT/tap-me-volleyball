@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -700,20 +701,103 @@ def scene_people(job: Job, scene: dict[str, Any], client: Any) -> dict[int, list
     return {k - f0: v for k, v in by.items() if k >= f0}
 
 
+# 얼굴 모자이크를 할 팀(11/1 사용자): 모두 · 상대 팀만(우리 팀은 얼굴 그대로) · 우리 팀만
+MOSAIC_TEAMS = ("all", "opponent", "mine")
+TEAM_QUESTION_USD = 0.03  # 선수 카드 20장 안팎 + 생각 '중간'. 넉넉히 잡고 charge, 실제 토큰으로 다시 셈
+TEAM_PROMPT = """첫 번째 사진은 배구 경기 영상에서 '나'(기준 선수)를 잘라 낸 것이다. 그 뒤 사진들은 같은 장면의 다른 사람들이고,
+각 사진 앞에 '후보 번호'가 있다. 얼굴은 모두 흐려져 있으니 유니폼 색·무늬·바지로 판단한다.
+후보마다 '나'와 같은 팀 유니폼이면 same, 상대 팀 선수면 other, 심판·관중·코트 밖 사람이거나 잘 안 보이면 unsure.
+{team}
+JSON 하나로만 답한다: {{"teams": {{"0": "same" 또는 "other" 또는 "unsure", ...}}}}"""
+
+
+def _card_img(path: Path) -> dict[str, str]:
+    return {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode()}
+
+
+def scene_teams(job: Job, scene: dict[str, Any], client: Any) -> dict[str, str]:
+    """다른 선수 추적(scene_people와 같은 것)의 사람마다 우리 팀(mine)·상대 팀(opponent)·모름(unknown).
+    사람마다 가장 크게 잡힌 순간을 얼굴 흐림본(sam_clip)에서 잘라, '나' 카드와 같은 유니폼인지 Muse Spark에 한 번 묻는다.
+    장면마다 한 번(약 $0.01~0.03), 저장해 다시 쓴다. 모르는 사람은 늘 가린다(render.off_team)."""
+    if scene.get("teams") is not None:
+        return scene["teams"]
+    sam_clip = Path(scene["sam_clip"])
+    others = track.boxes_by_frame(track.parse(_track_others(job, client, sam_clip).read_text()))
+    me = track.boxes_by_frame(track.parse((sam_clip.parent / "me_wire.txt").read_text()))
+    s0, s1 = scene["span_frames"]
+
+    def area(b: track.Box) -> float:
+        return (b.right - b.left) * (b.bottom - b.top)
+    best: dict[str, tuple[int, track.Box]] = {}  # 사람마다 가장 크게 잡힌 (프레임, 상자)
+    for k, boxes in others.items():
+        for b in boxes:
+            if b.object_id not in best or area(b) > area(best[b.object_id][1]):
+                best[b.object_id] = (k, b)
+    mine = [(k, b) for k, boxes in me.items() if s0 <= k <= s1 for b in boxes if b.object_id == track.TAPPED_ID]
+    if not best or not mine:
+        scene["teams"] = {}
+        return scene["teams"]
+    people = sorted(best.items(), key=lambda kv: -area(kv[1][1]))[:MAX_PLAYER_CARDS]
+    picks = [("me", max(mine, key=lambda kb: area(kb[1])))] + [(oid, kb) for oid, kb in people]
+    d = sam_clip.parent / "teams"
+    d.mkdir(exist_ok=True)
+    content: list[dict[str, str]] = [
+        {"type": "input_text", "text": TEAM_PROMPT.format(
+            team=f"사용자는 우리 팀을 '{scene['team']}'(이)라고 부른다." if scene.get("team") else "")}]
+    for n, (oid, (k, b)) in enumerate(picks):
+        frame = d / f"frame_{k:04d}.jpg"
+        if not frame.exists():
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(sam_clip), "-vf", f"select=eq(n\\,{k})",
+                            "-frames:v", "1", str(frame)], check=True)
+        img = Image.open(frame)
+        pad_w, pad_h = (b.right - b.left) * 0.15, (b.bottom - b.top) * 0.08  # 선수 카드(player_cards)와 같게
+        card = img.crop((max(0, b.left - pad_w), max(0, b.top - pad_h),
+                         min(img.width, b.right + pad_w), min(img.height, b.bottom + pad_h)))
+        card.thumbnail((160, 240))
+        path = d / f"card_{n:02d}.jpg"
+        card.save(path)
+        content += [{"type": "input_text", "text": "나" if oid == "me" else f"후보 {n - 1}"}, _card_img(path)]
+    job.charge(TEAM_QUESTION_USD)
+    resp = client.responses.create(model=muse.MODEL, max_output_tokens=16000,
+                                   input=[{"type": "message", "role": "user", "content": content}])
+    job.spent_usd += (int(resp.usage.input_tokens or 0) * muse.INPUT_USD_PER_TOKEN
+                      + int(resp.usage.output_tokens or 0) * muse.OUTPUT_USD_PER_TOKEN)
+    try:
+        answers = muse.parse_json_reply(resp.output_text or "").get("teams") or {}
+    except ValueError:
+        answers = {}
+    names = {"same": "mine", "other": "opponent"}
+    scene["teams"] = {oid: names.get(str(answers.get(str(n), "")).strip().lower(), "unknown")
+                      for n, (oid, _) in enumerate(people)}
+    job.save()
+    return scene["teams"]
+
+
+def _clear_ids(job: Job, scene: dict[str, Any], mosaic_team: str, client: Any) -> set[str] | None:
+    """모자이크를 풀어 줄 사람(다른 선수 추적의 object_id). 모두 가리면 None."""
+    if mosaic_team == "all":
+        return None
+    keep = "mine" if mosaic_team == "opponent" else "opponent"
+    return {oid for oid, team in scene_teams(job, scene, client).items() if team == keep}
+
+
 def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy: str, zoom: float,
-                  face_mosaic: bool, client: Any, max_fps: int = 0) -> Path:
+                  face_mosaic: bool, client: Any, max_fps: int = 0, mosaic_team: str = "all") -> Path:
     src, by, masks, cues = scene_render_inputs(job, scene, languages, privacy, client)
     people = scene_people(job, scene, client) if face_mosaic else None
+    clear = _clear_ids(job, scene, mosaic_team, client) if face_mosaic else None
     key = next((f"{job.id}/{k}" for k, v in job.scenes.items() if v is scene), f"{job.id}/?")  # 화면에 보일 대기 순서
     with RENDER_TURNS.turn(key):
-        return _render_locked(job, scene, src, by, masks, cues, zoom, privacy, face_mosaic, max_fps, people)
+        return _render_locked(job, scene, src, by, masks, cues, zoom, privacy, face_mosaic, max_fps, people, clear)
 
 
 def _render_locked(job: Job, scene: dict[str, Any], src: Path, by: Any, masks: Any, cues: Any, zoom: float, privacy: str,
-                   face_mosaic: bool, max_fps: int, people: dict[int, list[track.Box]] | None = None) -> Path:
+                   face_mosaic: bool, max_fps: int, people: dict[int, list[track.Box]] | None = None,
+                   clear: set[str] | None = None) -> Path:
     out = render.render_video(src, Path(scene["sam_clip"]).parent / "highlight.mp4", by, masks,
                               track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy, face_mosaic,
-                              on_progress=lambda d, n: job.step("render", d, n), max_fps=max_fps, people_by_sam=people)
+                              on_progress=lambda d, n: job.step("render", d, n), max_fps=max_fps, people_by_sam=people,
+                              clear_ids=clear)
     job.progress = {}
     return out
 
@@ -753,6 +837,7 @@ def assign_number(job: Job, scene: dict[str, Any]) -> int:
 def make_highlight(
     job: Job, index: int, taps: list[tuple[str, float, float]], team_label: str,
     languages: list[str], role: str, privacy: str, zoom: float, client: Any, face_mosaic: bool = True, max_fps: int = 0,
+    mosaic_team: str = "all",
 ) -> dict[str, Any]:
     """taps = [(장면 종류, x, y) 또는 (장면 종류, 고른 선수 번호), ...]. 장면 종류는 TAP_KINDS, 하나 이상.
     languages가 비면 자막 없음(Muse 해설을 묻지 않는다). role은 score.ROLE_TEXT의 키(선택)."""
@@ -802,24 +887,26 @@ def make_highlight(
     clip_video = _cut(*_source(job, index, clip_start), clip_end - clip_start, sam_clip.parent / "clip.mp4", None)
     scene.update(taps=[list(t) for t in taps], span_frames=list(span),
                  clip=[round(clip_start, 2), round(clip_end, 2)], clip_video=str(clip_video), clip_is_original=True)
-    out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client, max_fps)
+    out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client, max_fps, mosaic_team)
     scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom,
-                                         "face_mosaic": face_mosaic, "fps": max_fps}, video=str(out))
+                                         "face_mosaic": face_mosaic, "fps": max_fps, "mosaic_team": mosaic_team},
+                video=str(out))
     job.save()
     return scene
 
 
 def rerender(job: Job, index: int, languages: list[str], role: str, privacy: str, zoom: float,
-             client: Any = None, face_mosaic: bool = True, max_fps: int = 0) -> dict[str, Any]:
+             client: Any = None, face_mosaic: bool = True, max_fps: int = 0, mosaic_team: str = "all") -> dict[str, Any]:
     """자막·가리기·확대만 바꿔 다시 렌더. 저장해 둔 SAM 결과와 해설을 써서 API 비용이 없다.
     자막을 처음 켜거나 역할을 바꾸면 해설을, '몸 실루엣'을 처음 고르면 다른 선수 추적을 한 번 부른다."""
     scene = job.scenes[str(index)]
     scene["status"] = "rendering"
     job.save()
     _ensure_commentary(job, scene, languages, role, client)
-    out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client, max_fps)
+    out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client, max_fps, mosaic_team)
     scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom,
-                                         "face_mosaic": face_mosaic, "fps": max_fps}, video=str(out))
+                                         "face_mosaic": face_mosaic, "fps": max_fps, "mosaic_team": mosaic_team},
+                video=str(out))
     job.save()
     return scene
 

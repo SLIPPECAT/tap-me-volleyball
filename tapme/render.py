@@ -329,6 +329,17 @@ def off_bodies(side: list[tuple[int, int, int, int]], people: list[Box]) -> list
     return [b for b in side if not on_body(b)]
 
 
+def off_team(faces: list[tuple[int, int, int, int]], people: list[Box],
+             clear_ids: set[str]) -> list[tuple[int, int, int, int]]:
+    """모자이크를 풀어 줄 팀(clear_ids) 선수의 머리 자리(사람 상자 위 BODY_FROM)에 있는 얼굴만 뺀다(11/1 사용자: 팀별 모자이크).
+    다른 사람 머리 자리와 겹치거나 추적에 없는 얼굴은 그대로 가린다 — 잘못 풀어 얼굴이 드러나는 쪽을 피한다."""
+    def heads(b: tuple[int, int, int, int], ids: bool) -> bool:
+        cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
+        return any((p.object_id in clear_ids) == ids and p.left <= cx <= p.right
+                   and p.top <= cy <= p.top + BODY_FROM * (p.bottom - p.top) for p in people)
+    return [b for b in faces if not heads(b, True) or heads(b, False)]
+
+
 def render_video(
     src: Path,
     out: Path,
@@ -346,9 +357,11 @@ def render_video(
     two_detectors: bool = True,
     max_fps: int = 0,
     people_by_sam: dict[int, list[Box]] | None = None,
+    clear_ids: set[str] | None = None,
 ) -> Path:
     """subtitles = [(시작초, 끝초, 글자), ...]. 장면에 맞춰 바뀌는 해설 자막(score.subtitle_cues). 없으면 자막 없음.
-    face_mosaic이면 '나'를 뺀 얼굴을 모자이크한다(src는 원본 클립). 얼굴은 face_every 프레임마다 찾고 사이는 이어 쓴다."""
+    face_mosaic이면 '나'를 뺀 얼굴을 모자이크한다(src는 원본 클립). 얼굴은 face_every 프레임마다 찾고 사이는 이어 쓴다.
+    clear_ids가 있으면 people_by_sam 중 그 선수들(풀어 줄 팀)의 얼굴은 가리지 않는다(off_team)."""
     detector = profile = plain = None
     if face_mosaic:
         detector, profile = anonymize.load_detector(), anonymize.load_profile_detector()
@@ -417,6 +430,8 @@ def render_video(
                     if people_by_sam is not None:  # 다른 선수까지 추적했으면 몸 위에 잡힌 옆얼굴을 거른다(H-48)
                         side = off_bodies(side, people_by_sam.get(round(i * sam_fps / fps), []))
                     faces = faces + side
+                    if clear_ids and people_by_sam is not None:
+                        faces = off_team(faces, people_by_sam.get(round(i * sam_fps / fps), []), clear_ids)
                     mine = next((b for b in boxes[k] if b.object_id == me), None)
                     # 내 얼굴은 찾은 그 프레임에서 뺀다. 모아 둔 뒤에 빼면 0.2초 전 내 얼굴 자리가 남아 탭한 나에게
                     # 모자이크가 붙었다(10/30 사용자). keep_my_face=False는 품질 확인용(qa.py) — '나'까지 가린다
