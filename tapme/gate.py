@@ -103,6 +103,7 @@ input { width: 100%; box-sizing: border-box; padding: 12px; margin: 12px 0; bord
 </main><script>
 const s = document.getElementById("s");
 const save = (code) => { try { localStorage.setItem("code", code); } catch {} };
+// 들어간 뒤엔 새로 불러온다. 주소에 #job=…이 있으면 같은 주소로 옮기기는 페이지 안 이동이라 안내 화면이 그대로였다(11/1)
 async function post(path, body) {
   const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
@@ -113,14 +114,14 @@ const invite = new URLSearchParams(location.search).get("invite");
 if (invite) {
   history.replaceState(null, "", location.pathname + location.hash);
   s.textContent = "배구구 회원인지 확인하는 중…";
-  post("/access/claim", { invite }).then((r) => { save(r.code); location.replace("/" + location.hash); })
+  post("/access/claim", { invite }).then((r) => { save(r.code); location.reload(); })
     .catch((e) => { s.textContent = e.message; });
 }
 document.getElementById("go").onclick = () => {
   const code = document.getElementById("code").value.trim();
   if (!code) return;
   s.textContent = "확인하는 중…";
-  post("/access/enter", { code }).then(() => { save(code); location.replace("/" + location.hash); })
+  post("/access/enter", { code }).then(() => { save(code); location.reload(); })
     .catch((e) => { s.textContent = e.message; });
 };
 </script></body></html>"""
