@@ -28,11 +28,16 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from tapme import access, jobs, muse, push, render, scan, score
+from tapme import access, gate, jobs, member, muse, push, render, scan, score
 
 # 매일 새벽 4시(jobs.DAY_START_HOUR)에 지난날 영상을 모두 지운다. 배포 서버에서만 켠다(이 맥의 시험 작업은 지우지 않게).
 # 서버가 꺼져 있다가 켜지면 바로 한 번 지운다
@@ -85,8 +90,10 @@ class _Working:
 # 배포 서버에서만 켠다(TAPME_RATE_LIMIT=1). (몇 번, 몇 초 동안). 체육관 와이파이·통신사 LTE처럼 여러 사람이 한 IP를
 # 나눠 쓰므로 사람은 막지 않고 폭주(초당 10회 넘게)만 막을 만큼 넉넉히
 RATE_LIMIT = os.environ.get("TAPME_RATE_LIMIT") == "1"
-RATE_LIMITS = {"general": (600, 60), "light": (30, 60), "heavy": (60, 3600)}
-_LIGHT_POSTS = ("/feedback", "/speedtest", "/push/test", "/access", "/access/claim", "/uploads", "/jobs/browser")
+# 그룹별 (횟수, 초). 서버 설정으로 바꿀 수 있다: TAPME_RATE_GENERAL=600/60 처럼
+RATE_LIMITS = {g: tuple(int(v) for v in os.environ.get(f"TAPME_RATE_{g.upper()}", d).split("/"))
+               for g, d in (("general", "600/60"), ("light", "30/60"), ("heavy", "60/3600"))}
+_LIGHT_POSTS = ("/feedback", "/speedtest", "/push/test", "/access", "/access/claim", "/access/enter", "/uploads", "/jobs/browser")
 _buckets: dict[tuple[str, str], tuple[float, float]] = {}
 _bucket_lock = threading.Lock()
 
@@ -117,6 +124,17 @@ def _rate_wait(ip: str, group: str, now: float) -> float:
             return (1 - tokens) * per / cap
         _buckets[(ip, group)] = (tokens - 1, now)
         return 0.0
+
+
+@app.middleware("http")
+async def _members_only(request, call_next):
+    """배구구 회원 전용 잠금(tapme/gate.py). 입장 쿠키가 없으면 화면은 안내로, 나머지 요청은 401.
+    다른 미들웨어보다 먼저 등록해 가장 안쪽에서 돈다 — 속도 제한·보안 헤더는 잠긴 응답에도 붙는다."""
+    if gate.MEMBERS_ONLY and not gate.is_open(request.url.path) and not gate.valid(request.cookies.get(gate.COOKIE)):
+        if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+            return HTMLResponse(gate.PAGE, status_code=403)
+        return JSONResponse({"detail": "배구구 회원 전용이에요. 배구구 홈의 배너로 들어와 주세요"}, status_code=401)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -154,6 +172,7 @@ async def _isolate(request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"  # 검색 엔진에 나오지 않게(10/31 사용자: 외부 노출 없이)
     # 화면 파일은 쓸 때마다 바뀌었는지 묻게 한다(바뀌지 않았으면 304라 다시 받지 않음). 배포 뒤에도 예전 app.css를
     # 캐시에서 써 새 화면이 깨져 보였다(10/31)
     if request.url.path in ("/", "/sw.js") or request.url.path.startswith("/static/"):
@@ -396,9 +415,34 @@ async def speedtest(request: Request) -> dict[str, int]:
     return {"bytes": size}
 
 
+# 틀린 코드 반복(10/31 사용자): 8자리를 다 넣고 틀린 것만 센다 — 코드 칸은 글자를 칠 때마다 확인해서 입력 중은 세지 않는다.
+# 같은 접속 주소에서 1시간에 이만큼 틀리면 그 주소의 코드 확인·코드로 들어오기를 1시간 막는다
+BAD_CODES_PER_HOUR = int(os.environ.get("TAPME_BAD_CODES_PER_HOUR", "10"))
+_bad_codes: dict[str, list[float]] = {}
+_bad_lock = threading.Lock()
+
+
+def _bad_code_check(ip: str, code: str, wrong: bool) -> None:
+    """막힌 주소면 429. wrong이고 8자리를 다 넣은 코드면 한 번 센다."""
+    now = time.time()
+    with _bad_lock:
+        if len(_bad_codes) > 20000:
+            for k in [k for k, v in _bad_codes.items() if not v or now - v[-1] > 3600]:
+                del _bad_codes[k]
+        recent = [t for t in _bad_codes.get(ip, []) if now - t < 3600]
+        if wrong and len(access.normalize(code)) == 8:  # 코드는 8자리(access.claim·new_codes)
+            recent.append(now)
+        _bad_codes[ip] = recent
+        if len(recent) > BAD_CODES_PER_HOUR:
+            raise HTTPException(429, "틀린 코드를 너무 많이 넣었어요. 1시간 뒤 다시 해 주세요",
+                                headers={"Retry-After": str(int(3600 - (now - recent[0])) + 1)})
+
+
 @app.post("/access")
-def check_access(req: AccessRequest) -> dict[str, Any]:
+def check_access(req: AccessRequest, request: Request) -> dict[str, Any]:
     """올리기 전에 묻는다: 코드가 맞는지, 남은 횟수, 지금 받을 수 있는지(2GB를 올린 뒤 거절하지 않게)."""
+    ip = _client_ip(request)
+    _bad_code_check(ip, "", False)
     out: dict[str, Any] = {"required": access.REQUIRED, "waiting": jobs.SCAN_TURNS.waiting(), "closed": _closed_reason(req.code),
                            "wipe_hour": jobs.DAY_START_HOUR if DAILY_WIPE else None,
                            "est": {"scan_rate": EST_SERVER_SEC_PER_VIDEO_SEC, "highlight_sec": EST_HIGHLIGHT_SEC}}
@@ -407,6 +451,7 @@ def check_access(req: AccessRequest) -> dict[str, Any]:
             out["left"] = access.left(req.code)
         except access.AccessDenied as e:
             out["denied"] = str(e)
+            _bad_code_check(ip, req.code, True)
     return out
 
 
@@ -422,13 +467,53 @@ def _client_ip(request: Request) -> str:
 
 
 @app.post("/access/claim")
-def claim_code(req: ClaimRequest, request: Request) -> dict[str, str]:
-    """초대 링크(배구구 배너·심사용)로 들어온 기기에 코드를 하나 만들어 준다."""
+def claim_code(req: ClaimRequest, request: Request) -> JSONResponse:
+    """초대 링크(배구구 배너·심사용)로 들어온 기기에 코드를 하나 만들어 준다.
+    회원 확인을 켜면 배너 초대는 로그인한 배구구 회원에게만(tapme/member.py). 심사용은 확인하지 않는다(심사위원은 회원이 아니다)."""
+    who = None
+    kind = access.invite_kind(req.invite)
+    if gate.MEMBERS_ONLY and kind == "judge" and not gate.JUDGE_ACCESS:
+        raise HTTPException(403, "이 링크는 지금 쓸 수 없어요")  # 심사용 접근은 추후 결정(GitHub 이슈)
+    if member.CHECK and kind == "banner":
+        try:
+            who = member.member_id(request.cookies)
+        except member.Unavailable:
+            raise HTTPException(503, "배구구 회원 확인이 잠시 안 돼요. 잠시 뒤 배너를 다시 눌러 주세요") from None
+        if who is None:
+            raise HTTPException(401, "배구구 회원만 쓸 수 있어요. 배구구에 로그인한 뒤 홈 배너를 다시 눌러 주세요")
     try:
-        code = access.claim(req.invite, _client_ip(request))
+        code = access.claim(req.invite, _client_ip(request), member=who)
     except access.AccessDenied as e:
         raise HTTPException(403, str(e)) from e
-    return {"code": f"{code[:4]}-{code[4:]}"}
+    return _with_session({"code": f"{code[:4]}-{code[4:]}"}, "judge" if kind == "judge" else "member")
+
+
+def _with_session(body: dict[str, Any], kind: str) -> JSONResponse:
+    """회원 전용 잠금이면 입장 쿠키(이 주소에서만, 30일)를 같이 준다."""
+    resp = JSONResponse(body)
+    if gate.MEMBERS_ONLY:
+        resp.set_cookie(gate.COOKIE, gate.make(kind), max_age=gate.MAX_AGE, httponly=True, secure=True, samesite="lax", path="/")
+    return resp
+
+
+class EnterRequest(BaseModel):
+    code: str = Field(max_length=20)
+
+
+@app.post("/access/enter")
+def enter_with_code(req: EnterRequest, request: Request) -> JSONResponse:
+    """홈 화면 앱처럼 입장 쿠키가 없는 곳에서, 회원 확인으로 받은 코드로 들어온다(tapme/gate.py)."""
+    ip = _client_ip(request)
+    _bad_code_check(ip, "", False)
+    if not access.can_enter(req.code, judges=gate.JUDGE_ACCESS):
+        _bad_code_check(ip, req.code, True)
+        raise HTTPException(403, "배구구 배너로 받은 코드가 아니에요")
+    return _with_session({"ok": True}, "code")
+
+
+@app.get("/robots.txt")
+def robots() -> PlainTextResponse:
+    return PlainTextResponse("User-agent: *\nDisallow: /\n")
 
 
 class FeedbackRequest(BaseModel):

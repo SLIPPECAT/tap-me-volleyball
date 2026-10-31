@@ -5,6 +5,8 @@ TAPME_REQUIRE_CODE=1인 서버(배포)에서만 코드를 요구한다. 이 맥�
 
 초대 링크(10/31 사용자 결정): 배구구 배너 링크에 ?invite=<초대말>을 붙이면 들어온 기기에 코드를 하나 만들어 준다.
 배너 링크는 모든 회원에게 같은 고정 주소라 퍼질 수 있어, 같은 접속 주소(IP)당 하루 10개·배너 전체 150개까지만.
+회원 확인을 켜면(TAPME_MEMBER_CHECK=1, tapme/member.py) 배너 코드는 로그인한 배구구 회원에게만, 회원당 하나 —
+다른 기기에서 다시 받으면 같은 코드를 돌려준다. 이때는 IP 한도를 보지 않는다(회원 한도가 대신한다).
 심사용 초대는 해커톤 제출서에만 적고, 그 코드는 하루 올리기 한도와 상관없이 쓴다. 초대말을 새로 만들면 예전 말은 막히고
 이미 받은 코드는 그대로 쓴다.
 
@@ -35,8 +37,13 @@ ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 헷갈리는 0·O·1·I는 뺐�
 _lock = threading.Lock()
 
 
-INVITE_MAX = {"banner": 150, "judge": 20}  # 초대말 종류별로 만들어 줄 코드 수
-CLAIMS_PER_IP_PER_DAY = 10  # 배너 초대: 같은 접속 주소에서 하루에(통신사·체육관은 여러 사람이 한 IP를 나눠 써 3개는 빠듯했다)
+# 초대말 종류별로 만들어 줄 코드 수. 이미 만든 초대말에는 그때의 수가 저장돼 있어, 바꾸면 invite로 새로 만들 때부터 적용된다
+INVITE_MAX = {"banner": int(os.environ.get("TAPME_INVITE_MAX_BANNER", "150")),
+              "judge": int(os.environ.get("TAPME_INVITE_MAX_JUDGE", "20"))}
+# 배너 초대: 같은 접속 주소에서 하루에(통신사·체육관은 여러 사람이 한 IP를 나눠 써 3개는 빠듯했다). 회원 확인을 켜면 보지 않는다
+CLAIMS_PER_IP_PER_DAY = int(os.environ.get("TAPME_CLAIMS_PER_IP_PER_DAY", "10"))
+# 회원 번호를 남길 때 붙이는 열쇠(.env). 해시만 보고는 어느 회원인지 알 수 없게
+MEMBER_SALT = os.environ.get("TAPME_MEMBER_SALT", "")
 LABELS = {"banner": "배너", "judge": "심사"}
 
 
@@ -102,30 +109,53 @@ def new_invite(kind: str, max_codes: int | None = None) -> str:
     return entry["word"]
 
 
-def claim(word: str, ip: str, now: float | None = None) -> str:
-    """초대말로 코드를 하나 만들어 준다. 접속 주소는 하루 횟수를 세는 데만 쓰고 해시로만 남긴다."""
+def _kind(inv: dict[str, Any], word: str) -> str | None:
+    return next((k for k, e in inv.items() if word and secrets.compare_digest(e.get("word", ""), word)), None)
+
+
+def invite_kind(word: str) -> str | None:
+    """초대말의 종류(banner·judge). 맞지 않으면 None."""
+    return _kind(_load_invites(), word)
+
+
+def claim(word: str, ip: str, now: float | None = None, member: str | None = None) -> str:
+    """초대말로 코드를 하나 만들어 준다. 접속 주소는 하루 횟수를 세는 데만 쓰고 해시로만 남긴다.
+    member: 확인된 배구구 회원 번호(회원 확인을 켠 배너 초대). 회원당 하나, 이미 받았으면 그 코드를 돌려준다."""
     with _lock:
         inv = _load_invites()
-        kind = next((k for k, e in inv.items() if word and secrets.compare_digest(e.get("word", ""), word)), None)
+        kind = _kind(inv, word)
         if kind is None:
             raise AccessDenied("초대 링크가 맞지 않거나 바뀌었어요")
         entry = inv[kind]
+        mkey = hashlib.sha256(f"{MEMBER_SALT}:{member}".encode()).hexdigest()[:24] if member else None
+        if mkey and mkey in entry.get("members", {}):
+            return entry["members"][mkey]
         if entry["issued"] >= entry["max"]:
             raise AccessDenied("초대 링크로 받을 수 있는 코드가 모두 나갔어요")
         day = jobs.today(now)
         who = hashlib.sha256(f"{day}:{ip}".encode()).hexdigest()[:16]
         by_ip = entry.get("by_ip", {}) if entry.get("by_ip_day") == day else {}
-        if kind == "banner" and by_ip.get(who, 0) >= CLAIMS_PER_IP_PER_DAY:
+        if kind == "banner" and not member and by_ip.get(who, 0) >= CLAIMS_PER_IP_PER_DAY:
             raise AccessDenied("이 접속에서 오늘 받을 수 있는 코드를 다 받았어요. 내일 다시 와 주세요")
         codes = _load()
         while (code := "".join(secrets.choice(ALPHABET) for _ in range(8))) in codes:
             pass
         codes[code] = {"label": LABELS[kind], "uploads": 0, "highlights": 0}
+        if member:
+            codes[code]["member"] = True  # 회원 확인으로 받은 코드: 홈 화면 앱에서 이 코드로 들어올 수 있다(gate)
         _save(codes)
         entry["issued"] += 1
         entry["by_ip_day"], entry["by_ip"] = day, {**by_ip, who: by_ip.get(who, 0) + 1}
+        if mkey:
+            entry.setdefault("members", {})[mkey] = code
         _save_invites(inv)
     return code
+
+
+def can_enter(code: str, judges: bool = False) -> bool:
+    """회원 전용 잠금(gate)에서 이 코드로 들어올 수 있는지: 회원 확인으로 받은 코드(심사용은 judges일 때만)."""
+    entry = _load().get(normalize(code))
+    return bool(entry) and (entry.get("member") is True or (judges and entry.get("label") == LABELS["judge"]))
 
 
 def is_judge(code: str) -> bool:

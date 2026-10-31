@@ -42,7 +42,7 @@ async function load() {
     ["코드", `${codes.length}개 (쓴 코드 ${codes.filter(([, e]) => e.uploads).length}개)`],
     ["올린 영상", `${used("uploads")}편`], ["만든 하이라이트", `${used("highlights")}개`],
     // 초대 링크: 입구 주소 뒤에 붙인다. 퍼졌으면 서버에서 초대말을 새로 만든다(python -m tapme.access invite banner)
-    ...Object.entries(s.invites || {}).map(([k, e]) => [`초대 ${{ banner: "배너", judge: "심사" }[k] || k}`, `${e.issued}/${e.max}개 발급 · 입구주소/?invite=${e.word}`]),
+    ...Object.entries(s.invites || {}).map(([k, e]) => [`초대 ${{ banner: "배너", judge: "심사" }[k] || k}`, `${e.issued}/${e.max}개 발급 · highlight.baegugu.com/tapme?invite=${e.word}`]),
   ].map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join("");
   showFeedback(s.feedback || []);
   $("codes").innerHTML = "<tr><th>코드</th><th>영상</th><th>하이라이트</th><th>메모</th></tr>" + codes.map(([c, e]) =>

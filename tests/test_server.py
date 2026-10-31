@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from tapme import access, jobs, render, server
+from tapme import access, gate, jobs, member, render, server
 
 
 @pytest.fixture
@@ -351,6 +351,112 @@ def test_invite_link_gives_a_code_with_limits(client: TestClient, monkeypatch: p
     new_word = access.new_invite("banner")  # 초대말을 바꾸면 예전 말은 막히고 받은 코드는 그대로
     assert claim(word).status_code == 403 and new_word != word
     assert client.post("/access", json={"code": code}).json()["left"]["uploads"] == 2
+
+
+def test_banner_codes_only_for_baegugu_members(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 사용자: 배너는 모두에게 보이되 쓰는 것은 회원만. 회원당 코드 하나(다른 기기에서 다시 받으면 같은 코드), 심사용은 확인 안 함
+    monkeypatch.setattr(access, "REQUIRED", True)
+    monkeypatch.setattr(member, "CHECK", True)
+    monkeypatch.setattr(access, "CLAIMS_PER_IP_PER_DAY", 1)  # 회원 확인 중엔 IP 한도를 보지 않는다
+    who: dict[str, object] = {"id": None}
+
+    def fake(cookies: dict[str, str]) -> str | None:
+        if who["id"] == "down":
+            raise member.Unavailable("no answer")
+        return who["id"]  # type: ignore[return-value]
+
+    monkeypatch.setattr(member, "member_id", fake)
+    word, judge = access.new_invite("banner", max_codes=5), access.new_invite("judge")
+    claim = lambda w: client.post("/access/claim", json={"invite": w})
+    r = claim(word)
+    assert r.status_code == 401 and "회원" in r.json()["detail"]  # 로그인 안 함
+    who["id"] = "down"
+    assert claim(word).status_code == 503  # 배구구가 답이 없으면 회원 아님이 아니라 잠시 뒤
+    who["id"] = "u-1"
+    first, again = claim(word).json()["code"], claim(word).json()["code"]
+    assert first == again  # 같은 회원은 같은 코드
+    who["id"] = "u-2"
+    assert claim(word).json()["code"] != first  # 같은 IP여도 다른 회원은 받는다
+    assert access._load_invites()["banner"]["issued"] == 2
+    assert "u-1" not in access._invites_path().read_text()  # 회원 번호는 해시로만
+    who["id"] = None
+    assert claim(judge).status_code == 200  # 심사위원은 배구구 회원이 아니다
+
+
+def test_member_check_reads_only_the_login_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 배구구 /api/auth/me에 로그인 쿠키만 실어 묻고, 회원 번호만 꺼낸다. 쿠키가 없으면 묻지도 않는다.
+    # 로그인 안 했거나 만료면 401(쿠키 로그인은 익명으로 통과한 뒤 EntryPoint가 401)
+    import io
+    import urllib.error
+
+    sent: list[dict[str, str]] = []
+
+    def fake_open(req, timeout):
+        sent.append(dict(req.header_items()))
+        if "bad" in req.get_header("Cookie"):
+            raise urllib.error.HTTPError(req.full_url, 401, "no", {}, None)  # type: ignore[arg-type]
+        if "down" in req.get_header("Cookie"):
+            raise urllib.error.HTTPError(req.full_url, 502, "no", {}, None)  # type: ignore[arg-type]
+        body = {"success": True, "data": {"id": "abc", "email": "x@y"}} if "anon" not in req.get_header("Cookie") else {"success": False}
+        return io.BytesIO(json.dumps(body).encode())
+
+    monkeypatch.setattr(member.urllib.request, "urlopen", fake_open)
+    assert member.member_id({}) is None and not sent
+    assert member.member_id({"baegugu-token": "tok", "other": "x"}) == "abc"
+    assert sent[-1]["Cookie"] == "baegugu-token=tok"  # 다른 쿠키는 보내지 않는다
+    assert member.member_id({"baegugu-token": "anon"}) is None
+    assert member.member_id({"baegugu-token": "bad"}) is None
+    with pytest.raises(member.Unavailable):
+        member.member_id({"baegugu-token": "down"})  # 배구구 고장은 회원 아님이 아니다
+
+
+def test_members_only_lock(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 사용자: 외부 노출 없이 배구구에서만. 입장 쿠키가 없으면 화면은 안내, 요청은 401. 배너(회원 확인)나 회원 코드로만 들어온다
+    monkeypatch.setattr(access, "REQUIRED", True)
+    monkeypatch.setattr(member, "CHECK", True)
+    monkeypatch.setattr(gate, "MEMBERS_ONLY", True)
+    monkeypatch.setattr(gate, "SECRET", "test-secret")
+    monkeypatch.setattr(member, "member_id", lambda cookies: "u-9")
+    page = client.get("/", headers={"accept": "text/html"})
+    assert page.status_code == 403 and "배구구 회원 전용" in page.text and "noindex" in page.headers["x-robots-tag"]
+    assert client.get("/static/guide.html", headers={"accept": "text/html"}).status_code == 403
+    assert client.post("/access", json={"code": "x"}).status_code == 401
+    assert client.get("/idle").status_code == 200  # 입구가 서버 안에서 묻는다
+    assert "Disallow: /" in client.get("/robots.txt").text
+    client.cookies.set(gate.COOKIE, gate.make("member", now=0.0))  # 만료된 쿠키
+    assert client.post("/access", json={"code": "x"}).status_code == 401
+    client.cookies.set(gate.COOKIE, "forged." + "x" * 43)  # 서명이 틀린 쿠키
+    assert client.post("/access", json={"code": "x"}).status_code == 401
+    client.cookies.clear()
+    r = client.post("/access/claim", json={"invite": access.new_invite("banner")})
+    assert r.status_code == 200 and gate.COOKIE in r.cookies  # 배너 + 회원 확인 → 입장 쿠키
+    client.cookies.set(gate.COOKIE, r.cookies[gate.COOKIE])  # Secure 쿠키라 시험용 http에선 저절로 안 실린다
+    assert client.get("/", headers={"accept": "text/html"}).status_code == 200
+    code = r.json()["code"]
+    client.cookies.clear()
+    assert client.post("/access/enter", json={"code": access.new_codes(1)[0]}).status_code == 403  # 회원 확인 없이 만든 코드
+    entered = client.post("/access/enter", json={"code": code})
+    assert entered.status_code == 200  # 홈 화면 앱: 회원 코드로 들어온다
+    client.cookies.set(gate.COOKIE, entered.cookies[gate.COOKIE])
+    assert client.get("/", headers={"accept": "text/html"}).status_code == 200
+    assert client.post("/access/claim", json={"invite": access.new_invite("judge")}).status_code == 403  # 심사용은 추후 결정
+
+
+def test_wrong_codes_lock_the_ip_for_an_hour(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 사용자: 틀린 코드를 자꾸 넣으면 막는다. 8자리를 다 넣은 것만 센다(코드 칸은 칠 때마다 확인해 입력 중은 세지 않는다)
+    monkeypatch.setattr(access, "REQUIRED", True)
+    monkeypatch.setattr(server, "BAD_CODES_PER_HOUR", 3)
+    monkeypatch.setattr(server, "_bad_codes", {})
+    good = access.new_codes(1)[0]
+    check = lambda c: client.post("/access", json={"code": c})
+    for partial in ("A", "AB", "ABC", "ABCD", "ABCDE", "ABCDEF", "ABCDEFG"):
+        assert check(partial).status_code == 200  # 입력 중
+    assert check(good).status_code == 200
+    assert [check("ZZZZ-ZZZ" + str(k)).status_code for k in range(2, 6)] == [200, 200, 200, 429]
+    assert check(good).status_code == 429  # 막힌 동안은 맞는 코드도(같은 주소)
+    assert client.post("/access/enter", json={"code": good}).status_code == 429
+    monkeypatch.setattr(server, "_client_ip", lambda request: "203.0.113.7")
+    assert check(good).status_code == 200  # 다른 주소는 그대로
 
 
 def test_judge_codes_skip_the_daily_limit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

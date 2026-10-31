@@ -1,0 +1,20 @@
+# 배포 서버 Caddy(/etc/caddy/Caddyfile). 인증서는 Caddy가 알아서 받는다.
+# tapme.highlight.baegugu.com은 배구구 하위 주소라 배구구 로그인 쿠키(도메인 .baegugu.com)가 모든 요청에 같이 온다.
+# 앱에는 우리 입장 쿠키(tapme_session, tapme/gate.py)만 넘기고, 배구구 로그인 토큰(baegugu-token, 30분)은 코드 받기
+# (/access/claim, 회원 확인)에만 넘긴다. 연장 토큰(14일)·다른 쿠키는 어디에도 넘기지 않는다(10/31 보안).
+# 쿠키가 없으면 빈 값이 간다(회원 아님·입장 쿠키 없음). 예전 sslip 주소는 닫았다(10/31 사용자: 외부 노출 없이).
+tapme.highlight.baegugu.com {
+	request_body {
+		max_size 450MB
+	}
+	handle /access/claim {
+		reverse_proxy 127.0.0.1:8000 {
+			header_up Cookie "baegugu-token={http.request.cookie.baegugu-token}; tapme_session={http.request.cookie.tapme_session}"
+		}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8000 {
+			header_up Cookie "tapme_session={http.request.cookie.tapme_session}"
+		}
+	}
+}

@@ -16,7 +16,7 @@ from typing import Any
 from tapme import jobs
 
 # 푸시 서비스가 문제가 있을 때 연락할 곳. 운영자 이메일을 노출하지 않게 서비스 주소로
-SUBJECT = os.environ.get("TAPME_VAPID_SUB", "https://tapme-813607979395.asia-northeast3.run.app")
+SUBJECT = os.environ.get("TAPME_VAPID_SUB", "https://highlight.baegugu.com")
 
 
 def public_key() -> str:

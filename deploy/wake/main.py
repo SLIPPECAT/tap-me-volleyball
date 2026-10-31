@@ -88,7 +88,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/status":
             return self._json({"vm": _vm().get("status"), "ready": _ready()})
         path, _, query = self.path.partition("?")
-        if path == "/":
+        # 배너·심사 링크는 highlight.baegugu.com/tapme(하이라이트 기능 중 Tap Me, 10/31 사용자). / 는 지금 기능이 하나라 같게
+        if path in ("/", "/tapme"):
             if _ready():  # 켜져 있으면 바로 넘긴다. ?invite=… 은 그대로, #job=… 은 브라우저가 이어 붙인다
                 return self._send(302, b"", "text/plain", {"Location": TARGET + "/" + (f"?{query}" if query else "")})
             return self._send(200, PAGE.replace("__TARGET__", json.dumps(TARGET)).encode(), "text/html; charset=utf-8")
