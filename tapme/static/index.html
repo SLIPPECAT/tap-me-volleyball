@@ -27,12 +27,28 @@
 <main>
   <p class="error" id="error" role="alert" hidden></p>
 
+  <!-- 기기에서 흐리는 중(브라우저 방식): 원본은 기기에 있어 이 화면을 켜 둬야 한다 -->
+  <section id="local-box" class="card" hidden>
+    <p id="local-step" aria-live="polite"></p>
+    <div class="progress" id="local-progress"><div></div></div>
+    <p class="error" data-t="localKeepOpen"></p>
+    <p class="muted" id="charge-tip" data-t="chargeTip" hidden></p>
+    <button class="primary" id="resume-local" data-t="resumeLocal" hidden></button>
+  </section>
+
+  <!-- 기기 처리가 멈춘 작업(화면을 새로 열었거나 끊김): 같은 영상을 다시 고르면 빠진 조각부터 이어 처리 -->
+  <section id="resume-box" class="card" hidden>
+    <p id="resume-note"></p>
+    <input type="file" id="resume-file" accept="video/*" hidden>
+    <button class="primary" id="resume-go" data-t="resumeLocal" hidden></button>
+  </section>
+
   <!-- 처리 중: 지금 단계 + 닫아도 됨 + 그동안 옵션 미리 정하기 -->
   <section id="wait-box" class="card" hidden>
     <p id="wait-step" aria-live="polite"></p>
     <p class="muted" id="wait-cost" hidden></p>
     <div class="progress" id="wait-progress"><div></div></div>
-    <p class="muted" data-t="canClose"></p>
+    <p class="muted" id="can-close" data-t="canClose"></p>
     <p><button id="copy-link" data-t="copyLink"></button></p>
     <details id="prefs-box">
       <summary data-t="prefsTitle"></summary>
@@ -66,15 +82,29 @@
         <div class="range-btns"><button id="range-first"></button><button id="range-next"></button><button id="range-last"></button></div>
       </div>
       <button class="primary" id="start-upload" data-t="startUpload"></button>
+      <p class="started" id="started-note" aria-live="polite" hidden></p>
+      <!-- 시작 전 선택(10/31 사용자: 대기 시간·폰 사용을 고려): 기기 속도를 재 두 방식의 예상 시간을 보여 준다 -->
+      <div class="choice" id="choice" hidden>
+        <p id="choice-note" aria-live="polite"></p>
+        <div class="progress" id="probe-progress" hidden><div></div></div>
+        <p class="muted" id="push-hint" hidden></p>
+        <button class="option" id="choose-device"><strong data-t="optDevice"></strong><span id="device-est"></span><small data-t="optDeviceHint"></small></button>
+        <button class="option" id="choose-server"><strong data-t="optServer"></strong><span id="server-est"></span><small data-t="optServerHint"></small></button>
+      </div>
     </div>
     <div class="progress" id="up-progress" hidden><div></div></div>
     <p class="muted" id="up-status" aria-live="polite"></p>
+    <button class="primary" id="resume-upload" data-t="resumeUpload" hidden></button>
     <p class="error" id="upload-warn" data-t="keepOpen" hidden></p>
   </section>
 
   <!-- 2. 랠리 후보 -->
   <section id="s-rallies" hidden>
     <h2 data-t="pickRally"></h2>
+    <div class="card" id="refile" hidden>
+      <p data-t="refileNote"></p>
+      <input type="file" id="refile-input" accept="video/*">
+    </div>
     <p class="muted" data-t="pickRallyHint"></p>
     <div class="batch-bar">
       <button id="batch-toggle" data-t="batchToggle"></button>
@@ -191,12 +221,13 @@
   </div>
 </template>
 
+<script src="/static/browser-blur.js"></script>
 <script>
 const T = {
   ko: {
     rangeNote: "이 영상은 {d} 길이예요. 한 번에 {m}분까지 훑으니 훑을 구간을 골라 주세요 (세트마다 한 번씩 하면 좋아요).", rangeStart: "여기서 시작", rangeEnd: "여기서 끝", rangeFirst: "앞 {m}분", rangeNext: "다음 {m}분", rangeLast: "뒤 {m}분", rangeLabel: "{s} ~ {e} ({m}분)", rangeUnknown: "영상 길이를 읽지 못했어요. {m}분보다 길면 앞 {m}분만 훑어요.",
-    codeIssued: "코드가 발급됐어요: {c} — 다른 기기에서 쓰려면 적어 두세요.", consentTitle: "올리기 전에 확인해 주세요", consent1: "랠리 찾기와 선수 추적에 Meta의 AI(Muse Spark, SAM 3.1)를 써요. AI로 보내는 장면은 모든 얼굴을 블러 처리한 뒤 보내지만, 아주 작거나 가려진 얼굴은 블러가 빠질 수 있어요.", consent2: "AI에 올린 파일은 답을 받은 뒤 바로 지워요. 다만 무료 크레딧으로 처리한 장면은 Meta의 제품 개선에 쓰일 수 있어요.", consent3: "영상에 나오는 사람들의 동의를 받은 영상만 올려 주세요. 미성년자가 나오는 영상은 올리지 마세요.", consent4: "결과 영상에서 다른 사람 얼굴 모자이크는 기본으로 켜져 있어요. 끄고 공유할 때는 함께 나온 사람의 동의를 받아 주세요.", consentCheck: "위 내용을 확인했고 동의해요", wipeNote: "올린 영상과 만든 하이라이트는 매일 새벽 {h}시에 모두 지워져요. 하이라이트는 만들자마자 저장해 주세요.", codeLabel: "사용 코드 (배구구에서 받은 코드)", codeNeed: "배구구에서 받은 사용 코드를 넣어 주세요.", codeWrong: "코드가 맞지 않아요.", codeLeft: "이 코드로 영상 {u}편 · 하이라이트 {h}개를 더 만들 수 있어요.", codeNoUploads: "이 코드로 올릴 수 있는 영상을 다 썼어요.", leftNote: "이 코드로 하이라이트 {h}개를 더 만들 수 있어요.", stQueue: "앞에 {n}명이 랠리 찾기를 기다리고 있어요. 화면을 닫아도 차례가 오면 진행돼요.", queuedTurn: "만들 차례를 기다리는 중이에요 (앞에 {n}개). 화면을 닫아도 돼요.",
-    keepOpen: "업로드가 끝날 때까지 이 화면을 켜 두세요.", canClose: "화면을 닫아도 맥에서 계속 진행돼요. 이 링크로 다시 들어오면 이어서 볼 수 있어요.",
+    codeIssued: "코드가 발급됐어요: {c} — 다른 기기에서 쓰려면 적어 두세요.", consentTitle: "올리기 전에 확인해 주세요", consent1: "랠리 찾기와 선수 추적에 Meta의 AI(Muse Spark, SAM 3.1)를 써요. AI로 보내는 장면은 모든 얼굴을 블러 처리한 뒤 보내지만, 아주 작거나 가려진 얼굴은 블러가 빠질 수 있어요.", consent2: "AI에 올린 파일은 답을 받은 뒤 바로 지워요. 다만 무료 크레딧으로 처리한 장면은 Meta의 제품 개선에 쓰일 수 있어요.", consent3: "영상에 나오는 사람들의 동의를 받은 영상만 올려 주세요. 미성년자가 나오는 영상은 올리지 마세요.", consent4: "결과 영상에서 다른 사람 얼굴 모자이크는 기본으로 켜져 있어요. 끄고 공유할 때는 함께 나온 사람의 동의를 받아 주세요.", consentCheck: "위 내용을 확인했고 동의해요", probing: "이 기기의 처리 속도를 재는 중… (10초 안팎)", preparing2: "준비 중…", uploadPaused: "업로드가 멈췄어요(화면이 꺼졌거나 연결이 끊겼어요). '이어 올리기'를 누르면 받은 곳부터 이어서 올려요.", resumeUpload: "이어 올리기", uploadResumed: "이전에 올리던 곳({p}%)부터 이어서 올려요", resumeLocal: "이어서 처리하기", resumeNote: "기기 처리가 멈췄어요. 같은 영상을 다시 고르면 멈춘 곳부터 이어서 처리해요.", resumeNoteHave: "기기 처리가 멈췄어요. 멈춘 곳부터 이어서 처리할 수 있어요.", probeLibs: "처리 도구를 받는 중… ({s}초)", probeOpen: "영상을 여는 중… ({s}초)", probeModel: "얼굴 찾는 도구를 준비하는 중… ({s}초)", probeMeasure: "이 기기의 속도를 재는 중 {n}/{t}장 ({s}초)", probeNet: "업로드 속도를 재는 중… ({s}초)", startedDevice: "기기에서 처리를 시작했어요. 진행 상황은 화면 위에 보여요 ↑", startedServer: "서버로 올리는 중이에요. 진행 상황은 아래에 보여요 ↓", choiceNote: "기기 속도를 재 봤어요. 둘 중 하나를 골라 주세요.", speedNote: "(이 기기: 장당 {s}초 · {ep} · {k}조각)", epGpu: "그래픽칩", epCpu: "일반", optDevice: "이 기기에서 처리", optDeviceHint: "원본이 기기 밖으로 나가지 않아요 · 끝날 때까지 화면을 켜 둬야 해요", optServer: "서버에 맡기기", optServerHint: "올리기만 끝나면 폰을 써도 돼요 · 원본이 서버에 올라가요", estDevice: "약 {m} · {c}쯤 랠리 목록", estServer: "올리기 약 {u} + 처리 약 {p} · {c}쯤 랠리 목록", recommended: "추천", chargeTip: "시간이 걸리는 영상이라 충전기를 연결해 두면 좋아요.", pushHintIos: "아이폰은 사파리 공유 버튼 → '홈 화면에 추가'로 열면 끝났을 때 알림을 받을 수 있어요.", pushHint: "끝나면 알림으로 알려 드려요. 알림 허용을 물으면 '허용'을 눌러 주세요.", etaLeft: "약 {m} 남음 · {c}쯤", localPrep: "기기에서 처리할 준비 중…", localStep: "기기에서 얼굴을 흐리는 중 {p}% · 남은 시간 약 {m} · {c}쯤 끝나요 (원본은 기기 밖으로 나가지 않아요)", localKeepOpen: "끝날 때까지 이 화면을 켜 두세요. 화면을 끄거나 다른 앱으로 가면 멈춰요.", localSlow: "이 기기는 처리가 느려 영상을 서버로 올려 처리할게요.", localDone: "기기 처리가 끝났어요. 남은 조각은 서버가 보고 있어요.", localFail: "기기에서 처리하다 멈췄어요: {e}", localNoFile: "미리보기·장면 만들기는 처음 고른 영상이 있어야 해요 (화면을 새로 열었다면 같은 영상을 다시 골라 주세요)", segUploading: "고른 랠리 구간을 원본 화질로 올리는 중…", refileNote: "이 작업의 영상은 기기에만 있어요. 미리보기와 장면 만들기를 하려면 처음 고른 영상을 다시 골라 주세요.", refileWrong: "처음 고른 영상과 다른 파일이에요.", min: "{n}분", sec: "{n}초", wipeNote: "올린 영상과 만든 하이라이트는 매일 새벽 {h}시에 모두 지워져요. 하이라이트는 만들자마자 저장해 주세요.", codeLabel: "사용 코드 (배구구에서 받은 코드)", codeNeed: "배구구에서 받은 사용 코드를 넣어 주세요.", codeWrong: "코드가 맞지 않아요.", codeLeft: "이 코드로 영상 {u}편 · 하이라이트 {h}개를 더 만들 수 있어요.", codeNoUploads: "이 코드로 올릴 수 있는 영상을 다 썼어요.", leftNote: "이 코드로 하이라이트 {h}개를 더 만들 수 있어요.", stQueue: "앞에 {n}명이 랠리 찾기를 기다리고 있어요. 화면을 닫아도 차례가 오면 진행돼요.", queuedTurn: "만들 차례를 기다리는 중이에요 (앞에 {n}개). 화면을 닫아도 돼요.",
+    keepOpen: "업로드가 끝날 때까지 이 화면을 켜 두세요.", canClose: "화면을 닫거나 폰을 써도 서버에서 계속 진행돼요. 끝나면 알림으로 알려 드리고, 이 링크로 다시 들어와도 이어서 볼 수 있어요.",
     copyLink: "이 작업 링크 복사", copied: "복사했어요", prefsTitle: "기다리는 동안 옵션 미리 정하기",
     stWhistles: "휘슬 소리를 찾는 중…", stRallies: "AI가 영상을 1분씩 훑으며 랠리를 찾는 중… {d}/{n}", scanNote: "아직 찾는 중이에요 ({d}/{n}). 지금까지 찾은 랠리부터 골라 만들 수 있어요.", waitCost: "영상 {m}분 · 예상 AI 비용 약 ${u}", stPreviews: "미리보기 만드는 중… {d}/{n}",
     stScore_time: "득점 순간을 찾는 중…", stBlur: "AI로 보낼 장면의 얼굴을 흐리는 중…", stTracking: "나를 따라가는 중… (SAM)",
@@ -224,8 +255,8 @@ const T = {
   },
   ja: {
     rangeNote: "動画が{d}あるので、一度に{m}分まで見ます。見る区間を選んでください（セットごとに1回ずつがおすすめ）。", rangeStart: "ここから", rangeEnd: "ここまで", rangeFirst: "最初の{m}分", rangeNext: "次の{m}分", rangeLast: "最後の{m}分", rangeLabel: "{s} 〜 {e}（{m}分）", rangeUnknown: "動画の長さを読めませんでした。{m}分より長い場合は最初の{m}分だけ見ます。",
-    codeIssued: "コードを発行しました: {c} — 別の端末で使うときのためにメモしてください。", consentTitle: "アップロードの前にご確認ください", consent1: "ラリー探しと選手の追跡にMetaのAI（Muse Spark、SAM 3.1）を使います。AIに送るシーンはすべての顔をぼかしてから送りますが、とても小さい顔や隠れた顔はぼかしが漏れることがあります。", consent2: "AIにアップロードしたファイルは回答を受け取ったらすぐ削除します。ただし無料クレジットで処理したシーンはMetaの製品改善に使われることがあります。", consent3: "映っている人の同意を得た動画だけをアップロードしてください。未成年が映っている動画はアップロードしないでください。", consent4: "完成動画では他の人の顔モザイクが最初からオンです。オフにして共有するときは、一緒に映っている人の同意を得てください。", consentCheck: "上の内容を確認し、同意します", wipeNote: "アップロードした動画と作ったハイライトは毎日午前{h}時（韓国時間）にすべて削除されます。ハイライトはできたらすぐ保存してください。", codeLabel: "利用コード（Baeguguで受け取ったコード）", codeNeed: "Baeguguで受け取った利用コードを入力してください。", codeWrong: "コードが正しくありません。", codeLeft: "このコードで動画あと{u}本・ハイライトあと{h}本作れます。", codeNoUploads: "このコードでアップロードできる動画を使い切りました。", leftNote: "このコードでハイライトをあと{h}本作れます。", stQueue: "{n}人がラリー探しの順番を待っています。画面を閉じても順番が来たら進みます。", queuedTurn: "作る順番を待っています（前に{n}件）。画面を閉じても大丈夫です。",
-    keepOpen: "アップロードが終わるまでこの画面を開いたままにしてください。", canClose: "画面を閉じてもMacで処理は続きます。このリンクから戻れば続きが見られます。",
+    codeIssued: "コードを発行しました: {c} — 別の端末で使うときのためにメモしてください。", consentTitle: "アップロードの前にご確認ください", consent1: "ラリー探しと選手の追跡にMetaのAI（Muse Spark、SAM 3.1）を使います。AIに送るシーンはすべての顔をぼかしてから送りますが、とても小さい顔や隠れた顔はぼかしが漏れることがあります。", consent2: "AIにアップロードしたファイルは回答を受け取ったらすぐ削除します。ただし無料クレジットで処理したシーンはMetaの製品改善に使われることがあります。", consent3: "映っている人の同意を得た動画だけをアップロードしてください。未成年が映っている動画はアップロードしないでください。", consent4: "完成動画では他の人の顔モザイクが最初からオンです。オフにして共有するときは、一緒に映っている人の同意を得てください。", consentCheck: "上の内容を確認し、同意します", probing: "この端末の処理速度を測っています…（10秒ほど）", preparing2: "準備中…", uploadPaused: "アップロードが止まりました（画面が消えたか接続が切れました）。「続きをアップロード」で受け取った所から続けます。", resumeUpload: "続きをアップロード", uploadResumed: "前回の続き（{p}%）からアップロードします", resumeLocal: "続きを処理する", resumeNote: "端末での処理が止まりました。同じ動画を選び直すと止まった所から続けます。", resumeNoteHave: "端末での処理が止まりました。止まった所から続けられます。", probeLibs: "処理ツールを読み込み中…（{s}秒）", probeOpen: "動画を開いています…（{s}秒）", probeModel: "顔検出の準備中…（{s}秒）", probeMeasure: "この端末の速度を測っています {n}/{t}枚（{s}秒）", probeNet: "アップロード速度を測っています…（{s}秒）", startedDevice: "端末で処理を始めました。進み具合は画面の上に出ます ↑", startedServer: "サーバーにアップロード中です。進み具合は下に出ます ↓", choiceNote: "端末の速度を測りました。どちらかを選んでください。", speedNote: "（この端末: 1枚{s}秒 · {ep} · {k}分割）", epGpu: "GPU", epCpu: "通常", optDevice: "この端末で処理", optDeviceHint: "元の動画は端末の外に出ません · 終わるまで画面を点けたままにします", optServer: "サーバーに任せる", optServerHint: "アップロードが終われば携帯を使えます · 元の動画がサーバーに送られます", estDevice: "約{m} · {c}ごろラリー一覧", estServer: "アップロード約{u} + 処理約{p} · {c}ごろラリー一覧", recommended: "おすすめ", chargeTip: "時間がかかる動画なので、充電器につないでおくと安心です。", pushHintIos: "iPhoneはSafariの共有ボタン →「ホーム画面に追加」から開くと、終わったときに通知を受け取れます。", pushHint: "終わったら通知でお知らせします。通知の許可を聞かれたら「許可」を押してください。", etaLeft: "残り約{m} · {c}ごろ", localPrep: "端末で処理する準備をしています…", localStep: "端末で顔をぼかしています {p}% · 残り約{m} · {c}ごろ完了（元の動画は端末の外に出ません）", localKeepOpen: "終わるまでこの画面を開いたままにしてください。画面を消したり別のアプリに移ると止まります。", localSlow: "この端末では処理が遅いため、動画をサーバーに送って処理します。", localDone: "端末での処理が終わりました。残りはサーバーが確認しています。", localFail: "端末での処理が止まりました: {e}", localNoFile: "プレビューとシーン作成には最初に選んだ動画が必要です（画面を開き直した場合は同じ動画を選び直してください）", segUploading: "選んだラリーの区間を元の画質でアップロードしています…", refileNote: "この作業の動画は端末にだけあります。プレビューとシーン作成には、最初に選んだ動画をもう一度選んでください。", refileWrong: "最初に選んだ動画と違うファイルです。", min: "{n}分", sec: "{n}秒", wipeNote: "アップロードした動画と作ったハイライトは毎日午前{h}時（韓国時間）にすべて削除されます。ハイライトはできたらすぐ保存してください。", codeLabel: "利用コード（Baeguguで受け取ったコード）", codeNeed: "Baeguguで受け取った利用コードを入力してください。", codeWrong: "コードが正しくありません。", codeLeft: "このコードで動画あと{u}本・ハイライトあと{h}本作れます。", codeNoUploads: "このコードでアップロードできる動画を使い切りました。", leftNote: "このコードでハイライトをあと{h}本作れます。", stQueue: "{n}人がラリー探しの順番を待っています。画面を閉じても順番が来たら進みます。", queuedTurn: "作る順番を待っています（前に{n}件）。画面を閉じても大丈夫です。",
+    keepOpen: "アップロードが終わるまでこの画面を開いたままにしてください。", canClose: "画面を閉じたり携帯を使ったりしても、サーバーで処理は続きます。終わったら通知でお知らせします。このリンクから戻っても続きが見られます。",
     copyLink: "この作業のリンクをコピー", copied: "コピーしました", prefsTitle: "待っている間にオプションを決めておく",
     stWhistles: "ホイッスルの音を探しています…", stRallies: "AIが動画を1分ずつ見てラリーを探しています… {d}/{n}", scanNote: "まだ探しています（{d}/{n}）。見つかったラリーから選んで作れます。", waitCost: "動画 {m}分 · AI費用の見込み 約${u}", stPreviews: "プレビューを作っています… {d}/{n}",
     stScore_time: "得点の瞬間を探しています…", stBlur: "AIに送るシーンの顔をぼかしています…", stTracking: "自分を追いかけています…（SAM）",
@@ -253,8 +284,8 @@ const T = {
   },
   en: {
     rangeNote: "This video is {d} long. Up to {m} minutes are scanned at a time, so pick the part to scan (one set at a time works well).", rangeStart: "Start here", rangeEnd: "End here", rangeFirst: "First {m} min", rangeNext: "Next {m} min", rangeLast: "Last {m} min", rangeLabel: "{s} – {e} ({m} min)", rangeUnknown: "Couldn't read the video length. If it's longer than {m} minutes, only the first {m} are scanned.",
-    codeIssued: "Your code: {c} — write it down to use it on another device.", consentTitle: "Please read before uploading", consent1: "Rally finding and player tracking use Meta's AI (Muse Spark, SAM 3.1). Every face is blurred before a scene is sent to the AI, but very small or hidden faces can slip through.", consent2: "Files sent to the AI are deleted as soon as the answer comes back. Scenes processed with free credits may still be used to improve Meta's products.", consent3: "Only upload videos that the people in them have agreed to. Don't upload videos with minors in them.", consent4: "Pixelation of other people's faces is on by default in the final video. If you turn it off before sharing, get the agreement of the people in it.", consentCheck: "I have read the above and agree", wipeNote: "Uploaded videos and made highlights are all deleted every day at {h}:00 (Korea time). Save your highlights as soon as they're made.", codeLabel: "Access code (from Baegugu)", codeNeed: "Enter the access code you got from Baegugu.", codeWrong: "That code isn't right.", codeLeft: "This code can make {u} more videos and {h} more highlights.", codeNoUploads: "This code has used up its video uploads.", leftNote: "This code can make {h} more highlights.", stQueue: "{n} ahead of you in line for rally finding. You can close this screen; it continues when it's your turn.", queuedTurn: "Waiting for its turn ({n} ahead). You can close this screen.",
-    keepOpen: "Keep this screen open until the upload finishes.", canClose: "You can close this screen; your Mac keeps working. Open this link again to continue.",
+    codeIssued: "Your code: {c} — write it down to use it on another device.", consentTitle: "Please read before uploading", consent1: "Rally finding and player tracking use Meta's AI (Muse Spark, SAM 3.1). Every face is blurred before a scene is sent to the AI, but very small or hidden faces can slip through.", consent2: "Files sent to the AI are deleted as soon as the answer comes back. Scenes processed with free credits may still be used to improve Meta's products.", consent3: "Only upload videos that the people in them have agreed to. Don't upload videos with minors in them.", consent4: "Pixelation of other people's faces is on by default in the final video. If you turn it off before sharing, get the agreement of the people in it.", consentCheck: "I have read the above and agree", probing: "Measuring this device's speed… (about 10 seconds)", preparing2: "Getting ready…", uploadPaused: "The upload stopped (the screen turned off or the connection dropped). Tap \"Resume upload\" to continue from where it left off.", resumeUpload: "Resume upload", uploadResumed: "Resuming from {p}%", resumeLocal: "Continue processing", resumeNote: "Processing on this device stopped. Pick the same video again to continue from where it stopped.", resumeNoteHave: "Processing on this device stopped. You can continue from where it stopped.", probeLibs: "Loading processing tools… ({s}s)", probeOpen: "Opening the video… ({s}s)", probeModel: "Preparing face detection… ({s}s)", probeMeasure: "Measuring this device {n}/{t} frames ({s}s)", probeNet: "Measuring upload speed… ({s}s)", startedDevice: "Started on this device. Progress is shown at the top ↑", startedServer: "Uploading to the server. Progress is shown below ↓", choiceNote: "We measured this device. Pick one.", speedNote: "(this device: {s}s per frame · {ep} · {k} tiles)", epGpu: "GPU", epCpu: "CPU", optDevice: "Process on this device", optDeviceHint: "The original never leaves your device · keep the screen on until it finishes", optServer: "Let the server do it", optServerHint: "Use your phone once the upload finishes · the original is uploaded", estDevice: "about {m} · rally list around {c}", estServer: "upload about {u} + processing about {p} · rally list around {c}", recommended: "Recommended", chargeTip: "This takes a while, so plugging in a charger helps.", pushHintIos: "On iPhone, open this from Safari's Share button → 'Add to Home Screen' to get a notification when it's done.", pushHint: "We'll notify you when it's done. Tap 'Allow' if asked about notifications.", etaLeft: "about {m} left · around {c}", localPrep: "Getting ready to process on this device…", localStep: "Blurring faces on this device {p}% · about {m} left, done around {c} (the original never leaves your device)", localKeepOpen: "Keep this screen open until it finishes. Turning the screen off or switching apps pauses it.", localSlow: "This device is slow at processing, so the video will be uploaded and processed on the server.", localDone: "Done on this device. The server is checking the last pieces.", localFail: "Processing on this device stopped: {e}", localNoFile: "Previews and making scenes need the video you picked first (if you reopened the page, pick the same video again)", segUploading: "Uploading the picked rally in original quality…", refileNote: "This job's video stays on your device. To preview and make scenes, pick the same video again.", refileWrong: "That is not the video you picked first.", min: "{n} min", sec: "{n} s", wipeNote: "Uploaded videos and made highlights are all deleted every day at {h}:00 (Korea time). Save your highlights as soon as they're made.", codeLabel: "Access code (from Baegugu)", codeNeed: "Enter the access code you got from Baegugu.", codeWrong: "That code isn't right.", codeLeft: "This code can make {u} more videos and {h} more highlights.", codeNoUploads: "This code has used up its video uploads.", leftNote: "This code can make {h} more highlights.", stQueue: "{n} ahead of you in line for rally finding. You can close this screen; it continues when it's your turn.", queuedTurn: "Waiting for its turn ({n} ahead). You can close this screen.",
+    keepOpen: "Keep this screen open until the upload finishes.", canClose: "You can close this screen or use your phone; the server keeps working. We'll notify you when it's done, and this link brings you back.",
     copyLink: "Copy link to this job", copied: "Copied", prefsTitle: "Set options while you wait",
     stWhistles: "Finding whistles…", stRallies: "AI is scanning the video a minute at a time for rallies… {d}/{n}", scanNote: "Still scanning ({d}/{n}). You can pick from the rallies found so far.", waitCost: "{m}-minute video · estimated AI cost about ${u}", stPreviews: "Making previews… {d}/{n}",
     stScore_time: "Finding the scoring moment…", stBlur: "Blurring faces before sending to AI…", stTracking: "Following you… (SAM)",
@@ -314,6 +345,8 @@ function initLang() {
 
 function show(section) { for (const s of ["s-upload", "s-rallies", "s-tap", "s-result"]) $(s).hidden = s !== section; }
 function setError(msg) { $("error").textContent = msg || ""; $("error").hidden = !msg; }
+// 기기 쪽 오류(처리 멈춤 등)는 서버 상태를 다시 그려도 남겨 둔다(2초마다 서버 오류로 덮여 안 보였다, 10/31 아이폰)
+function setLocalError(msg) { state.localError = msg || ""; setError(msg); }
 function setHash() { location.hash = state.job ? `job=${state.job}` + (state.rally !== null ? `&rally=${state.rally}` : "") : ""; }
 function fmt(sec) { const m = Math.floor(sec / 60), s = Math.floor(sec % 60); return `${m}:${String(s).padStart(2, "0")}`; }
 function reasonText(r) { return r && typeof r === "object" ? (r[state.lang] || r.en || "") : (r || ""); }
@@ -357,6 +390,7 @@ function mountOptions(boxId, o) {
 // 상태를 2초마다 보고 지금 단계의 화면을 그린다
 function startPolling() {
   clearInterval(state.poll);
+  subscribePush(state.job);  // 알림을 허용한 기기면 이 작업도 알린다(링크로 다시 들어온 경우 포함)
   const tick = async () => {
     try { state.last = await api(`/jobs/${state.job}`); } catch (e) { setError(e.message); return; }
     render(state.last);
@@ -375,13 +409,16 @@ function busyOf(s) {
 function renderWait(s) {
   const busy = busyOf(s) && !s.error;
   $("wait-box").hidden = !busy;
+  // 기기 방식에서 조각이 남아 있으면 기기가 해야 해서 닫으면 멈춘다(서버 혼자 계속하지 않는다)
+  $("can-close").hidden = Boolean(state.localBusy) || (s.mode === "browser" && (s.chunks_received || []).length < ((s.scan || {}).total || 0));
   if (busy) {
     const sc = state.rally !== null && s.scenes[String(state.rally)];
     const sceneBusy = sc && (sc.status === "preparing" || sc.status === "rendering");
     const pr = s.status === "finding_rallies" && !sceneBusy ? { step: "rallies", ...(s.scan || {}) } : (s.progress || {});
     const key = pr.step ? "st" + pr.step[0].toUpperCase() + pr.step.slice(1) : "stWorking";
     const pct = pr.total ? Math.round(100 * pr.done / pr.total) : 0;
-    $("wait-step").textContent = t(T[state.lang][key] ? key : "stWorking", { d: pr.done || 0, n: pr.total || 0, p: pct });
+    $("wait-step").textContent = t(T[state.lang][key] ? key : "stWorking", { d: pr.done || 0, n: pr.total || 0, p: pct })
+      + (s.status === "finding_rallies" && !sceneBusy ? scanEta(s) : "");
     $("wait-progress").hidden = !pr.total;
     if (s.status === "uploaded" && s.queue) $("wait-step").textContent = t("stQueue", { n: s.queue });
     // 긴 영상은 오래 걸리고 비용도 커서 랠리 찾는 동안 길이와 예상 비용을 보여 준다
@@ -409,7 +446,7 @@ $("copy-link").onclick = async () => {
 };
 
 function render(s) {
-  setError(s.error);
+  setError(s.error || state.localError);
   const active = Object.values(s.scenes).filter((x) => x.status === "queued" || x.status === "rendering").length;
   if (state.active > 0 && active === 0 && !s.error) {
     if (navigator.vibrate) navigator.vibrate(200);
@@ -418,12 +455,22 @@ function render(s) {
   state.active = active;
   renderWait(s);
   $("spent").textContent = t("spent", { u: s.spent_usd.toFixed(3) });
+  // 브라우저 방식인데 화면을 새로 열어 기기 원본과 연결이 끊겼으면 같은 영상을 다시 고르게 한다
+  $("refile").hidden = !(s.mode === "browser" && !state.local);
+  // 기기 처리가 멈춘 채 조각이 빠져 있으면(새로 열었거나 끊김) 이어서 처리하기를 보인다
+  const stalled = s.mode === "browser" && s.status === "finding_rallies" && !state.localBusy
+    && (s.chunks_received || []).length < ((s.scan || {}).total || 0);
+  $("resume-box").hidden = !stalled || !$("resume-local").hidden;
+  if (stalled) {
+    $("resume-note").textContent = t(state.local ? "resumeNoteHave" : "resumeNote");
+    $("resume-file").hidden = Boolean(state.local); $("resume-go").hidden = !state.local;
+  }
   $("left-note").hidden = !s.left;
   if (s.left) $("left-note").textContent = t("leftNote", { h: s.left.highlights });
   if (state.rally === null) return renderRallies(s);
   const scene = s.scenes[String(state.rally)];
   if (!scene || scene.status === "preparing") {
-    show("s-tap"); $("tap-status").textContent = s.error ? "" : t("preparing"); $("tap-box").hidden = true;
+    show("s-tap"); $("tap-status").textContent = s.error ? "" : t(state.segUploading === state.rally ? "segUploading" : "preparing"); $("tap-box").hidden = true;
   } else if (scene.status === "awaiting_tap" || scene.status === "failed") {
     show("s-tap"); renderTap();
     $("make").textContent = batchLabel() || t("make");
@@ -464,14 +511,19 @@ function renderRallies(s) {
     // 장면 사진. 누르면 그 구간 미리보기를 카드 안에서 재생한다(시간만으로는 어떤 장면인지 모른다)
     const thumb = document.createElement("button"); thumb.className = "thumb"; thumb.setAttribute("aria-label", t("preview"));
     const img = document.createElement("img"); img.loading = "lazy"; img.alt = "";
-    img.src = `/jobs/${state.job}/rallies/${r.index}/thumb`;
+    if (s.mode !== "browser") img.src = `/jobs/${state.job}/rallies/${r.index}/thumb`;
+    else if (state.local) localThumb((r.start_sec + r.end_sec) / 2).then((u) => { img.src = u; });  // 원본은 기기에만 있다
     const play = document.createElement("span"); play.textContent = "▶";
     thumb.append(img, play);
     thumb.onclick = () => {
       // 미리보기를 보는 동안 뒤에서 장면을 미리 준비한다(비용 없을 때만, 서버가 판단). 고르면 탭 화면이 바로 뜬다
       fetch(`/jobs/${state.job}/rallies/${r.index}/prepare?ahead=true`, { method: "POST" }).catch(() => {});
       const v = document.createElement("video");
-      v.src = `/jobs/${state.job}/rallies/${r.index}/preview`; v.controls = true; v.autoplay = true; v.playsInline = true;
+      if (s.mode === "browser") {
+        if (!state.local) { setError(t("localNoFile")); return; }
+        v.src = `${state.local.url}#t=${Math.max(0, r.start_sec - 1).toFixed(1)},${(r.end_sec + 1).toFixed(1)}`;  // 기기의 원본 그 구간
+      } else v.src = `/jobs/${state.job}/rallies/${r.index}/preview`;
+      v.controls = true; v.autoplay = true; v.playsInline = true;
       thumb.replaceWith(v);
     };
     const info = document.createElement("div");
@@ -491,7 +543,7 @@ function renderRallies(s) {
       const sc = state.last && state.last.scenes[String(r.index)];
       // 미리 준비 중(preparing)이면 기다리기만 한다. 준비하다 실패했을 때만 다시 요청
       if (!sc || (sc.status === "preparing" && state.last.error)) {
-        try { await api(`/jobs/${state.job}/rallies/${r.index}/prepare`, { method: "POST" }); } catch (e) { setError(e.message); }
+        try { await prepareRally(r.index); } catch (e) { setError(e.message); }
       }
       startPolling();
     };
@@ -516,6 +568,32 @@ function batchRoom(s) {
   const room = BATCH_MAX - Object.values((s && s.scenes) || {}).filter((x) => x.status === "queued" || x.status === "rendering").length;
   return Math.min(room, s && s.left ? s.left.highlights : room);  // 코드의 남은 하이라이트 수까지만
 }
+// 브라우저 방식의 장면 사진: 기기의 원본에서 그 시각 한 장을 그린다(한 번에 하나씩, 같은 영상 요소를 돌려 쓴다)
+$("refile-input").addEventListener("change", () => {
+  const f = $("refile-input").files[0];
+  if (!f) return;
+  if (state.last && state.last.source_size && f.size !== state.last.source_size) { setError(t("refileWrong")); return; }
+  setError(""); state.local = { file: f, url: URL.createObjectURL(f) };
+  $("rally-list").dataset.key = ""; render(state.last);
+});
+let thumbQueue = Promise.resolve();
+function localThumb(sec) {
+  thumbQueue = thumbQueue.then(() => new Promise((ok) => {
+    const v = state.local.thumbVideo || (state.local.thumbVideo = Object.assign(document.createElement("video"), { muted: true, playsInline: true, preload: "auto", src: state.local.url }));
+    const draw = () => {
+      const c = document.createElement("canvas"), w = 480;
+      c.width = w; c.height = Math.round(w * v.videoHeight / v.videoWidth);
+      c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+      ok(c.toDataURL("image/jpeg", 0.7));
+    };
+    const go = () => { if (Math.abs(v.currentTime - sec) < 0.05) draw(); else { v.onseeked = draw; v.currentTime = sec; } };
+    v.onerror = () => ok("");
+    setTimeout(() => ok(""), 5000);  // 못 그리면 사진 없이 넘어간다(줄이 멈추지 않게)
+    if (v.readyState >= 1) go(); else v.onloadedmetadata = go;
+  }));
+  return thumbQueue;
+}
+
 function renderBatchBar(s) {
   $("batch-toggle").textContent = t(state.batchMode ? "batchCancel" : "batchToggle");
   $("batch-go").hidden = !state.batchMode || state.picked.size === 0;
@@ -535,10 +613,27 @@ $("batch-start").onclick = async () => {
   state.batchMode = false; state.picked.clear();
   // 고른 랠리를 모두 미리 준비해 둔다(서버가 하나씩 처리). 탭 화면은 첫 랠리부터
   for (const i of state.batch) {
-    if (!state.last.scenes[String(i)]) await api(`/jobs/${state.job}/rallies/${i}/prepare`, { method: "POST" }).catch(() => {});
+    if (!state.last.scenes[String(i)]) await prepareRally(i).catch((e) => setError(e.message));
   }
   state.rally = state.batch[0]; setHash(); startPolling();
 };
+// 장면 준비. 브라우저 방식은 먼저 그 랠리 구간을 기기 원본에서 잘라 올린다(다시 압축하지 않음, 원본 화질·소리 그대로)
+const SEG_BEFORE = 8, SEG_AFTER = 6;  // 서버 jobs.SEGMENT_BEFORE_SEC·SEGMENT_AFTER_SEC와 같게
+async function prepareRally(i) {
+  const s = state.last, r = s.rallies.find((x) => x.index === i);
+  if (s.mode === "browser" && !(s.segments || []).includes(String(i))) {
+    if (!state.local) throw new Error(t("localNoFile"));
+    state.segUploading = i; render(s);
+    try {
+      const seg = await BrowserBlur.extractSegment(state.local.file, Math.max(0, r.point_sec - SEG_BEFORE), r.point_sec + SEG_AFTER);
+      const form = new FormData();
+      form.append("video", seg.video, "video.mp4"); form.append("start", String(seg.start));
+      if (seg.audio) form.append("audio", seg.audio, "audio.mp4");
+      await api(`/jobs/${state.job}/rallies/${i}/segment`, { method: "POST", body: form });
+    } finally { state.segUploading = null; }
+  }
+  await api(`/jobs/${state.job}/rallies/${i}/prepare`, { method: "POST" });
+}
 function batchLabel() {
   const i = state.batch.indexOf(state.rally);
   if (i < 0) return null;
@@ -745,26 +840,53 @@ for (const id of ["back-rallies", "back-rallies2"]) {
   $(id).onclick = () => { state.rally = null; $("opts-result").replaceChildren(); $("opts-tap").replaceChildren(); setHash(); startPolling(); };
 }
 
-// 업로드: 진행률을 보여 주려고 XHR을 쓴다. 파일 고르기와 끌어다 놓기가 함께 쓴다
-function uploadVideo(f) {
-  const form = new FormData(); form.append("file", f); form.append("match", $("match-name").value);
-  if (state.range) { form.append("start", state.range[0].toFixed(2)); form.append("end", state.range[1].toFixed(2)); }
-  form.append("code", $("code").value.trim());
-  const xhr = new XMLHttpRequest();
-  $("up-progress").hidden = false; $("upload-warn").hidden = false; setError("");
-  xhr.upload.onprogress = (e) => {
-    if (!e.lengthComputable) return;
-    const p = Math.round(100 * e.loaded / e.total);
-    $("up-progress").firstElementChild.style.transform = `scaleX(${p / 100})`; $("up-status").textContent = t("uploading", { p });
-  };
-  xhr.onload = () => {
-    $("upload-warn").hidden = true;
-    if (xhr.status !== 200) { let d = ""; try { d = JSON.parse(xhr.responseText).detail; } catch {} setError(d || t("uploadFail", { c: xhr.status })); $("start-upload").disabled = false; $("up-progress").hidden = true; return; }
-    state.job = JSON.parse(xhr.responseText).id; state.rally = null; setHash(); startPolling();
-  };
-  xhr.onerror = () => { $("upload-warn").hidden = true; setError(t("uploadFail", { c: "network" })); $("start-upload").disabled = false; $("up-progress").hidden = true; };
-  xhr.open("POST", "/jobs"); xhr.send(form);
+// 서버에 맡기기(이어 올리기, 10/31 사용자: 업로드 중 화면을 끄면 처음부터 다시 올려야 했다): 원본을 16MB씩 올리고,
+// 끊기면 서버가 받은 곳부터 잇는다. 이어 올릴 자리는 이 기기에 기억해 화면을 새로 열고 같은 영상을 다시 골라도 이어진다
+const UP_PIECE = 16 * 1024 * 1024;
+async function uploadVideo(f) {
+  setError(""); $("resume-upload").hidden = true; $("up-progress").hidden = false; $("upload-warn").hidden = false;
+  state.uploading = true; state.uploadFile = f; state.uploadPaused = false; keepAwake(true);
+  const sig = `${f.name}|${f.size}|${f.lastModified}`;
+  try {
+    let sess = null, received = 0;
+    try { sess = JSON.parse(storeGet("upload") || "null"); } catch { sess = null; }
+    if (sess && sess.sig === sig) {
+      try { received = (await api(`/uploads/${sess.id}`)).received; } catch { sess = null; }
+    }
+    if (!sess || sess.sig !== sig) {
+      const body = { filename: f.name, size: f.size, match: $("match-name").value, code: $("code").value.trim() };
+      if (state.range) { body.start = state.range[0]; body.end = state.range[1]; }
+      const r = await postJson("/uploads", body);
+      sess = { id: r.id, sig }; storeSet("upload", JSON.stringify(sess));
+    } else if (received > 0) $("up-status").textContent = t("uploadResumed", { p: Math.round(100 * received / f.size) });
+    const t0 = Date.now(), r0 = received;
+    while (received < f.size) {
+      const r = await fetch(`/uploads/${sess.id}?offset=${received}`, { method: "PUT", body: f.slice(received, Math.min(f.size, received + UP_PIECE)) });
+      if (r.status === 409) { received = (await r.json()).detail.received; continue; }  // 서버가 받은 곳에 맞춘다
+      if (!r.ok) throw new Error(t("uploadFail", { c: r.status }));
+      received = (await r.json()).received;
+      const rate = (received - r0) / Math.max(0.5, (Date.now() - t0) / 1000), left = (f.size - received) / rate;
+      $("up-progress").firstElementChild.style.transform = `scaleX(${received / f.size})`;
+      $("up-status").textContent = t("uploading", { p: Math.round(100 * received / f.size) }) + (left > 5 ? " · " + t("etaLeft", { m: fmtLeft(left), c: clockAt(left) }) : "");
+    }
+    const j = await postJson(`/uploads/${sess.id}/finish`, {});
+    storeSet("upload", "");
+    $("upload-warn").hidden = true; state.uploading = false; state.uploadFile = null; keepAwake(false);
+    state.job = j.id; state.rally = null; setHash(); startPolling(); subscribePush(state.job);
+  } catch (e) {
+    state.uploading = false; keepAwake(false); $("upload-warn").hidden = true;
+    // 연결이 끊긴 것(화면 꺼짐 등)이면 이어 올리게, 서버가 거절한 것(코드·한도)이면 그대로 알린다
+    if (e instanceof TypeError) { state.uploadPaused = true; $("resume-upload").hidden = false; setError(t("uploadPaused")); }
+    else { setError(e.message); $("start-upload").disabled = false; $("up-progress").hidden = true; }
+  }
 }
+$("resume-upload").onclick = () => uploadVideo(state.uploadFile || state.pending);
+// 화면으로 돌아오면 멈춘 업로드·기기 처리를 저절로 잇는다
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  if (state.uploadPaused && (state.uploadFile || state.pending)) $("resume-upload").click();
+  else if (state.localPaused && state.local) resumeBrowser(state.local.file);
+});
 // 한 번에 훑는 길이(서버 jobs.MAX_SCAN_SEC와 같게). 더 긴 영상은 구간을 고른다 — 파일을 자르지 않고 그 구간만 훑는다(10/31 사용자)
 const MAX_SCAN_MIN = 30, MAX_SCAN = MAX_SCAN_MIN * 60;
 const rangeVideo = $("range-video");
@@ -817,8 +939,191 @@ $("start-upload").onclick = async () => {
   if (!state.pending) return;
   $("start-upload").disabled = true;
   await checkAccess();  // 올리는 사이 대기가 차거나 비용이 다했을 수 있다
-  if (state.access.ok && $("consent-check").checked) uploadVideo(state.pending);
+  if (!state.access.ok || !$("consent-check").checked) return;
+  showChoice(state.pending);
 };
+
+// 브라우저 방식(10/31, H-45): 이 기기에서 얼굴을 흐려 1분 조각만 올린다. 원본은 기기에 남는다. 처음 몇 장이 느리거나
+// 이 기기가 영상을 못 풀면 원본을 올려 서버가 흐린다(지금까지의 방식)
+function canBlurHere(f) {
+  return window.BrowserBlur && BrowserBlur.supported() && /\.(mp4|mov|m4v)$/i.test(f.name) && rangeVideo.duration > 0;
+}
+// 예상 완료 시각(10/31 사용자: 언제 확인할 수 있는지가 관건)
+function clockAt(sec) { return new Date(Date.now() + sec * 1000).toLocaleTimeString(state.lang, { hour: "numeric", minute: "2-digit" }); }
+// 랠리 찾기 남은 시간: 조각이 끝나는 빠르기로 어림한다. 첫 조각 전에는 서버 실측(영상 1초당 초)으로
+function scanEta(s) {
+  const sc = s.scan || {}, now = Date.now();
+  if (!sc.total) return "";
+  if (!state.scanSeen || state.scanSeen.job !== state.job) state.scanSeen = { job: state.job, t0: now, d0: sc.done || 0 };
+  const seen = state.scanSeen, done = (sc.done || 0) - seen.d0;
+  const range = s.scan_range && s.scan_range.length === 2 ? s.scan_range[1] - s.scan_range[0] : s.duration_sec;
+  const left = done > 0 ? (now - seen.t0) / 1000 / done * (sc.total - sc.done)
+    : s.mode === "browser" ? 0 : range * ((state.est || {}).scan_rate || 2.2) * (1 - (sc.done || 0) / sc.total);
+  return left > 30 ? " · " + t("etaLeft", { m: fmtLeft(left), c: clockAt(left) }) : "";
+}
+// 화면 꺼짐 막기: 기기에서 흐리거나 원본을 올리는 동안(폰이 잠기면 멈춘다). 지원하지 않는 브라우저는 그냥 넘어간다
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on && !wakeLock && navigator.wakeLock) { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", () => { wakeLock = null; }); }
+    else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch { /* 배터리 절약 모드 등에서는 거절될 수 있다 */ }
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && (state.localBusy || state.uploading)) keepAwake(true); });
+// 업로드 속도(Mbps): 2MB를 보내 걸린 시간. 못 재면 20Mbps로 본다
+async function uploadMbps() {
+  try {
+    const t0 = performance.now();
+    await fetch("/speedtest", { method: "POST", body: new Uint8Array(2 * 1024 * 1024) });
+    return Math.max(1, 16 / ((performance.now() - t0) / 1000));
+  } catch { return 20; }
+}
+// 시작 전 선택: 기기 속도를 재고 두 방식의 예상 시간을 보여 준다. 기기가 못 하는 영상이면 서버만
+async function showChoice(f) {
+  const dur = rangeVideo.duration, [start, end] = state.range || [0, Math.min(dur, MAX_SCAN)], len = end - start;
+  const canDevice = canBlurHere(f);
+  // 누른 즉시 반응: 버튼은 "준비 중…"으로, 바로 아래에 단계·경과 초·막대(폰에서 멈춘 것처럼 보였다, 10/31 사용자)
+  $("start-upload").textContent = t("preparing2"); $("start-upload").disabled = true; $("started-note").hidden = true;
+  $("choice").hidden = false; $("choose-device").hidden = $("choose-server").hidden = true; $("push-hint").hidden = true;
+  $("probe-progress").hidden = false; $("probe-progress").firstElementChild.style.transform = "scaleX(0)";
+  $("choice").scrollIntoView({ block: "center", behavior: "smooth" });
+  const t0 = Date.now();
+  let step = canDevice ? "libs" : "net", n = 0;
+  const STEPS = { libs: "probeLibs", open: "probeOpen", model: "probeModel", measure: "probeMeasure", net: "probeNet" };
+  const show = () => {
+    const sec = Math.round((Date.now() - t0) / 1000);
+    $("choice-note").textContent = t(STEPS[step], { n, t: BrowserBlur.PROBE_FRAMES, s: sec });
+    const frac = step === "measure" ? 0.3 + 0.7 * n / BrowserBlur.PROBE_FRAMES : { libs: 0.05, open: 0.15, model: 0.25, net: 0.5 }[step];
+    $("probe-progress").firstElementChild.style.transform = `scaleX(${frac})`;
+  };
+  const ticker = setInterval(show, 1000); show();
+  const probing = canDevice ? BrowserBlur.probe(f, start, (st, k) => { step = st; n = k; show(); }).catch(() => ({ per: Infinity })) : Promise.resolve({ per: Infinity });
+  const [probed, mbps] = await Promise.all([probing, uploadMbps()]), per = probed.per;
+  clearInterval(ticker); $("probe-progress").hidden = true;
+  $("start-upload").hidden = true; $("start-upload").disabled = false; $("start-upload").textContent = t("startUpload");
+  const uploadSec = f.size * 8 / (mbps * 1e6);  // 서버 방식은 원본 전체를 올린다(고른 구간과 상관없이)
+  const serverSec = uploadSec + len * ((state.est || {}).scan_rate || 2.2);
+  const deviceSec = per * len * BrowserBlur.FPS + 60;  // 마지막 조각을 AI가 보는 시간
+  const deviceOk = Number.isFinite(per);
+  // 추천: 예상 완료가 서버보다 20% 넘게 늦지 않으면 기기(원본이 안 나가고 큰 업로드가 없다). 절대 기준(장당 1초)만 보면
+  // 갤럭시 S22도 서버가 추천으로 나왔다(10/31 사용자)
+  const recommend = deviceOk && deviceSec <= serverSec * 1.2 ? "device" : "server";
+  $("choice-note").textContent = t("choiceNote") + (deviceOk ? " " + t("speedNote", { s: per.toFixed(2), ep: probed.ep === "webgpu" ? t("epGpu") : t("epCpu"), k: probed.tiles }) : "");
+  pushHint();
+  $("choose-device").hidden = !deviceOk; $("choose-server").hidden = false;
+  $("device-est").textContent = deviceOk ? t("estDevice", { m: fmtLeft(deviceSec), c: clockAt(deviceSec) }) : "";
+  $("server-est").textContent = t("estServer", { u: fmtLeft(uploadSec), p: fmtLeft(serverSec - uploadSec), c: clockAt(serverSec) });
+  for (const [id, key] of [["choose-device", "device"], ["choose-server", "server"]]) {
+    const b = $(id); b.classList.toggle("recommended", key === recommend);
+    b.dataset.badge = key === recommend ? t("recommended") : "";
+  }
+  state.deviceEstSec = deviceSec;
+}
+// 고르면 무엇이 시작됐는지 그 자리에 남기고, 진행 상황이 있는 곳으로 화면을 옮긴다
+function started(key, target) {
+  $("choice").hidden = true; $("started-note").hidden = false; $("started-note").textContent = t(key);
+  setTimeout(() => $(target).scrollIntoView({ block: "start", behavior: "smooth" }), 50);
+}
+$("choose-device").onclick = () => { askPush(); started("startedDevice", "local-box"); startBrowser(state.pending); };
+$("choose-server").onclick = () => { askPush(); started("startedServer", "up-progress"); uploadVideo(state.pending); };
+
+// 완료 알림(웹 푸시, 10/31 사용자: 끝나면 알려 주고 다음 할 일을 안내). 안드로이드 크롬은 브라우저에서 바로, 아이폰은
+// 홈 화면에 추가한 앱에서만 된다. 허용은 사용자가 방식을 고르는 순간(누른 그 자리에서) 묻고, 작업이 생기면 구독을 보낸다
+const IOS = /iPhone|iPad/.test(navigator.userAgent), STANDALONE = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+const PUSH_OK = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+function pushHint() {
+  $("push-hint").hidden = false;
+  $("push-hint").textContent = PUSH_OK && Notification.permission !== "denied" ? t("pushHint") : IOS && !STANDALONE ? t("pushHintIos") : "";
+  $("push-hint").hidden = !$("push-hint").textContent;
+}
+function askPush() {
+  if (PUSH_OK && Notification.permission === "default") Notification.requestPermission().catch(() => {});
+}
+const subscribed = new Set();
+async function subscribePush(jobId) {
+  if (!PUSH_OK || subscribed.has(jobId)) return;
+  try {
+    if (Notification.permission === "default") await new Promise((ok) => setTimeout(ok, 3000));  // 허용 창에 답할 시간
+    if (Notification.permission !== "granted") return;
+    const { key } = await api("/push/key");
+    if (!key) return;
+    const reg = await navigator.serviceWorker.ready;
+    const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - key.length % 4) % 4));
+    const sub = await reg.pushManager.getSubscription()
+      || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(raw, (c) => c.charCodeAt(0)) });
+    await postJson(`/jobs/${jobId}/push`, { subscription: sub.toJSON(), lang: state.lang });
+    subscribed.add(jobId);
+  } catch { /* 알림이 안 돼도 처리는 계속된다 */ }
+}
+function fmtLeft(sec) { return sec >= 60 ? t("min", { n: Math.ceil(sec / 60) }) : t("sec", { n: Math.max(1, Math.ceil(sec)) }); }
+function setLocal(text, frac) {
+  $("local-box").hidden = false; $("local-step").textContent = text;
+  $("local-progress").firstElementChild.style.transform = `scaleX(${frac})`;
+}
+async function startBrowser(f) {
+  const dur = rangeVideo.duration, [start, end] = state.range || [0, Math.min(dur, MAX_SCAN)];
+  state.localBusy = true; setLocalError(""); setLocal(t("localPrep"), 0); keepAwake(true);
+  $("charge-tip").hidden = !(state.deviceEstSec > 600);
+  let created = false;
+  try {
+    const r = await BrowserBlur.run({
+      file: f, start, end, force: true,  // 사용자가 예상 시간을 보고 '이 기기에서'를 골랐다
+      onProgress: (p) => setLocal(t("localStep", { p: Math.round(100 * p.done / p.total), m: fmtLeft(p.secLeft), c: clockAt(p.secLeft) }), p.done / p.total),
+      createJob: async () => {
+        const j = await postJson("/jobs/browser", { filename: f.name, duration: dur, start, end, match: $("match-name").value,
+                                                    code: $("code").value.trim(), size: f.size }).catch((e) => { e.fromServer = true; throw e; });
+        created = true;
+        state.job = j.id; state.rally = null; state.local = { file: f, url: URL.createObjectURL(f) };
+        setHash(); startPolling(); subscribePush(j.id);
+        return j.chunks;
+      },
+      uploadChunk: sendChunk,
+    });
+    if (r === "slow") { state.localBusy = false; $("local-box").hidden = true; $("up-status").textContent = t("localSlow"); uploadVideo(f); return; }
+    setLocal(t("localDone"), 1);
+  } catch (e) {
+    state.localBusy = false;
+    if (!created && !e.fromServer) { $("local-box").hidden = true; uploadVideo(f); return; }  // 이 기기가 못 풀면 서버로
+    setError(created ? t("localFail", { e: e.message }) : e.message);
+    $("start-upload").disabled = false;
+    if (created) { setLocalError(t("localFail", { e: e.message })); state.localPaused = true; $("resume-local").hidden = false; keepAwake(false); return; }  // 이어서 처리하기
+  }
+  state.localBusy = false; keepAwake(false);
+  setTimeout(() => { if (!state.localBusy) $("local-box").hidden = true; }, 4000);
+}
+async function sendChunk(i, blob) {
+  const form = new FormData(); form.append("file", blob, `chunk${i}.mp4`);
+  const r = await fetch(`/jobs/${state.job}/chunks/${i}`, { method: "POST", body: form });
+  if (!r.ok && r.status !== 409) throw new Error(t("uploadFail", { c: r.status }));  // 409: 이미 받은 조각
+}
+// 이어서 처리하기: 서버가 받은 조각은 건너뛰고 빠진 첫 조각의 시작부터 다시 흐린다(같은 작업, 횟수를 더 쓰지 않음)
+async function resumeBrowser(f) {
+  if (state.localBusy) return;
+  state.localBusy = true; state.localPaused = false; keepAwake(true); setLocalError("");
+  $("resume-local").hidden = true; $("resume-box").hidden = true; setLocal(t("localPrep"), 0);
+  try {
+    const s = await api(`/jobs/${state.job}`);
+    await BrowserBlur.run({
+      file: f, start: s.scan_range[0], end: s.scan_range[1], skip: new Set(s.chunks_received),
+      onProgress: (p) => setLocal(t("localStep", { p: Math.round(100 * p.done / p.total), m: fmtLeft(p.secLeft), c: clockAt(p.secLeft) }), p.done / p.total),
+      createJob: async () => { throw new Error("이어서 처리할 때는 작업을 새로 만들지 않는다"); },
+      uploadChunk: sendChunk,
+    });
+    setLocal(t("localDone"), 1);
+    setTimeout(() => { if (!state.localBusy) $("local-box").hidden = true; }, 4000);
+  } catch (e) { setLocalError(t("localFail", { e: e.message })); state.localPaused = true; $("resume-local").hidden = false; }
+  state.localBusy = false; keepAwake(false);
+}
+$("resume-local").onclick = () => state.local && resumeBrowser(state.local.file);
+$("resume-go").onclick = () => state.local && resumeBrowser(state.local.file);
+$("resume-file").addEventListener("change", () => {
+  const f = $("resume-file").files[0];
+  if (!f) return;
+  if (state.last && state.last.source_size && f.size !== state.last.source_size) { setError(t("refileWrong")); return; }
+  state.local = { file: f, url: URL.createObjectURL(f) }; resumeBrowser(f);
+});
+window.addEventListener("beforeunload", (e) => { if (state.localBusy) { e.preventDefault(); e.returnValue = ""; } });
 
 // 사용 코드(배포 서버, 10/31 사용자): 올리기 전에 코드·남은 횟수·지금 받을 수 있는지 묻는다(2GB를 올린 뒤 거절하지 않게)
 state.access = { ok: true };
@@ -837,7 +1142,7 @@ async function checkAccess() {
   if (state.claimed) msg = t("codeIssued", { c: state.claimed }) + " " + msg;
   else if (state.claimError) msg = state.claimError + " " + msg;
   $("access-status").textContent = msg;
-  state.access = { ok };
+  state.access = { ok }; state.est = a.est;
   if (ok && a.required) storeSet("code", code);
   updateStart();
 }

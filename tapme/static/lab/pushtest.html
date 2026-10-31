@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>알림 시험</title>
+<link rel="manifest" href="/static/manifest.json">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .lab { display: grid; gap: var(--space-md); max-width: 36rem; margin-inline: auto; padding: var(--space-md) 16px; box-sizing: border-box; }
+  #log { font-family: var(--font-outlier); font-size: var(--text-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<header class="bar"><div class="bar-in"><h1>알림 시험</h1></div></header>
+<main class="lab">
+  <p class="muted">완료 알림이 이 기기에서 오는지 확인해요(비용 없음). 버튼을 누르고 알림 허용을 물으면 '허용'을 눌러 주세요. 아이폰은 사파리 공유 버튼 → '홈 화면에 추가'로 연 화면에서만 돼요.</p>
+  <button class="primary" id="go">알림 허용하고 시험 알림 받기</button>
+  <p id="log" aria-live="polite"></p>
+</main>
+<script>
+// 완료 알림(웹 푸시)이 이 기기에서 되는지: 서비스 워커 등록 → 허용 → 구독 → 서버가 이 기기에만 시험 알림 하나
+const log = (m) => { document.getElementById("log").textContent += m + "\n"; };
+const env = { push: "PushManager" in window, sw: "serviceWorker" in navigator, notif: "Notification" in window,
+              standalone: matchMedia("(display-mode: standalone)").matches || navigator.standalone === true };
+log("지원: " + JSON.stringify(env));
+document.getElementById("go").onclick = async () => {
+  try {
+    if (!env.sw || !env.push || !env.notif) { log("이 브라우저는 웹 푸시를 지원하지 않아요" + (/iPhone|iPad/.test(navigator.userAgent) && !env.standalone ? " (아이폰은 홈 화면에 추가한 앱에서만)" : "")); return; }
+    const perm = await Notification.requestPermission();
+    log("허용: " + perm);
+    if (perm !== "granted") return;
+    await navigator.serviceWorker.register("/sw.js");
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await (await fetch("/push/key")).json();
+    if (!key) { log("서버에 알림 키가 없어요"); return; }
+    const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - key.length % 4) % 4));
+    const sub = await reg.pushManager.getSubscription()
+      || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(raw, (c) => c.charCodeAt(0)) });
+    log("구독: " + new URL(sub.endpoint).host);
+    const r = await fetch("/push/test", { method: "POST", headers: { "Content-Type": "application/json" },
+                                           body: JSON.stringify({ subscription: sub.toJSON(), lang: "ko" }) });
+    log(r.ok ? "보냈어요. 몇 초 안에 알림이 와야 해요(앱을 닫거나 화면을 꺼도 와요)" : "보내기 실패: " + (await r.text()));
+  } catch (e) { log("오류: " + e.message); }
+};
+</script>
+</body>
+</html>

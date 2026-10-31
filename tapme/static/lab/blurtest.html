@@ -6,10 +6,16 @@
 <title>브라우저 얼굴 흐리기 시험</title>
 <link rel="stylesheet" href="/static/app.css">
 <style>
-  .lab { display: grid; gap: var(--space-md); max-width: 44rem; margin-inline: auto; }
-  .lab table { border-collapse: collapse; font-family: var(--font-outlier); font-size: var(--text-sm); }
-  .lab td { padding: var(--space-2xs) var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule-2); }
+  /* 폰 사파리에서 오른쪽이 잘렸다(10/31): 좌우 16px 여백, 긴 글자(기기 정보)는 줄바꿈, 입력칸은 화면 너비 안으로 */
+  .lab { display: grid; gap: var(--space-md); max-width: 44rem; margin-inline: auto; padding: var(--space-md) 16px; box-sizing: border-box; }
+  .lab > * { min-width: 0; }
+  .lab table { border-collapse: collapse; font-family: var(--font-outlier); font-size: var(--text-sm); width: 100%; table-layout: fixed; }
+  .lab td { padding: var(--space-2xs) var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule-2); overflow-wrap: anywhere; vertical-align: top; }
+  .lab td:first-child { width: 36%; }
+  .lab input, .lab select { max-width: 100%; min-width: 0; box-sizing: border-box; }
   .lab canvas { width: 100%; height: auto; background: var(--color-paper-3); }
+  .lab progress { width: 100%; height: 0.75rem; accent-color: var(--color-accent); }
+  #status { font-size: var(--text-md); }
   .lab .opts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   /* 재생하며 읽을 때 화면에 없으면(display:none) 프레임 신호가 오지 않는다 */
   #v { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
@@ -22,28 +28,30 @@
   <div class="field"><label for="file">시험할 영상</label><input type="file" id="file" accept="video/*"></div>
   <div class="opts">
     <div class="field"><label for="scale">검출 배율</label>
-      <select id="scale"><option value="1">1배 (원래 크기)</option><option value="2">2배 (서버와 같음)</option></select></div>
+      <select id="scale"><option value="1">1배 (원래 크기)</option><option value="2">2배 · 4조각</option><option value="2x9">2배 · 9조각 (메모리 적게)</option></select></div>
     <div class="field"><label for="secs">시험 길이</label>
       <select id="secs"><option value="60">앞 1분</option><option value="180">앞 3분</option><option value="0">전체</option></select></div>
     <div class="field"><label for="ep">계산 방식</label>
       <select id="ep"><option value="webgpu">그래픽칩(WebGPU)</option><option value="wasm">일반(WASM)</option></select></div>
     <div class="field"><label for="read">프레임 읽기</label>
-      <select id="read"><option value="play">재생하며 읽기</option><option value="seek">0.5초마다 이동</option></select></div>
+      <select id="read"><option value="decode">하드웨어 디코더(WebCodecs)</option><option value="play">재생하며 읽기</option><option value="seek">0.5초마다 이동</option></select></div>
   </div>
   <button class="primary" id="run" disabled>시험 시작</button>
-  <p id="status" aria-live="polite" class="muted"></p>
+  <progress id="bar" max="100" value="0" hidden></progress>
+  <p id="status" aria-live="polite"></p>
   <table id="stats"></table>
   <canvas id="view"></canvas>
   <pre id="result" hidden></pre>
 </main>
 <video id="v" muted playsinline preload="auto"></video>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.webgpu.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js" crossorigin></script>
 <script>
 // 서버(tapme/anonymize.py)와 같은 YuNet 해석: 출력 cls·obj·bbox × 보폭 8·16·32, 점수 sqrt(cls×obj) ≥ 0.5, NMS 0.3
 // (10/30 파이썬으로 같은 해석을 짜 OpenCV FaceDetectorYN과 13/13 일치 확인)
 // 받은 모델은 입력이 640×640 고정이라 입력·출력 크기만 가변으로 바꾼 사본(yunet_dyn.onnx)을 쓴다. 1080p에서 OpenCV와 14/14 일치
 const $ = (id) => document.getElementById(id);
-const THR = 0.5, NMS = 0.3, FPS = 2, RATE = 16;  // RATE: 재생하며 읽을 때 배속(크롬 최대 16)
+const THR = 0.5, NMS = 0.3, FPS = 2, RATE = 8;  // RATE: 재생하며 읽을 때 배속. 16배는 기기가 바쁘면 프레임을 건너뛰었다(120장 중 89장, 10/31)
 const q = new URLSearchParams(location.search);
 let session = null, epUsed = "";
 
@@ -59,8 +67,12 @@ function nms(boxes, scores) {
   return keep.map((i) => boxes[i]);
 }
 
+let inputBuf = null;  // 프레임마다 큰 배열을 새로 잡으면 폰 사파리가 메모리 부족으로 탭을 닫았다(10/31) → 한 번 잡아 다시 쓴다
+
 async function detect(ctx, pw, ph) {
-  const rgba = ctx.getImageData(0, 0, pw, ph).data, n = pw * ph, data = new Float32Array(3 * n);
+  const rgba = ctx.getImageData(0, 0, pw, ph).data, n = pw * ph;
+  if (!inputBuf || inputBuf.length !== 3 * n) inputBuf = new Float32Array(3 * n);
+  const data = inputBuf;
   for (let i = 0; i < n; i++) { data[i] = rgba[4 * i + 2]; data[n + i] = rgba[4 * i + 1]; data[2 * n + i] = rgba[4 * i]; }  // BGR, 0~255
   const t0 = performance.now();
   const out = await session.run({ [session.inputNames[0]]: new ort.Tensor("float32", data, [1, 3, ph, pw]) });
@@ -97,13 +109,23 @@ function seek(v, t) {
   return new Promise((ok) => { v.onseeked = () => ok(); v.currentTime = t; });
 }
 
+// 단계와 경과 시간을 1초마다 보여 준다(사파리에서 진행 중인지 알 수 없었다, 10/31 사용자)
+let stage = "", runT0 = 0, ticker = 0;
+function setStage(msg) { stage = msg; showStage(); }
+function showStage() { $("status").textContent = runT0 ? `${stage} · ${Math.round((performance.now() - runT0) / 1000)}초 지남` : stage; }
+function stopStage(msg) { clearInterval(ticker); runT0 = 0; setStage(msg); $("run").disabled = false; $("run").textContent = "시험 시작"; }
+
 function readByPlay(v, end, onFrame) {
   // 처음부터 빠르게 재생하며 0.5초마다 한 장. 이동(seek)은 키프레임부터 다시 풀어 느리다(8초 간격 영상에서 장당 0.2초)
+  // 5초 안에 첫 프레임이 오지 않으면(재생 신호를 주지 않는 브라우저) "fallback"으로 끝내 이동 방식으로 이어 간다
   return new Promise((done, bad) => {
-    let next = 0, finished = false;
+    if (!("requestVideoFrameCallback" in HTMLVideoElement.prototype)) return done("fallback");
+    let next = 0, finished = false, got = false;
     const finish = () => { if (!finished) { finished = true; v.pause(); done(); } };
+    const dog = setTimeout(() => { if (!got && !finished) { finished = true; v.pause(); done("fallback"); } }, 5000);
     const cb = async (now, meta) => {
       if (finished) return;
+      got = true; clearTimeout(dog);
       if (meta.mediaTime >= next) {
         v.pause();
         try { await onFrame(meta.mediaTime); } catch (e) { finished = true; return bad(e); }
@@ -120,12 +142,132 @@ function readByPlay(v, end, onFrame) {
   });
 }
 
+// H-45: mp4를 브라우저에서 풀고(mp4box.js) 하드웨어 디코더(VideoDecoder)로 프레임을 차례로 받아 0.5초마다 한 장만 쓴다.
+// 재생하며 읽기는 아이폰에서 장당 484~577ms를 썼다(H-44). 시험용이라 앞에서부터 end초 분량만 풀고, moov가 파일 끝에 있으면
+// 파일 전체를 읽는다(실제 서비스는 끝부분부터 읽어야 함)
+async function demux(blob, end) {
+  const mp4 = MP4Box.createFile(), samples = [];
+  let track = null, err = null;
+  mp4.onError = (e) => { err = e; };
+  mp4.onReady = (info) => {
+    track = info.videoTracks[0];
+    if (!track) { err = "영상 트랙이 없어요"; return; }
+    mp4.setExtractionOptions(track.id, null, { nbSamples: 200 });
+    mp4.start();
+  };
+  mp4.onSamples = (id, user, ss) => { samples.push(...ss); };
+  const lastSec = () => samples.length ? samples[samples.length - 1].cts / samples[samples.length - 1].timescale : 0;
+  const CH = 8 << 20;
+  const append = async (at) => {
+    const buf = await blob.slice(at, at + CH).arrayBuffer();
+    buf.fileStart = at;
+    return [mp4.appendBuffer(buf), buf.byteLength];
+  };
+  // 1) 목차(moov)를 찾는다: mp4box가 다음에 필요한 위치를 알려 준다(moov가 파일 끝이면 끝으로 건너뜀)
+  let pos = 0, seq = 0;
+  while (!track && !err && pos < blob.size) {
+    const [next, n] = await append(pos);
+    if (pos === seq) seq += n;  // 앞에서부터 빈틈없이 읽은 곳
+    pos = Number.isFinite(next) && next !== pos ? next : pos + n;
+  }
+  // 2) 영상 데이터를 앞에서부터 차례로 넣어 프레임을 꺼낸다. 끝으로 건너뛴 뒤 mp4box가 중간을 다시 달라고 하지 않아
+  //    앞 8MB(약 7초)만 풀렸다(10/31) → 읽은 곳 다음부터 직접 이어 넣는다
+  while (track && !err && seq < blob.size && lastSec() <= end + 2) seq += (await append(seq))[1];
+  mp4.flush();
+  if (err || !track) throw new Error("영상을 풀 수 없어요: " + (err || "형식"));
+  const trak = mp4.getTrackById(track.id);
+  let description;
+  for (const entry of trak.mdia.minf.stbl.stsd.entries) {
+    const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
+    if (box) { const ds = new DataStream(undefined, 0, DataStream.BIG_ENDIAN); box.write(ds); description = new Uint8Array(ds.buffer, 8); break; }
+  }
+  return { track, samples, description };
+}
+
+// 사파리 디코더는 크롬보다 까다로워 "Decoder failure"가 났다(10/31 아이폰). 첫 장도 못 풀면 설정을 바꿔 다시 시도하고,
+// 어떤 설정이 통했는지 표에 남긴다. 다 실패하면 "fallback"을 돌려 재생하며 읽기로 이어 간다
+const DECODER_TRIES = [
+  { name: "기본", dts: false, size: true, hw: "no-preference" },
+  { name: "디코드 순서 시각", dts: true, size: true, hw: "no-preference" },
+  { name: "크기 정보 없이", dts: true, size: false, hw: "no-preference" },
+  { name: "소프트웨어 디코더", dts: true, size: false, hw: "prefer-software" },
+];
+let decoderNote = "";
+
+async function readByDecoder(blob, end, onFrame) {
+  const { track, samples, description } = await demux(blob, end);
+  const notes = [];
+  for (const v of DECODER_TRIES) {
+    const config = { codec: track.codec, description, hardwareAcceleration: v.hw,
+                     ...(v.size ? { codedWidth: track.video.width, codedHeight: track.video.height } : {}) };
+    let ok = false;
+    try { ok = (await VideoDecoder.isConfigSupported(config)).supported; } catch (e) { notes.push(`${v.name}: 확인 실패 ${e.message}`); continue; }
+    if (!ok) { notes.push(`${v.name}: 지원 안 함`); continue; }
+    const state = { done: 0, at: 0 };
+    try {
+      await decodeWith(samples, config, v, end, onFrame, state);
+      decoderNote = [...notes, `${v.name}: 성공`].join(" / ") + ` (${track.codec})`;
+      return;
+    } catch (e) {
+      notes.push(`${v.name}: ${e.message || e} (조각 ${state.at})`);
+      if (state.done > 0) { decoderNote = notes.join(" / "); throw e; }  // 중간에 실패하면 다시 시작하지 않는다
+    }
+  }
+  decoderNote = notes.join(" / ") + ` (${track.codec})`;
+  return "fallback";
+}
+
+async function decodeWith(samples, config, v, end, onFrame, state) {
+  const pending = [];
+  let next = 0, wake = null, failed = null, i = 0;
+  const dec = new VideoDecoder({
+    output: (f) => {
+      const t = f.timestamp / 1e6;
+      if (next < end && t + 0.001 >= next) { pending.push(f); next += 1 / FPS; } else f.close();
+      if (wake) { wake(); wake = null; }
+    },
+    error: (e) => { failed = e; if (wake) { wake(); wake = null; } },
+  });
+  dec.configure(config);
+  // 디코더가 조각을 받아 가면 더 넣는다. 받아만 가고 프레임을 아직 안 내놓으면(B프레임 순서 맞추기) 넣는 쪽이 멈춰 있었다(10/31)
+  dec.ondequeue = () => { if (wake) { wake(); wake = null; } };
+  // 기다리는 프레임은 한 장, 디코더에 넣어 두는 조각은 세 개까지(VideoFrame은 메모리를 잡고 있어 폰에서 쌓이면 사파리가 닫혔다)
+  const feed = () => {
+    while (!failed && i < samples.length && pending.length < 1 && dec.decodeQueueSize < 3) {
+      const smp = samples[i++];
+      state.at = i;
+      dec.decode(new EncodedVideoChunk({ type: smp.is_sync ? "key" : "delta", timestamp: 1e6 * (v.dts ? smp.dts : smp.cts) / smp.timescale,
+                                         duration: 1e6 * smp.duration / smp.timescale, data: smp.data }));
+    }
+  };
+  let flushed = false;
+  try {
+    while (next < end || pending.length) {
+      if (failed) throw failed;
+      feed();
+      if (!pending.length) {
+        if (i >= samples.length) { if (flushed) break; flushed = true; await dec.flush(); continue; }
+        await new Promise((ok) => { wake = ok; setTimeout(ok, 20); });  // dequeue 신호가 없는 브라우저 대비
+        continue;
+      }
+      const f = pending.shift();
+      feed();  // 이 장을 처리하는 동안 디코더가 다음 장을 푼다
+      try { await onFrame(f.timestamp / 1e6, f); state.done++; } finally { f.close(); }
+    }
+  } finally {
+    for (const f of pending) f.close();
+    if (dec.state !== "closed") dec.close();
+  }
+}
+
 function row(k, v) { return `<tr><td>${k}</td><td>${v}</td></tr>`; }
 
-async function run(src) {
-  $("run").disabled = true;
-  const scale = Number($("scale").value), ep = $("ep").value;
-  $("status").textContent = "모델 준비 중…";
+async function run(src, blob) {
+  $("run").disabled = true; $("run").textContent = "진행 중…";
+  $("bar").hidden = false; $("bar").value = 0; $("stats").innerHTML = "";
+  runT0 = performance.now(); clearInterval(ticker); ticker = setInterval(showStage, 1000);
+  const grid = $("scale").value === "2x9" ? 3 : 2, scale = $("scale").value === "1" ? 1 : 2, ep = $("ep").value;
+  setStage("모델 준비 중…");
   session = null; epUsed = "";
   try {
     // 그래픽칩을 못 잡으면 조용히 WASM으로 넘어가 결과가 헷갈렸다. 따로 시도해 실제로 쓴 쪽을 적는다
@@ -138,8 +280,8 @@ async function run(src) {
       epUsed ||= "wasm";
     }
     if (epUsed.startsWith("wasm")) epUsed += `, 스레드 ${ort.env.wasm.numThreads}${crossOriginIsolated ? "" : " (격리 안 됨)"}`;
-  } catch (e) { $("status").textContent = "모델 준비 실패: " + e.message; return; }
-  $("status").textContent = "영상 여는 중…";
+  } catch (e) { return stopStage("모델 준비 실패: " + e.message); }
+  setStage("영상 여는 중…");
   const v = $("v");
   // 신호를 먼저 걸고 주소를 넣는다(빨리 읽히면 신호를 놓쳐 멈췄다)
   try {
@@ -147,55 +289,84 @@ async function run(src) {
       v.onloadedmetadata = ok; v.onerror = () => bad(new Error("영상을 열 수 없어요"));
       if (v.src.endsWith(src) && v.readyState >= 1) ok(); else v.src = src;  // 같은 영상을 다시 시험하면 신호가 오지 않는다
     });
-  } catch (e) { $("status").textContent = e.message; $("run").disabled = false; return; }
+  } catch (e) { return stopStage(e.message); }
+  setStage("첫 프레임 읽는 중…");
   const W = v.videoWidth, H = v.videoHeight, dur = v.duration;
   const limit = Number($("secs").value) || dur, end = Math.min(dur, limit);
-  const dw = W * scale, dh = H * scale, pw = Math.ceil(dw / 32) * 32, ph = Math.ceil(dh / 32) * 32;
+  // 2배는 화면을 grid×grid 조각(겹침 48px)으로 나눠 조각마다 2배로 키워 찾는다. 한 번에 3840×2160을 넣으면 폰 사파리가
+  // 메모리 부족으로 탭을 닫았다(10/31). 4조각은 하드웨어 디코더와 함께 쓰면 또 닫혀 9조각도 시험한다(한 번에 계산하는 크기 절반 이하)
+  const O = 48, cw = Math.ceil(W / grid), chh = Math.ceil(H / grid), tiles = [];
+  if (scale === 1) tiles.push([0, 0, W, H]);
+  else for (let r = 0; r < grid; r++) for (let c = 0; c < grid; c++) {
+    const x = Math.max(0, c * cw - (c ? O : 0)), y = Math.max(0, r * chh - (r ? O : 0));
+    tiles.push([x, y, Math.min(cw + O * (c ? 1 : 0) + O, W - x), Math.min(chh + O * (r ? 1 : 0) + O, H - y)]);
+  }
+  const pw = Math.ceil(Math.max(...tiles.map((t) => t[2])) * scale / 32) * 32, ph = Math.ceil(Math.max(...tiles.map((t) => t[3])) * scale / 32) * 32;
   const work = new OffscreenCanvas(pw, ph), wctx = work.getContext("2d", { willReadFrequently: true });
   const view = $("view"); view.width = W; view.height = H; const vctx = view.getContext("2d");
+  // 사파리는 디코더 프레임(VideoFrame)에서 일부분을 잘라 그리면 자를 위치를 무시하고 전체를 줄여 그렸다(아이폰 9조각에서 얼굴
+  // 8,733개 — 맥은 3,617개, 10/31). 프레임을 전체 크기 화면에 한 번 그린 뒤 거기서 자른다
+  const full = new OffscreenCanvas(W, H), fctx = full.getContext("2d");
   const T = { seek: 0, prep: 0, infer: 0, blur: 0 }, results = [];
   let frames = 0, faces = 0;
   const t0 = performance.now();
   let mark = performance.now();
-  const onFrame = async (t) => {
+  const onFrame = async (t, img = v) => {
     T.seek += performance.now() - mark;
-    let a = performance.now();
-    wctx.clearRect(0, 0, pw, ph); wctx.drawImage(v, 0, 0, dw, dh);
-    T.prep += performance.now() - a;
+    let a = performance.now(), found = [], inf = 0;
+    if (img !== v && tiles.length > 1) { fctx.drawImage(img, 0, 0, W, H); img = full; }
+    for (const [sx, sy, sw, sh] of tiles) {
+      wctx.clearRect(0, 0, pw, ph); wctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw * scale, sh * scale);
+      const r = await detect(wctx, pw, ph);
+      inf += r.tInfer;
+      found.push(...r.faces.map(([x, y, w, h]) => [sx + x / scale, sy + y / scale, w / scale, h / scale]));  // 원본 좌표
+    }
+    if (tiles.length > 1) found = nms(found, found.map(([, , w, h]) => w * h));  // 겹친 곳에서 두 번 찾은 얼굴
+    T.infer += inf; T.prep += performance.now() - a - inf;
     a = performance.now();
-    const { faces: found, tInfer } = await detect(wctx, pw, ph);
-    T.infer += tInfer; T.prep += performance.now() - a - tInfer;
-    a = performance.now();
-    vctx.drawImage(v, 0, 0, W, H); pixelate(vctx, found, scale);
+    vctx.drawImage(img, 0, 0, W, H); pixelate(vctx, found, 1);
     T.blur += performance.now() - a;
     frames++; faces += found.length;
-    results.push({ t: Math.round(t * 10) / 10, boxes: found.map((b) => b.map((x) => Math.round(x / scale))) });
-    if (frames % 5 === 0) $("status").textContent = `${frames}장 처리 (${t.toFixed(0)}/${end.toFixed(0)}초)`;
+    results.push({ t: Math.round(t * 10) / 10, boxes: found.map((b) => b.map((x) => Math.round(x))) });
+    if (frames % 5 === 0) {
+      // 진행률·남은 시간: 지금까지 장당 걸린 시간으로 남은 장 수를 어림한다
+      const total = Math.ceil(end * FPS), pct = Math.min(100, Math.round(100 * frames / total));
+      const left = Math.max(0, (total - frames) * (performance.now() - t0) / frames / 1000);
+      $("bar").value = pct;
+      setStage(`${pct}% · ${frames}/${total}장 · 남은 시간 약 ${left < 60 ? Math.ceil(left) + "초" : Math.ceil(left / 60) + "분"} (화면을 켜 둔 채로)`);
+    }
     mark = performance.now();
   };
-  const how = $("read").value;
-  if (how === "play") await readByPlay(v, end, onFrame);
-  else for (let t = 0; t < end; t += 1 / FPS) { await seek(v, t); await onFrame(t); }
+  let how = $("read").value;
+  decoderNote = "";
+  if (how === "decode" && await readByDecoder(blob || await (await fetch(src)).blob(), end, onFrame) === "fallback") {
+    how = "play";  // 디코더가 모두 실패해 재생하며 읽기로 이어 간다(표에 시도 내용이 남는다)
+    setStage("디코더로 못 풀어 재생하며 읽기로 바꿔 계속해요…");
+  }
+  if (how === "play" && await readByPlay(v, end, onFrame) === "fallback") {
+    how = "seek";  // 이 브라우저는 재생하며 읽기가 안 돼 이동 방식으로 이어 간다(표에 적힘)
+    setStage("재생하며 읽기가 안 돼 이동 방식으로 바꿔 계속해요…");
+    for (let t = frames / FPS; t < end; t += 1 / FPS) { await seek(v, t); await onFrame(t); }
+  } else if (how === "seek") for (let t = 0; t < end; t += 1 / FPS) { await seek(v, t); await onFrame(t); }
   const total = (performance.now() - t0) / 1000, per = total / frames;
-  $("status").textContent = "끝났어요.";
+  $("bar").value = 100; stopStage("끝났어요. 아래 표를 캡처해 주세요.");
   $("stats").innerHTML =
-    row("영상", `${W}×${H}, ${(dur / 60).toFixed(1)}분`) + row("계산 방식", epUsed) + row("프레임 읽기", how === "play" ? `재생하며 (${RATE}배속)` : "0.5초마다 이동") + row("검출 배율", `${scale}배 (모델 입력 ${pw}×${ph})`) +
-    row("처리한 프레임", `${frames}장 (${end.toFixed(0)}초 × 2fps)`) + row("찾은 얼굴", `${faces}개`) +
+    row("영상", `${W}×${H}, ${(dur / 60).toFixed(1)}분`) + row("계산 방식", epUsed) + row("프레임 읽기", { decode: "하드웨어 디코더(WebCodecs)", play: `재생하며 (${RATE}배속)`, seek: "0.5초마다 이동" }[how]) + (decoderNote ? row("디코더 시도", decoderNote) : "") + row("검출 배율", `${scale}배 (${tiles.length > 1 ? tiles.length + "조각, 조각마다 " : ""}모델 입력 ${pw}×${ph})`) +
+    row("처리한 프레임", `${frames}/${Math.ceil(end * FPS)}장 (${end.toFixed(0)}초 × 2fps)${frames < Math.ceil(end * FPS) * 0.95 ? " — 일부 건너뜀" : ""}`) + row("찾은 얼굴", `${faces}개`) +
     row("걸린 시간", `${total.toFixed(1)}초, 장당 ${(per * 1000).toFixed(0)}ms`) +
     row("나눠 보면 (장당)", `프레임 읽기 ${(T.seek / frames).toFixed(0)}ms · 준비 ${(T.prep / frames).toFixed(0)}ms · 얼굴 찾기 ${(T.infer / frames).toFixed(0)}ms · 흐리기 ${(T.blur / frames).toFixed(0)}ms`) +
     row("10분 영상이면", `약 ${(per * 1200 / 60).toFixed(1)}분`) + row("1시간 영상이면", `약 ${(per * 7200 / 60).toFixed(1)}분`) +
     row("영상 다시 쓰기(WebCodecs)", `VideoEncoder ${typeof VideoEncoder === "function" ? "있음" : "없음"}, VideoDecoder ${typeof VideoDecoder === "function" ? "있음" : "없음"}`) +
     row("WebGPU", navigator.gpu ? "있음" : "없음") + row("기기", navigator.userAgent);
-  $("result").textContent = JSON.stringify({ ep: epUsed, read: how, scale, W, H, frames, total, per, T, results });
-  $("run").disabled = false;
+  $("result").textContent = JSON.stringify({ ep: epUsed, read: how, scale, tiles: tiles.length, W, H, frames, total, per, T, results });
 }
 
 $("file").onchange = () => { $("run").disabled = !$("file").files[0]; };
-$("run").onclick = () => run(URL.createObjectURL($("file").files[0]));
+$("run").onclick = () => run(URL.createObjectURL($("file").files[0]), $("file").files[0]).catch((e) => stopStage("오류: " + (e && e.message || e)));
 // 맥에서 자동 시험: ?src=/static/lab/sample.mp4&scale=1&secs=60&ep=wasm&read=play
 if (q.get("src")) {
   for (const k of ["scale", "secs", "ep", "read"]) if (q.get(k)) $(k).value = q.get(k);
-  run(q.get("src"));
+  run(q.get("src")).catch((e) => stopStage("오류: " + (e && e.message || e)));
 }
 </script>
 </body>

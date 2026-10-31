@@ -574,3 +574,42 @@ def test_uploads_are_counted_per_day() -> None:
     jobs.count_upload(KST_4AM_NOV1 + 60)
     jobs.count_upload(KST_4AM_NOV1 + 120)
     assert (jobs.uploads_today(KST_4AM_NOV1 + 180), jobs.uploads_today(KST_4AM_NOV1 + 86400)) == (2, 0)
+
+
+def test_browser_segment_keeps_original_times(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 2단계: 기기가 다시 압축하지 않고 잘라 올린 랠리 구간(원본 시각 그대로, 영상·소리 따로)을 합쳐
+    # 장면 준비가 원본 시각으로 자를 수 있게 한다
+    monkeypatch.setattr(jobs, "JOBS_DIR", tmp_path / "jobs")
+    src = tmp_path / "src.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=30",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=30", "-c:v", "libx264", "-g", "30", "-c:a", "aac",
+                    "-shortest", str(src)], check=True)
+
+    def piece(stream: str, out: Path) -> Path:  # 기기가 잘라 올리는 조각처럼: 키프레임(9초)부터 다시 압축하지 않고
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", "9", "-i", str(src), "-t", "14", "-map", f"0:{stream}",
+                        "-c", "copy", "-movflags", "frag_keyframe+empty_moov+default_base_moof", str(out)], check=True)
+        return out
+
+    def first_pts(path: Path) -> float:  # 원본에서 9초 키프레임의 표시 시각(기기는 mp4의 cts로 읽는다)
+        out = subprocess.check_output(["ffprobe", "-v", "error", "-read_intervals", "9%+#1", "-select_streams", "v:0",
+                                       "-show_entries", "frame=pts_time", "-of", "csv=p=0", str(path)])
+        return float(out.decode().split()[0])
+
+    job, _ = jobs.create_browser_job("a.mp4", 30.0, 0, 0)
+    job.rallies = [{"index": 0, "start_sec": 12.0, "point_sec": 17.0, "end_sec": 18.0}]
+    first = first_pts(src)
+    jobs.save_segment(job, 0, piece("v", tmp_path / "v.mp4"), piece("a", tmp_path / "a.mp4"), first)
+    saved = jobs.load_job(job.id)
+    assert 8.9 <= saved.segments["0"] <= 9.1
+    # 구간 파일에서 원본 12초 자리의 그림이 원본 12초와 같다(SAM 박스가 원본 클립과 어긋나지 않게)
+    seg, at = jobs._source(saved, 0, 12.0)
+    grab = lambda p, t: subprocess.check_output(["ffmpeg", "-loglevel", "error", "-ss", f"{t:.3f}", "-i", str(p),
+                                                 "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+    assert grab(seg, at) == grab(src, 12.0)
+    path, at = jobs._source(saved, 0, 12.5)
+    assert path.name == "segment00.mp4" and at == pytest.approx(12.5 - saved.segments["0"])
+    streams = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)])
+    assert sorted(streams.decode().split()) == ["audio", "video"]
+    job.rallies[0]["point_sec"] = 5.0  # 구간(9초~)이 장면(득점 7초 전~)을 못 덮으면 거절
+    with pytest.raises(ValueError, match="덮지"):
+        jobs.save_segment(job, 0, piece("v", tmp_path / "v2.mp4"), None, first)

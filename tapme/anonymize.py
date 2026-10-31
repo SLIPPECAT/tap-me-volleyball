@@ -20,6 +20,7 @@ API 호출은 없다. 원본 오디오는 그대로 붙인다(Muse Spark가 오�
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 from pathlib import Path
 
@@ -27,6 +28,10 @@ import cv2
 import numpy as np
 
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "face_detection_yunet_2023mar.onnx"
+# OpenCV 스레드 수. 클라우드 vCPU는 하이퍼스레딩이라 vCPU 수만큼 쓰면 서로 다퉈 느려졌다
+# (n2-highcpu-16에서 1분 조각 블러: 16스레드 171초, 8스레드 111초, 10/31). 배포 서버는 물리 코어 수로 정한다
+if threads := int(os.environ.get("TAPME_CV_THREADS", "0")):
+    cv2.setNumThreads(threads)
 # 10/28 H-22 보강: 0.6·원래 크기·정면 검출만으로는 옆얼굴을 놓쳤다(H-21)
 SCORE_THRESHOLD = 0.5
 DETECT_UPSCALE = 2.0  # 프레임을 이만큼 키워 YuNet을 돌린다(작은 얼굴)

@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import threading
 import time
 import traceback
@@ -30,7 +32,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from tapme import access, jobs, muse, render, scan, score
+from tapme import access, jobs, muse, push, render, scan, score
 
 # 매일 새벽 4시(jobs.DAY_START_HOUR)에 지난날 영상을 모두 지운다. 배포 서버에서만 켠다(이 맥의 시험 작업은 지우지 않게).
 # 서버가 꺼져 있다가 켜지면 바로 한 번 지운다
@@ -93,12 +95,16 @@ def idle() -> dict[str, Any]:
 
 
 @app.middleware("http")
-async def _isolate_lab(request, call_next):
-    """브라우저 처리 시험 페이지(/static/lab/)만 교차 출처 격리: 이래야 WASM이 여러 스레드를 쓴다."""
+async def _isolate(request, call_next):
+    """교차 출처 격리: 이래야 브라우저 블러(static/browser-blur.js)의 WASM이 여러 스레드를 쓴다. 처음엔 시험 페이지만
+    켰다가 실제 화면도 기기에서 흐리게 되어(10/31) 모든 응답에 켠다. 외부 스크립트(jsdelivr)는 CORS·CORP를 보내 그대로 된다."""
     response = await call_next(request)
-    if request.url.path.startswith("/static/lab/"):
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    # 화면 파일은 쓸 때마다 바뀌었는지 묻게 한다(바뀌지 않았으면 304라 다시 받지 않음). 배포 뒤에도 예전 app.css를
+    # 캐시에서 써 새 화면이 깨져 보였다(10/31)
+    if request.url.path in ("/", "/sw.js") or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 
@@ -220,6 +226,13 @@ def _run_scan(job_id: str, client: Any) -> None:
         if job.error:
             access.refund(job.code, "uploads")
         job.save()
+        if job.status == "rallies_ready":
+            _notify_rallies(job)
+
+
+def _notify_rallies(job: jobs.Job) -> None:
+    """랠리를 다 찾았다고 알린다(다음 할 일: 랠리를 골라 나를 탭하기)."""
+    push.notify(job.id, "rallies" if job.rallies else "no_rallies", f"/#job={job.id}", n=len(job.rallies))
 
 
 def _run_highlight(job_id: str, index: int, *args: Any) -> None:
@@ -244,6 +257,50 @@ def _make_highlight(job_id: str, index: int, *args: Any) -> None:
         scene["status"] = "failed"
         access.refund(job.code, "highlights")
     job.save()
+    # 완성·실패를 알린다. 여러 장면을 예약했으면 남은 수도(다음 할 일: 열어서 저장·공유)
+    left = sum(sc.get("status") in ("queued", "rendering") for k, sc in job.scenes.items() if k != str(index))
+    if scene.get("status") in ("done", "failed"):
+        push.notify(job_id, scene["status"], f"/#job={job_id}&rally={index}", left=left)
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    """완료 알림을 받는 서비스 워커. 화면 전체(/)를 맡아야 해 루트에서 준다."""
+    return FileResponse(STATIC_DIR / "sw.js", media_type="text/javascript")
+
+
+@app.get("/push/key")
+def push_key() -> dict[str, str | None]:
+    return {"key": push.public_key() or None}
+
+
+class PushRequest(BaseModel):
+    subscription: dict[str, Any]
+    lang: str = Field(default="ko", max_length=5)
+
+
+@app.post("/jobs/{job_id}/push")
+def subscribe_push(job_id: str, req: PushRequest) -> dict[str, str]:
+    """이 작업이 끝나면(랠리 찾기·하이라이트) 이 기기에 알린다."""
+    _job(job_id)
+    if not push.enabled():
+        raise HTTPException(404, "알림을 쓰지 않는 서버다")
+    if not str(req.subscription.get("endpoint", "")).startswith("https://"):
+        raise HTTPException(422, "구독 주소가 맞지 않다")
+    push.subscribe(job_id, req.subscription, req.lang)
+    return {"status": "ok"}
+
+
+@app.post("/push/test")
+def push_test(req: PushRequest) -> dict[str, str]:
+    """알림 시험: 보낸 기기에만 바로 하나(작업 없이). 그 기기 자신의 구독 주소로만 가서 다른 사람에게는 못 보낸다."""
+    if not push.enabled() or not str(req.subscription.get("endpoint", "")).startswith("https://"):
+        raise HTTPException(404, "알림을 쓰지 않는 서버다")
+    try:
+        push.send_test(req.subscription, req.lang)
+    except Exception as e:  # 푸시 서비스 오류를 화면에 그대로
+        raise HTTPException(502, f"알림을 보내지 못했다: {e}") from e
+    return {"status": "sent"}
 
 
 @app.get("/")
@@ -269,11 +326,29 @@ def _closed_reason(code: str = "") -> str | None:
     return None
 
 
+# 화면이 보여 줄 예상 시간(10/31 사용자: 대기 시간·언제 확인할 수 있는지가 관건). 클라우드 실측(BENCH.md, n2-highcpu-16·
+# 스레드 8): 서버 블러 1분 조각 111초(50초 간격) → 영상 1초당 약 2.2초, 하이라이트 하나(준비+추적+렌더) 약 10분
+EST_SERVER_SEC_PER_VIDEO_SEC = float(os.environ.get("TAPME_EST_SCAN_RATE", "2.2"))
+EST_HIGHLIGHT_SEC = float(os.environ.get("TAPME_EST_HIGHLIGHT_SEC", "600"))
+
+
+@app.post("/speedtest")
+async def speedtest(request: Request) -> dict[str, int]:
+    """시작 전에 업로드 속도를 잰다(화면이 2MB를 보내 걸린 시간을 잰다). 받은 것은 버린다."""
+    size = 0
+    async for block in request.stream():
+        size += len(block)
+        if size > 4 * 1024 * 1024:
+            raise HTTPException(413)
+    return {"bytes": size}
+
+
 @app.post("/access")
 def check_access(req: AccessRequest) -> dict[str, Any]:
     """올리기 전에 묻는다: 코드가 맞는지, 남은 횟수, 지금 받을 수 있는지(2GB를 올린 뒤 거절하지 않게)."""
     out: dict[str, Any] = {"required": access.REQUIRED, "waiting": jobs.SCAN_TURNS.waiting(), "closed": _closed_reason(req.code),
-                           "wipe_hour": jobs.DAY_START_HOUR if DAILY_WIPE else None}
+                           "wipe_hour": jobs.DAY_START_HOUR if DAILY_WIPE else None,
+                           "est": {"scan_rate": EST_SERVER_SEC_PER_VIDEO_SEC, "highlight_sec": EST_HIGHLIGHT_SEC}}
     if access.REQUIRED and req.code:
         try:
             out["left"] = access.left(req.code)
@@ -315,6 +390,77 @@ def admin_summary(x_admin_token: str = Header("")) -> dict[str, Any]:
             "invites": {k: {f: e.get(f) for f in ("word", "issued", "max")} for k, e in access._load_invites().items()}}
 
 
+class BrowserJobRequest(BaseModel):
+    filename: str = Field(default="video.mp4", max_length=200)
+    duration: float = Field(gt=0, le=6 * 3600)
+    start: float = Field(default=0.0, ge=0)
+    end: float = Field(default=0.0, ge=0)
+    match: str = Field(default="", max_length=40)
+    code: str = Field(default="", max_length=20)
+    size: int = Field(default=0, ge=0)
+
+
+MAX_CHUNK_BYTES = 80 * 1024 * 1024  # 1분 흐림본(2fps) 조각은 수십 MB 안쪽
+MAX_SEGMENT_BYTES = 400 * 1024 * 1024  # 랠리 구간 원본(키프레임 간격만큼 넉넉, 4K도 들어가게)
+
+
+@app.post("/jobs/browser")
+def create_browser_job(req: BrowserJobRequest) -> dict[str, Any]:
+    """브라우저 방식(10/31, H-45): 원본은 올리지 않고 길이·구간만 받아 작업을 만든다. 기기는 돌려준 계획대로
+    1분 흐림본 조각을 /jobs/{id}/chunks/{i}로 올린다. 올리기 횟수·하루 한도·비용 상한은 원본 올리기와 같다."""
+    if reason := _closed_reason(req.code):
+        raise HTTPException(503, reason)
+    try:
+        access.use(req.code, "uploads")
+    except access.AccessDenied as e:
+        raise HTTPException(403, str(e)) from e
+    try:
+        job, plan = jobs.create_browser_job(req.filename, req.duration, req.start, req.end, req.match,
+                                            access.normalize(req.code), req.size)
+    except (ValueError, jobs.BudgetExceeded) as e:
+        access.refund(req.code, "uploads")
+        raise HTTPException(422, str(e)) from e
+    jobs.count_upload()
+    return {"id": job.id, "chunks": plan}
+
+
+def _run_chunk(job_id: str, index: int, clip: Path, client: Any) -> None:
+    with _Working():
+        try:
+            if jobs.add_browser_chunk(job_id, index, clip, client):  # 마지막 조각이었다
+                _notify_rallies(jobs.load_job(job_id))
+        except Exception as e:  # noqa: BLE001 - 서버가 죽지 않고 화면에 알린다
+            traceback.print_exc()
+            job = jobs.load_job(job_id)
+            job.error = f"처리 중 오류: {e}"
+            job.save()
+
+
+@app.post("/jobs/{job_id}/chunks/{index}")
+def upload_chunk(job_id: str, index: int, file: UploadFile, background: BackgroundTasks) -> dict[str, str]:
+    job = _job(job_id)
+    if job.mode != "browser" or job.status != "finding_rallies":
+        raise HTTPException(409, "조각을 받는 작업이 아니다")
+    plan_path = job.dir / "rallies" / "plan.json"
+    if not 0 <= index < len(json.loads(plan_path.read_text())):
+        raise HTTPException(404, "그 조각은 계획에 없다")
+    clip = job.dir / "rallies" / f"chunk{index:03d}_blur.mp4"
+    answered = job.dir / "rallies" / "scan.json"
+    if clip.exists() or (answered.exists() and any(c["chunk"] == index for c in json.loads(answered.read_text()))):
+        raise HTTPException(409, "이미 받은 조각이다")  # 같은 조각을 두 번 물어 돈을 쓰지 않게
+    size = 0
+    with clip.open("wb") as f:
+        while block := file.file.read(1024 * 1024):
+            size += len(block)
+            if size > MAX_CHUNK_BYTES:
+                f.close()
+                clip.unlink()
+                raise HTTPException(413, "조각이 너무 크다")
+            f.write(block)
+    background.add_task(_run_chunk, job_id, index, clip, client_factory())
+    return {"status": "received"}
+
+
 @app.post("/jobs")
 def upload(file: UploadFile, background: BackgroundTasks, match: str = Form(""),
            start: float = Form(0.0), end: float = Form(0.0), code: str = Form("")) -> dict[str, Any]:
@@ -331,12 +477,93 @@ def upload(file: UploadFile, background: BackgroundTasks, match: str = Form(""),
     return {"id": job.id}
 
 
+class UploadInit(BaseModel):
+    filename: str = Field(default="video.mp4", max_length=200)
+    size: int = Field(gt=0, le=20 * 1024**3)
+    match: str = Field(default="", max_length=40)
+    code: str = Field(default="", max_length=20)
+    start: float = Field(default=0.0, ge=0)
+    end: float = Field(default=0.0, ge=0)
+
+
+MAX_UPLOAD_PIECE = 32 * 1024 * 1024  # 이어 올리기 한 번에 받는 크기(기기는 16MB씩)
+
+
+@app.post("/uploads")
+def start_upload(req: UploadInit) -> dict[str, Any]:
+    """서버에 맡기기(이어 올리기): 받을 준비만 한다. 횟수는 다 받았을 때 센다(끊겨도 횟수가 줄지 않게)."""
+    if reason := _closed_reason(req.code):
+        raise HTTPException(503, reason)
+    if access.REQUIRED:
+        try:
+            if access.left(req.code)["uploads"] <= 0:
+                raise HTTPException(403, "이 코드로 올릴 수 있는 영상을 다 썼어요")
+        except access.AccessDenied as e:
+            raise HTTPException(403, str(e)) from e
+    upload_id = jobs.new_upload({**req.model_dump(), "code": access.normalize(req.code)})
+    return {"id": upload_id, "received": 0}
+
+
+@app.get("/uploads/{upload_id}")
+def upload_progress(upload_id: str) -> dict[str, int]:
+    try:
+        st = jobs.upload_status(upload_id)
+    except KeyError as e:
+        raise HTTPException(404, "이어 올릴 것이 없다(다 올렸거나 지워졌다)") from e
+    return {"received": st["received"], "size": st["size"]}
+
+
+@app.put("/uploads/{upload_id}")
+async def upload_piece(upload_id: str, offset: int, request: Request) -> dict[str, int]:
+    """원본의 offset부터 한 조각. offset이 받은 크기와 다르면 409와 받은 크기(기기가 거기서부터 다시)."""
+    import io
+
+    body = bytearray()
+    async for block in request.stream():
+        body += block
+        if len(body) > MAX_UPLOAD_PIECE:
+            raise HTTPException(413, "조각이 너무 크다")
+    try:
+        received = jobs.append_upload(upload_id, offset, io.BytesIO(bytes(body)), MAX_UPLOAD_PIECE)
+    except KeyError as e:
+        raise HTTPException(404, "이어 올릴 것이 없다") from e
+    except ValueError as e:
+        raise HTTPException(409, {"received": int(e.args[0])}) from e
+    except OverflowError as e:
+        raise HTTPException(413, "올리기로 한 크기를 넘는다") from e
+    return {"received": received}
+
+
+@app.post("/uploads/{upload_id}/finish")
+def finish_upload(upload_id: str, background: BackgroundTasks) -> dict[str, str]:
+    try:
+        st = jobs.upload_status(upload_id)
+    except KeyError as e:
+        raise HTTPException(404, "이어 올릴 것이 없다") from e
+    if reason := _closed_reason(st.get("code", "")):
+        raise HTTPException(503, reason)
+    try:
+        access.use(st.get("code", ""), "uploads")
+    except access.AccessDenied as e:
+        raise HTTPException(403, str(e)) from e
+    try:
+        job = jobs.finish_upload(upload_id)
+    except ValueError as e:
+        access.refund(st.get("code", ""), "uploads")
+        raise HTTPException(409, str(e)) from e
+    jobs.count_upload()
+    background.add_task(_run_scan, job.id, client_factory())
+    return {"id": job.id}
+
+
 @app.get("/jobs/{job_id}")
 def status(job_id: str) -> dict[str, Any]:
     job = _job(job_id)
     return {"id": job.id, "status": job.status, "error": job.error, "spent_usd": round(job.spent_usd, 4),
             "progress": job.progress, "duration_sec": job.duration_sec, "estimate_usd": job.estimate_usd,
             "unread": job.unread, "match_name": job.match_name, "scan": job.scan, "scan_range": job.scan_range,
+            "mode": job.mode, "segments": sorted(job.segments), "source_size": job.source_size,
+            "chunks_received": jobs.browser_chunks_received(job) if job.mode == "browser" else [],
             "queue": jobs.SCAN_TURNS.position(job.id), "left": _left(job),
             "render_turns": {k: p for k in job.scenes if (p := jobs.RENDER_TURNS.position(f"{job.id}/{k}"))},
             "rallies": [{k: r.get(k) for k in ("index", "start_sec", "end_sec", "point_sec", "is_rally", "confidence",
@@ -358,7 +585,10 @@ def _rally_media(job_id: str, index: int) -> tuple[Path, Path]:
     job = _job(job_id)
     if not 0 <= index < len(job.rallies):
         raise HTTPException(404, "랠리가 없다")
-    return jobs.make_preview(job, index)
+    try:
+        return jobs.make_preview(job, index)
+    except FileNotFoundError as e:  # 브라우저 방식: 미리보기는 기기에서
+        raise HTTPException(404, str(e)) from e
 
 
 @app.get("/jobs/{job_id}/rallies/{index}/thumb")
@@ -371,6 +601,36 @@ def rally_preview(job_id: str, index: int) -> FileResponse:
     return FileResponse(_rally_media(job_id, index)[1], media_type="video/mp4")
 
 
+@app.post("/jobs/{job_id}/rallies/{index}/segment")
+def upload_segment(job_id: str, index: int, video: UploadFile, start: float = Form(...),
+                   audio: UploadFile | None = None) -> dict[str, str]:
+    """브라우저 방식: 고른 랠리 구간(기기가 다시 압축하지 않고 잘라 낸 영상·소리)을 받는다. 그 뒤 prepare로 장면을 준비한다."""
+    job = _job(job_id)
+    if job.mode != "browser" or not 0 <= index < len(job.rallies):
+        raise HTTPException(404, "구간을 받을 랠리가 없다")
+    tmp = job.dir / "rallies" / f"segment{index:02d}"
+    files = {}
+    for name, up in (("video", video), ("audio", audio)):
+        if up is None:
+            continue
+        files[name] = tmp.with_name(f"{tmp.name}_{name}.mp4")
+        size = 0
+        with files[name].open("wb") as f:
+            while block := up.file.read(1024 * 1024):
+                size += len(block)
+                if size > MAX_SEGMENT_BYTES:
+                    raise HTTPException(413, "구간 파일이 너무 크다")
+                f.write(block)
+    try:
+        jobs.save_segment(job, index, files["video"], files.get("audio"), start)
+    except (ValueError, subprocess.CalledProcessError) as e:
+        raise HTTPException(422, f"구간 파일을 쓸 수 없다: {e}") from e
+    finally:
+        for p in files.values():
+            p.unlink(missing_ok=True)
+    return {"status": "ok"}
+
+
 @app.post("/jobs/{job_id}/rallies/{index}/prepare")
 def prepare(job_id: str, index: int, background: BackgroundTasks, ahead: bool = False) -> dict[str, str]:
     """ahead=true: 사용자가 미리보기를 열었을 때 뒤에서 미리 준비한다(고르면 탭 화면이 바로 뜨게). 비용이 없을 때
@@ -379,6 +639,11 @@ def prepare(job_id: str, index: int, background: BackgroundTasks, ahead: bool = 
     if not 0 <= index < len(job.rallies):
         raise HTTPException(404, "랠리가 없다")
     scene = job.scenes.get(str(index))
+    if job.mode == "browser" and not (job.dir / f"segment{index:02d}.mp4").exists():
+        # 브라우저 방식은 원본이 기기에 있어, 고른 랠리 구간을 기기가 먼저 올려야 장면을 준비할 수 있다
+        if ahead:
+            return {"status": "skipped"}
+        raise HTTPException(409, "이 랠리 구간 영상을 기기에서 먼저 올린다")
     if ahead:
         if scene is not None or job.rallies[index].get("point_sec") is None or _step_lock.locked():
             return {"status": "skipped"}

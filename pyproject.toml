@@ -11,6 +11,7 @@ dependencies = [
     "pillow>=13.0.0",
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",
+    "pywebpush>=2.5.0",
     "uvicorn>=0.54.0",
 ]
 

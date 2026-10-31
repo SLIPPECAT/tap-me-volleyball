@@ -40,6 +40,8 @@ MAX_USD_TOTAL = float(os.environ.get("TAPME_MAX_USD_TOTAL", "100"))
 # 랠리 찾기: scan(기본, 60초 조각 훑어보기) 또는 whistle(정모 휘슬에 맞춘 예전 방식, 실험 H-17~H-33 기록·비교용)
 RALLY_MODE = os.environ.get("TAPME_RALLY_MODE", "scan")
 WINDOW_BEFORE_SEC = 7.0  # SAM은 50프레임보다 짧아도 50으로 과금된다(비용 원장 R-10·R-17)
+# 브라우저 방식: 고른 랠리마다 기기가 원본에서 잘라 올리는 구간(장면 창보다 앞뒤 1초 넉넉히). 화면(index.html)과 같게
+SEGMENT_BEFORE_SEC, SEGMENT_AFTER_SEC = 8.0, 6.0
 WINDOW_AFTER_SEC = 5.0  # 훑어보기 득점 시각은 2~4초 어긋날 때가 있어(성능 테스트 4/68, H-43) 득점 뒤를 넉넉히
 # 10fps: 움직이는 카메라에서 5fps는 같은 사람을 더 자주 놓쳤다(실험 H-24 B<C). 장면당 SAM 약 $0.02
 SAM_FPS = 10
@@ -128,6 +130,10 @@ class Job:
     unread: list[list[float]] = field(default_factory=list)  # AI가 답을 못 읽은 구간 [시작, 끝]. 화면에 알린다
     match_name: str = ""  # 저장 파일 이름 앞부분(경기이름_팀이름_하이라이트_01.mp4). 비우면 올린 파일 이름
     scan: dict[str, Any] = field(default_factory=dict)  # 랠리 찾기 진행 {"done", "total"}. 찾는 동안 장면 단계가 progress를 쓴다
+    # "server": 원본을 올려 서버가 흐린다. "browser": 사용자 기기가 흐린 조각만 올리고 원본은 기기에 남는다(10/31, H-45)
+    mode: str = "server"
+    segments: dict[str, float] = field(default_factory=dict)
+    source_size: int = 0  # 브라우저 방식: 기기의 원본 크기(바이트). 화면을 새로 연 뒤 같은 영상을 다시 골랐는지 확인  # 브라우저 방식: 랠리 번호 → 올린 구간 파일의 원본 시작 초
     code: str = ""  # 이 영상을 올린 사용 코드(하이라이트 횟수를 여기서 센다). 코드를 쓰지 않는 서버면 빈 값
     scan_range: list[float] = field(default_factory=list)  # 훑을 구간 [시작, 끝](원본 초). 올릴 때 받은 값을 찾기 전에 영상 길이로 맞춘다
 
@@ -243,6 +249,11 @@ def delete_previous_days(now: float | None = None) -> list[str]:
     정모 영상에는 다른 회원 얼굴이 담겨 오래 두지 않는다(10/31 사용자 결정, 배포 서버에서만 켠다)."""
     now = time.time() if now is None else now
     start, gone = day_start(now), []
+    uploads = JOBS_DIR / "_uploads"
+    for d in uploads.iterdir() if uploads.exists() else []:  # 다 올리지 못하고 남은 이어 올리기 조각
+        data = d / "data"
+        if data.exists() and data.stat().st_mtime < start and now - data.stat().st_mtime >= IDLE_BEFORE_DELETE_SEC:
+            shutil.rmtree(d)
     for d in JOBS_DIR.iterdir() if JOBS_DIR.exists() else []:
         meta = d / "job.json"
         if not d.is_dir() or not meta.exists():
@@ -258,10 +269,10 @@ def delete_previous_days(now: float | None = None) -> list[str]:
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
 
 
-def create_job(filename: str, data: bytes | BinaryIO, match_name: str = "", start: float = 0.0, end: float = 0.0,
+def create_job(filename: str, data: bytes | BinaryIO | Path, match_name: str = "", start: float = 0.0, end: float = 0.0,
                code: str = "") -> Job:
-    """data는 바이트 또는 파일 객체. 경기 영상은 GB 단위일 수 있어 파일 객체는 조금씩 옮겨 쓴다.
-    start·end: 훑을 구간(초, end 0이면 끝까지)."""
+    """data는 바이트·파일 객체·다 받은 파일 경로(이어 올리기). 경기 영상은 GB 단위일 수 있어 파일 객체는 조금씩 옮겨 쓰고,
+    경로는 옮기기만 한다. start·end: 훑을 구간(초, end 0이면 끝까지)."""
     job = Job(id=uuid.uuid4().hex[:12], video="", match_name=match_name.strip()[:40] or Path(filename).stem[:40],
               scan_range=[start, end], code=code)
     job.dir.mkdir(parents=True, exist_ok=True)
@@ -269,12 +280,74 @@ def create_job(filename: str, data: bytes | BinaryIO, match_name: str = "", star
     src = job.dir / f"source{suffix if suffix in VIDEO_SUFFIXES else '.mp4'}"
     if isinstance(data, bytes):
         src.write_bytes(data)
+    elif isinstance(data, Path):
+        shutil.move(str(data), src)
     else:
         with src.open("wb") as f:
             shutil.copyfileobj(data, f, length=8 * 1024 * 1024)
     job.video = str(src)
     job.save()
     return job
+
+
+# ---- 이어 올리기(10/31 사용자: 업로드 중 화면이 꺼져도 처음부터 다시 올리지 않게) ----
+# 원본을 조각으로 받아 한 파일에 이어 붙인다. 끊기면 기기가 받은 바이트 수를 묻고 그다음부터 보낸다. 다 받으면 작업이 된다
+def _upload_dir(upload_id: str) -> Path:
+    if not upload_id.isalnum():
+        raise KeyError(upload_id)
+    return JOBS_DIR / "_uploads" / upload_id
+
+
+def new_upload(meta: dict[str, Any]) -> str:
+    upload_id = uuid.uuid4().hex[:16]
+    d = _upload_dir(upload_id)
+    d.mkdir(parents=True)
+    (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False))
+    (d / "data").touch()
+    return upload_id
+
+
+def upload_status(upload_id: str) -> dict[str, Any]:
+    d = _upload_dir(upload_id)
+    if not (d / "meta.json").exists():
+        raise KeyError(upload_id)
+    meta = json.loads((d / "meta.json").read_text())
+    return {**meta, "received": (d / "data").stat().st_size}
+
+
+def append_upload(upload_id: str, offset: int, stream: BinaryIO, limit: int) -> int:
+    """offset이 지금까지 받은 크기와 같을 때만 이어 붙인다(아니면 ValueError — 기기가 받은 크기를 다시 물어 맞춘다)."""
+    st = upload_status(upload_id)
+    if offset != st["received"]:
+        raise ValueError(st["received"])
+    path = _upload_dir(upload_id) / "data"
+    with path.open("ab") as f:
+        n = 0
+        while block := stream.read(1024 * 1024):
+            n += len(block)
+            if n > limit or offset + n > st["size"]:
+                f.truncate(offset)  # 넘친 조각은 통째로 버린다(받은 크기를 offset으로 되돌림)
+                raise OverflowError
+            f.write(block)
+    return path.stat().st_size
+
+
+def finish_upload(upload_id: str) -> Job:
+    st = upload_status(upload_id)
+    if st["received"] != st["size"]:
+        raise ValueError(f"아직 다 받지 않았다 ({st['received']}/{st['size']})")
+    job = create_job(st["filename"], _upload_dir(upload_id) / "data", st.get("match", ""), st.get("start", 0.0),
+                     st.get("end", 0.0), st.get("code", ""))
+    shutil.rmtree(_upload_dir(upload_id))
+    return job
+
+
+def browser_chunks_received(job: Job) -> list[int]:
+    """브라우저 방식: 서버가 받은 조각 번호(물었거나 묻는 중). 기기가 끊긴 뒤 빠진 조각부터 이어 처리한다."""
+    d = job.dir / "rallies"
+    asked = {c["chunk"] for c in json.loads((d / "scan.json").read_text())} if (d / "scan.json").exists() else set()
+    waiting = {int(p.name[5:8]) for p in d.glob("chunk*_blur.mp4")} if d.exists() else set()
+    return sorted(asked | waiting)
 
 
 def load_job(job_id: str) -> Job:
@@ -285,6 +358,42 @@ def load_job(job_id: str) -> Job:
     job = Job(**json.loads(text))
     job._seen = json.loads(text)  # 따로 읽은 사본. 같은 객체면 고친 내용이 '본 내용'에도 들어가 바뀐 게 없다고 본다
     return job
+
+
+def _source(job: Job, index: int, start: float) -> tuple[Path, float]:
+    """장면에 쓸 원본과 그 안의 시작 초. 브라우저 방식은 기기가 올린 랠리 구간 파일(원본 시각을 빼서)."""
+    if job.mode == "browser":
+        return job.dir / f"segment{index:02d}.mp4", start - job.segments[str(index)]
+    return Path(job.video), start
+
+
+def _start_times(path: Path) -> tuple[float, float]:
+    """(첫 영상 프레임 시각, 파일 시작 시각). ffmpeg -ss는 파일 시작 시각부터 센다."""
+    def probe(*args: str) -> float:
+        out = subprocess.check_output(["ffprobe", "-v", "error", *args, "-of", "csv=p=0", str(path)])
+        return float(out.decode().strip() or 0)
+    return probe("-select_streams", "v:0", "-show_entries", "stream=start_time"), probe("-show_entries", "format=start_time")
+
+
+def save_segment(job: Job, index: int, video: Path, audio: Path | None, first_frame_sec: float) -> None:
+    """기기가 다시 압축하지 않고 잘라 올린 랠리 구간(영상·소리 따로)을 한 파일로 합친다. first_frame_sec: 첫 영상 프레임의
+    원본 시각(기기가 mp4에서 읽은 값). 조각 파일 속 시각은 만드는 도구마다 달라(원본 시각 그대로 / 0부터) 믿지 않고, 합친
+    파일의 첫 영상 프레임 시각과 맞춰 기준점을 정한다. 장면 창(득점 7초 전~5초 뒤)을 덮어야 한다."""
+    r = job.rallies[index]
+    final, out = job.dir / f"segment{index:02d}.mp4", job.dir / f"segment{index:02d}.new.mp4"  # 맞으면 바꿔 넣는다
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video)]
+    cmd += ["-i", str(audio), "-map", "0:v:0", "-map", "1:a:0"] if audio is not None else ["-map", "0:v:0"]
+    subprocess.run([*cmd, "-c", "copy", "-avoid_negative_ts", "make_zero", "-movflags", "+faststart", str(out)], check=True)
+    video_start, file_start = _start_times(out)
+    offset = first_frame_sec - video_start + file_start  # _cut(-ss)이 원본 시각 − offset으로 자르면 같은 프레임
+    covers = (offset, offset + scan.duration_sec(out))
+    need = (max(0.0, float(r["point_sec"]) - WINDOW_BEFORE_SEC), float(r["point_sec"]) + WINDOW_AFTER_SEC)
+    if covers[0] > need[0] + 0.05 or covers[1] < need[1] - 0.05:
+        out.unlink()
+        raise ValueError(f"올린 구간({covers[0]:.1f}~{covers[1]:.1f}초)이 장면({need[0]:.1f}~{need[1]:.1f}초)을 덮지 않는다")
+    os.replace(out, final)
+    job.segments[str(index)] = round(offset, 3)
+    job.save()
 
 
 def _cut(video: Path, start: float, duration: float, out: Path, fps: int | None) -> Path:
@@ -358,7 +467,8 @@ def _add_rallies(job: Job, found: list[dict[str, Any]]) -> None:
                   if abs(e["point_sec"] - r["point_sec"]) <= scan.SAME_POINT_SEC), None)
         if j is None:
             job.rallies.append({**r, "index": len(job.rallies)})
-            make_preview(job, len(job.rallies) - 1)
+            if job.mode == "server":  # 브라우저 방식은 원본이 기기에 있어 미리보기도 기기에서 만든다
+                make_preview(job, len(job.rallies) - 1)
         elif str(j) not in job.scenes:
             job.rallies[j] = {**r, "index": j}
 
@@ -385,12 +495,61 @@ def _rallies_by_whistle(job: Job, client: Any) -> list[dict[str, Any]]:
 PREVIEW_SHORT_SIDE = 360  # 랠리 후보 미리보기: 폰에서 고르기용 낮은 화질
 
 
+def create_browser_job(filename: str, duration: float, start: float, end: float, match_name: str = "",
+                       code: str = "", size: int = 0) -> tuple[Job, list[tuple[float, float]]]:
+    """브라우저 방식 작업: 원본 없이 길이·구간만 받는다. 기기가 흐린 1분 조각을 이 계획대로 올린다(조각 번호 = 순서)."""
+    job = Job(id=uuid.uuid4().hex[:12], video="", mode="browser", code=code, status="finding_rallies", source_size=size,
+              match_name=match_name.strip()[:40] or Path(filename).stem[:40], duration_sec=round(duration, 2))
+    job.dir.mkdir(parents=True, exist_ok=True)
+    job.scan_range = scan_range(job.duration_sec, start, end)
+    begin, length = job.scan_range[0], job.scan_range[1] - job.scan_range[0]
+    plan = scan.chunk_plan(begin, length)
+    job.budget_usd = round(max(MAX_USD_PER_JOB, MAX_USD_PER_MIN * length / 60), 2)
+    job.estimate_usd = round(scan.estimate_usd(length), 3)
+    job.charge(job.estimate_usd)
+    job.scan = {"done": 0, "total": len(plan)}
+    (job.dir / "rallies").mkdir(exist_ok=True)
+    (job.dir / "rallies" / "plan.json").write_text(json.dumps(plan))
+    job.save()
+    return job, plan
+
+
+_chunk_locks: dict[str, threading.Lock] = {}
+
+
+def add_browser_chunk(job_id: str, index: int, clip: Path, client: Any) -> bool:
+    """기기가 올린 흐림본 조각을 Muse에 묻고(조각은 물은 뒤 지움) 찾은 랠리를 목록에 붙인다. 마지막 조각이면 끝내고 True.
+    조각마다 따로 불려 겹쳐 돌 수 있어, 답을 모으는 부분만 작업별 잠금 안에서 한다."""
+    job = load_job(job_id)
+    start, seconds = json.loads((job.dir / "rallies" / "plan.json").read_text())[index]
+    result = scan.ask_chunk(client, index, start, seconds, clip)
+    with _lock:
+        lock = _chunk_locks.setdefault(job_id, threading.Lock())
+    with lock:
+        job = load_job(job_id)
+        path = job.dir / "rallies" / "scan.json"
+        chunks = [c for c in (json.loads(path.read_text()) if path.exists() else []) if c["chunk"] != index] + [result]
+        chunks.sort(key=lambda c: c["chunk"])
+        path.write_text(json.dumps(chunks, ensure_ascii=False, indent=1))
+        job.spent_usd += result["usd"]
+        _add_rallies(job, scan.rallies_from_answers(chunks))
+        job.scan = {"done": len(chunks), "total": job.scan.get("total") or len(chunks)}
+        finished = len(chunks) >= job.scan["total"]
+        if finished:
+            job.unread = scan.unread_ranges(chunks)
+            job.scan, job.progress, job.status = {}, {}, "rallies_ready"
+        job.save()
+    return finished
+
+
 def make_preview(job: Job, index: int) -> tuple[Path, Path]:
     """랠리 후보의 장면 사진(가운데)과 미리보기 영상(앞뒤 1초 포함). 로컬, API 비용 없음.
 
     올린 사람의 폰에만 보여 주므로 원본에서 만든다. 외부(Meta)로는 여전히 흐림본만 보낸다.
     이미 있으면 다시 만들지 않는다(예전 작업은 처음 볼 때 만들어진다).
     """
+    if job.mode != "server":
+        raise FileNotFoundError("브라우저 방식은 원본이 기기에 있어 미리보기를 기기에서 만든다")
     r = job.rallies[index]
     out_dir = job.dir / "rallies"
     out_dir.mkdir(exist_ok=True)
@@ -456,7 +615,7 @@ def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
     scene_dir = job.dir / f"scene{index:02d}"
     scene_dir.mkdir(exist_ok=True)
     job.step("blur")
-    sam_clip = _cut_blurred(Path(job.video), start, duration, scene_dir / "sam_blur.mp4", SAM_FPS)
+    sam_clip = _cut_blurred(*_source(job, index, start), duration, scene_dir / "sam_blur.mp4", SAM_FPS)
     n = render.probe(sam_clip)[3]
     # 득점 근처 장면에서 탭하면 하이라이트의 핵심은 맞는 사람을 잡는다(실험 H-25). 장면 사진은 로컬, 무료
     frames = {kind: 0 if before is None else max(0, min(n - 1, round((score_sec - before - start) * SAM_FPS)))
@@ -492,7 +651,7 @@ def scene_render_inputs(job: Job, scene: dict[str, Any], languages: list[str], p
     sam_clip = Path(scene["sam_clip"])
     if not scene.get("clip_is_original"):  # 10/29 이전 장면은 흐림본으로 잘라 둬서 '나'의 얼굴도 가려져 있다
         start, end = scene["clip"]
-        scene["clip_video"] = str(_cut(Path(job.video), start, end - start, sam_clip.parent / "clip.mp4", None))
+        scene["clip_video"] = str(_cut(*_source(job, scene["index"], start), end - start, sam_clip.parent / "clip.mp4", None))
         scene["clip_is_original"] = True
     me = track.parse((sam_clip.parent / "me_wire.txt").read_text())
     others = track.parse(_track_others(job, client, sam_clip).read_text()) if privacy == "silhouette" else None
@@ -592,7 +751,7 @@ def make_highlight(
     clip_start = max(win_start, min(win_start + span[0] / fps, scene["score_sec"] - CLIP_MIN_BEFORE_SEC))
     clip_end = min(win_end, max(win_start + (span[1] + 1) / fps, scene["score_sec"] + CLIP_MIN_AFTER_SEC))
     # 결과 영상은 원본에서 자르고(맥 안에서만 씀), 렌더할 때 '나'를 뺀 얼굴만 모자이크한다(선택)
-    clip_video = _cut(Path(job.video), clip_start, clip_end - clip_start, sam_clip.parent / "clip.mp4", None)
+    clip_video = _cut(*_source(job, index, clip_start), clip_end - clip_start, sam_clip.parent / "clip.mp4", None)
     scene.update(taps=[list(t) for t in taps], span_frames=list(span),
                  clip=[round(clip_start, 2), round(clip_end, 2)], clip_video=str(clip_video), clip_is_original=True)
     out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client, max_fps)

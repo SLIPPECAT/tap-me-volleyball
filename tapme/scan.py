@@ -108,6 +108,29 @@ def blurred_chunk(video: Path, start: float, seconds: float, out: Path) -> Path:
     return out
 
 
+def ask_chunk(client: Any, i: int, start: float, seconds: float, clip: Path) -> dict[str, Any]:
+    """흐림본 조각 하나를 Muse에 묻는다. 답을 못 읽으면 한 번 더 묻고, 물은 뒤 조각 파일은 지운다.
+    서버가 흐린 조각(scan_video)과 사용자 브라우저가 흐려 올린 조각(10/31) 모두 이것으로 묻는다."""
+    replies, answer = [], None
+    while answer is None and len(replies) < MAX_ATTEMPTS:
+        replies.append(muse.ask_about_video(client, clip, SCAN_PROMPT.format(dur=seconds)))
+        try:
+            answer = muse.parse_json_reply(replies[-1].text)
+        except ValueError:
+            answer = None
+    clip.unlink(missing_ok=True)  # 물은 뒤에는 쓰지 않는다(작업당 약 0.4GB, 흐림본이라도 회원 영상이라 바로 지운다)
+    return {"chunk": i, "start": start, "seconds": seconds,
+            "answer": answer if answer is not None else {"rallies": [], "unreadable": True},
+            "attempts": len(replies), "usd": sum(r.usd for r in replies),
+            "input_tokens": sum(r.input_tokens for r in replies),
+            "output_tokens": sum(r.output_tokens for r in replies)}
+
+
+def chunk_plan(offset: float, length: float) -> list[tuple[float, float]]:
+    """훑을 구간의 조각들 (원본 시작 초, 길이)."""
+    return [(offset + s, min(CHUNK_SEC, length - s)) for s in chunk_starts(length)]
+
+
 def scan_video(
     client: Any, video: Path, duration: float, work_dir: Path,
     on_progress: Callable[[int, int, float, list[dict[str, Any]]], None] | None = None,
@@ -125,20 +148,7 @@ def scan_video(
 
     def ask(i: int, start: float, clip: Path) -> dict[str, Any]:
         nonlocal done, spent
-        seconds = min(CHUNK_SEC, end - start)
-        replies, answer = [], None
-        while answer is None and len(replies) < MAX_ATTEMPTS:
-            replies.append(muse.ask_about_video(client, clip, SCAN_PROMPT.format(dur=seconds)))
-            try:
-                answer = muse.parse_json_reply(replies[-1].text)
-            except ValueError:
-                answer = None
-        clip.unlink(missing_ok=True)  # 물은 뒤에는 쓰지 않는다(작업당 약 0.4GB, 흐림본이라도 회원 영상이라 바로 지운다)
-        result = {"chunk": i, "start": start, "seconds": seconds,
-                  "answer": answer if answer is not None else {"rallies": [], "unreadable": True},
-                  "attempts": len(replies), "usd": sum(r.usd for r in replies),
-                  "input_tokens": sum(r.input_tokens for r in replies),
-                  "output_tokens": sum(r.output_tokens for r in replies)}
+        result = ask_chunk(client, i, start, min(CHUNK_SEC, end - start), clip)
         with lock:
             done += 1
             spent += result["usd"]
