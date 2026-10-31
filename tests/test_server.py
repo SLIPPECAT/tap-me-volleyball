@@ -514,6 +514,58 @@ def test_judges_get_in_through_their_own_link(client: TestClient, monkeypatch: p
     assert entered.status_code == 200
 
 
+def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 사용자: 처음에 영상·나·설정을 다 받아 맡기면 끝. 확실하면 만들고(0.7 이상), 애매하면 확인 묶음, 없으면 건너뛴다(H-46)
+    import time as _time
+
+    from tapme import auto, push
+
+    def four_rallies(job: jobs.Job, client) -> None:
+        job.rallies = [{"index": i, "start_sec": 10.0 * i, "end_sec": 10.0 * i + 8, "point_sec": 10.0 * i + 7, "is_rally": True}
+                       for i in range(4)]
+        job.status = "rallies_ready"
+        job.save()
+
+    monkeypatch.setattr(jobs, "find_rallies", four_rallies)
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    answers = {0: {"card": 2, "confidence": 0.9}, 1: {"card": 1, "confidence": 0.5}, 2: {"card": -1, "confidence": 0.9},
+               3: {"card": 0, "confidence": 0.95}}
+    monkeypatch.setattr(auto, "find_me", lambda job, i, ref, hint, c: answers[i])
+    monkeypatch.setattr(jobs, "prepare_scene", lambda job, i, c: job.scenes.__setitem__(str(i), {"index": i, "status": "awaiting_tap"}))
+    rendered: list[tuple[int, int, str]] = []
+
+    def fake_render(job_id: str, i: int, card: int, a: dict, c) -> None:
+        rendered.append((i, card, a["team"]))
+        job = jobs.load_job(job_id)
+        job.scenes[str(i)]["status"] = "done"
+        job.save()
+
+    monkeypatch.setattr(server, "_auto_render", fake_render)
+    monkeypatch.setattr(jobs, "make_reel", lambda job, order: job.reel.update({"status": "done", "order": order}))
+    sent: list[tuple[str, dict]] = []
+    monkeypatch.setattr(push, "notify", lambda job_id, kind, url, **v: sent.append((kind, v)))
+
+    job_id = _send(client).json()["id"]
+    r = client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "hint": "초록 10번", "team": "초록"})
+    assert r.status_code == 200
+    for _ in range(100):
+        if client.get(f"/jobs/{job_id}").json()["auto"].get("state") == "done":
+            break
+        _time.sleep(0.05)
+    a = client.get(f"/jobs/{job_id}").json()["auto"]
+    assert a["state"] == "done" and a["made"] == [0, 3] and a["review"] == [1] and "me" not in a
+    assert rendered == [(0, 2, "초록"), (3, 0, "초록")]
+    assert client.get(f"/jobs/{job_id}").json()["reel"]["order"] == [0, 3]  # 둘 이상이면 모음도
+    # 장면마다가 아니라 끝날 때 한 번(이 시험은 찾기가 맡기기보다 먼저 끝나 랠리 알림이 앞에 하나 있다)
+    assert [k for k, _ in sent if k != "rallies"] == ["auto_done"] and sent[-1] == ("auto_done", {"n": 2, "review": 1})
+    assert client.post(f"/jobs/{job_id}/auto", json={"t": 1, "x": 1, "y": 1, "team": "a"}).status_code == 409  # 한 번만
+    long_id = _send(client).json()["id"]
+    job = jobs.load_job(long_id)
+    job.scan_range = [0.0, 25 * 60.0]
+    job.save()
+    assert client.post(f"/jobs/{long_id}/auto", json={"t": 1, "x": 1, "y": 1, "team": "a"}).status_code == 400  # 20분까지
+
+
 def test_judge_codes_skip_the_daily_limit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(access, "REQUIRED", True)
     monkeypatch.setattr(jobs, "MAX_UPLOADS_PER_DAY", 1)

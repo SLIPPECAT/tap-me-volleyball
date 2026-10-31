@@ -39,6 +39,13 @@ MESSAGES = {
              "ja": ("ハイライトができました", "開いて保存・共有してください{more}"),
              "en": ("Your highlight is ready", "Open it to save or share{more}")},
     "more": {"ko": " (나머지 {left}개도 만드는 중)", "ja": "（残り{left}件も作成中）", "en": " ({left} more on the way)"},
+    "auto_done": {"ko": ("하이라이트 {n}개가 완성됐어요", "열어서 한 번에 저장해 보세요{more}"),
+                  "ja": ("ハイライトが{n}本できました", "開いてまとめて保存してください{more}"),
+                  "en": ("{n} highlights are ready", "Open them and save them all at once{more}")},
+    "auto_more": {"ko": " (나인지 확인할 장면 {review}개)", "ja": "（本人か確認するシーン{review}件）", "en": " ({review} scenes to check)"},
+    "auto_none": {"ko": ("나를 찾은 장면이 없어요", "열어서 직접 고르거나 다른 장면에서 나를 다시 탭해 주세요"),
+                  "ja": ("自分が映るシーンが見つかりませんでした", "開いて自分で選ぶか、別の場面で自分をタップし直してください"),
+                  "en": ("Couldn't find you in any scene", "Open it to pick scenes yourself or tap yourself in another moment")},
     "failed": {"ko": ("하이라이트를 만들지 못했어요", "열어서 다시 시도해 주세요"),
                "ja": ("ハイライトを作れませんでした", "開いてもう一度お試しください"),
                "en": ("Couldn't make the highlight", "Open it and try again")},
@@ -81,6 +88,8 @@ def message(kind: str, lang: str, **vars: Any) -> tuple[str, str]:
     title, body = MESSAGES[kind][lang]
     if kind == "done":
         vars["more"] = MESSAGES["more"][lang].format(**vars) if vars.get("left") else ""
+    if kind == "auto_done":
+        vars["more"] = MESSAGES["auto_more"][lang].format(**vars) if vars.get("review") else ""
     return title.format(**vars), body.format(**vars)
 
 

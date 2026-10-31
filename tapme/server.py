@@ -39,7 +39,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from tapme import access, gate, jobs, member, muse, push, render, scan, score
+from tapme import access, auto, gate, jobs, member, muse, push, render, scan, score
 
 # 매일 새벽 4시(jobs.DAY_START_HOUR)에 지난날 영상을 모두 지운다. 배포 서버에서만 켠다(이 맥의 시험 작업은 지우지 않게).
 # 서버가 꺼져 있다가 켜지면 바로 한 번 지운다
@@ -327,7 +327,10 @@ def _run_scan(job_id: str, client: Any) -> None:
             access.refund(job.code, "uploads")
         job.save()
         if job.status == "rallies_ready":
-            _notify_rallies(job)
+            if job.auto:  # 한 번에 맡기기: 랠리 목록 알림 대신 바로 이어 만든다(끝나면 한 번 알린다)
+                _start_auto(job_id, client)
+            else:
+                _notify_rallies(job)
 
 
 def _notify_rallies(job: jobs.Job) -> None:
@@ -359,8 +362,143 @@ def _make_highlight(job_id: str, index: int, *args: Any) -> None:
     job.save()
     # 완성·실패를 알린다. 여러 장면을 예약했으면 남은 수도(다음 할 일: 열어서 저장·공유)
     left = sum(sc.get("status") in ("queued", "rendering") for k, sc in job.scenes.items() if k != str(index))
-    if scene.get("status") in ("done", "failed"):
+    if scene.get("status") in ("done", "failed") and not job.auto:
         push.notify(job_id, scene["status"], f"/#job={job_id}&rally={index}", left=left)
+
+
+# ---- 한 번에 맡기기(tapme/auto.py, 10/31 사용자) ----
+_auto_lock = threading.Lock()
+AUTO_EXTRA_USD = 1.2  # 나 찾기 질문(랠리당 최대 $0.03 × 20) + 하이라이트 추적(8개)만큼 작업 상한을 늘린다
+
+
+def _auto_set(job_id: str, **kv: Any) -> jobs.Job:
+    job = jobs.load_job(job_id)
+    job.auto = {**job.auto, **kv}
+    job.save()
+    return job
+
+
+def _start_auto(job_id: str, client: Any) -> None:
+    """기다리던 한 번에 맡기기를 한 번만 시작한다(스캔 끝과 요청이 동시에 와도)."""
+    with _auto_lock:
+        job = jobs.load_job(job_id)
+        if job.auto.get("state") != "waiting" or job.status != "rallies_ready":
+            return
+        job.auto = {**job.auto, "state": "reference"}
+        job.budget_usd = round((job.budget_usd or jobs.MAX_USD_PER_JOB) + AUTO_EXTRA_USD, 2)
+        job.save()
+    threading.Thread(target=_run_auto, args=(job_id, client), daemon=True).start()
+
+
+def _run_auto(job_id: str, client: Any) -> None:
+    with _Working():
+        try:
+            _auto_steps(job_id, client)
+        except (jobs.BudgetExceeded, jobs.TapMissed) as e:
+            _auto_set(job_id, state="failed", error=str(e))
+        except Exception as e:  # noqa: BLE001 - 서버가 죽지 않고 화면에 알린다
+            traceback.print_exc()
+            _auto_set(job_id, state="failed", error=f"처리 중 오류: {e}")
+
+
+def _auto_render(job_id: str, index: int, card: int, a: dict[str, Any], client: Any) -> None:
+    """화면의 일괄 만들기와 같은 길로 예약한다(득점 장면에서 고른 선수 카드)."""
+    o = a.get("options", {})
+    threading.Thread(target=_run_highlight, daemon=True, args=(
+        job_id, index, [("score", card)], a["team"], o.get("languages", []), o.get("role", ""),
+        o.get("privacy", render.DEFAULT_PRIVACY), o.get("zoom", render.DEFAULT_ZOOM), client,
+        o.get("face_mosaic", True), o.get("fps", 0))).start()
+
+
+def _active(job_id: str) -> int:
+    return sum(sc.get("status") in ("queued", "rendering") for sc in jobs.load_job(job_id).scenes.values())
+
+
+def _auto_steps(job_id: str, client: Any) -> None:
+    job = jobs.load_job(job_id)
+    a = job.auto
+    with _step_lock:
+        job = jobs.load_job(job_id)
+        ref = auto.make_reference(job, a["me"]["t"], a["me"]["x"], a["me"]["y"], client)
+        job.save()
+    order = [r["index"] for r in sorted(job.rallies, key=lambda r: r["start_sec"]) if r.get("is_rally")]
+    made: list[int] = []
+    review: list[int] = []
+    _auto_set(job_id, state="finding", total=len(order), done=0)
+    for n, i in enumerate(order):
+        if len(made) >= a["max"]:
+            break
+        with _step_lock:
+            job = jobs.load_job(job_id)
+            if job.scenes.get(str(i), {}).get("status") not in ("awaiting_tap", "done", "failed"):
+                jobs.prepare_scene(job, i, client)
+            found = auto.find_me(job, i, ref, a.get("hint", ""), client)
+            job.auto = {**job.auto, "found": {**job.auto.get("found", {}), str(i): found}, "done": n + 1}
+            job.save()
+        decision = auto.decide(found)
+        if decision == "review":
+            review.append(i)
+            _auto_set(job_id, review=review)
+        if decision != "make":
+            continue
+        while _active(job_id) >= jobs.MAX_ACTIVE_SCENES:
+            time.sleep(5)
+        try:
+            access.use(job.code, "highlights")
+        except access.AccessDenied as e:
+            _auto_set(job_id, note=str(e))
+            break
+        job = jobs.load_job(job_id)
+        job.scenes[str(i)]["status"] = "queued"
+        job.save()
+        made.append(i)
+        _auto_set(job_id, made=made)
+        _auto_render(job_id, i, found["card"], a, client)
+    _auto_set(job_id, state="making", made=made, review=review)
+    while any(jobs.load_job(job_id).scenes.get(str(i), {}).get("status") in ("queued", "rendering") for i in made):
+        time.sleep(10)
+    job = jobs.load_job(job_id)
+    done = [i for i in made if job.scenes.get(str(i), {}).get("status") == "done"]
+    if len(done) >= 2:  # 득점 장면만 모은 영상도 같이(시간 순)
+        job.reel = {"status": "rendering", "order": done}
+        job.save()
+        _run(job_id, jobs.make_reel, done)
+    _auto_set(job_id, state="done")
+    if done:
+        push.notify(job_id, "auto_done", f"/#job={job_id}", n=len(done), review=len(review))
+    else:
+        push.notify(job_id, "auto_none", f"/#job={job_id}")
+
+
+class AutoRequest(RenderOptions):
+    """올리기 전에 받은 나(영상 t초에서 탭한 원본 화소)·나에 대한 정보·설정."""
+
+    t: float = Field(ge=0)
+    x: float = Field(ge=0)
+    y: float = Field(ge=0)
+    hint: str = Field(default="", max_length=100, description="등번호·유니폼 색·신발처럼 나를 알아볼 정보")
+    team: str = Field(min_length=1, max_length=20)
+    max: int = Field(default=auto.MAX_HIGHLIGHTS, ge=1, le=auto.MAX_HIGHLIGHTS)
+
+
+@app.post("/jobs/{job_id}/auto")
+def start_auto(job_id: str, req: AutoRequest) -> dict[str, str]:
+    """한 번에 맡기기: 랠리를 다 찾으면(이미 찾았으면 바로) 나를 찾아 하이라이트를 만들고 모은다."""
+    job = _job(job_id)
+    if job.mode != "server":
+        raise HTTPException(409, "한 번에 맡기기는 서버에 맡긴 영상만 돼요")
+    if job.auto:
+        raise HTTPException(409, "이미 맡겼어요")
+    start, end = (job.scan_range + [0.0, 0.0])[:2]
+    length = (end - start) if end else (job.duration_sec - start if job.duration_sec else 0)
+    if length > auto.MAX_SCAN_SEC + 1:
+        raise HTTPException(400, f"한 번에 맡기기는 {auto.MAX_SCAN_SEC // 60}분까지예요. 구간을 골라 주세요")
+    options = {k: v for k, v in req.model_dump().items() if k in RenderOptions.model_fields}
+    job.auto = {"state": "waiting", "me": {"t": req.t, "x": req.x, "y": req.y}, "hint": req.hint.strip(),
+                "team": req.team.strip(), "options": options, "max": req.max, "found": {}, "made": [], "review": []}
+    job.save()
+    _start_auto(job_id, client_factory())  # 랠리를 이미 다 찾았으면 바로, 아니면 찾기가 끝날 때(_run_scan)
+    return {"status": "accepted"}
 
 
 @app.get("/sw.js")
@@ -776,7 +914,8 @@ def status(job_id: str) -> dict[str, Any]:
                         for r in job.rallies],
             "scenes": {k: {f: v for f, v in s.items() if f not in _SERVER_PATHS}
                        for k, s in job.scenes.items()},
-            "reel": {k: v for k, v in job.reel.items() if k != "video"}}
+            "reel": {k: v for k, v in job.reel.items() if k != "video"},
+            "auto": {k: v for k, v in job.auto.items() if k != "me"}}
 
 
 def _left(job: jobs.Job) -> dict[str, int] | None:

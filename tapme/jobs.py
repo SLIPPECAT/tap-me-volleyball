@@ -136,6 +136,8 @@ class Job:
     source_size: int = 0  # 브라우저 방식: 기기의 원본 크기(바이트). 화면을 새로 연 뒤 같은 영상을 다시 골랐는지 확인  # 브라우저 방식: 랠리 번호 → 올린 구간 파일의 원본 시작 초
     code: str = ""  # 이 영상을 올린 사용 코드(하이라이트 횟수를 여기서 센다). 코드를 쓰지 않는 서버면 빈 값
     scan_range: list[float] = field(default_factory=list)  # 훑을 구간 [시작, 끝](원본 초). 올릴 때 받은 값을 찾기 전에 영상 길이로 맞춘다
+    # 한 번에 맡기기(tapme/auto.py): 처음에 받은 나·설정과 진행 {"state", "me", "hint", "team", "options", "max", "found", ...}
+    auto: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._seen: dict[str, Any] | None = None  # 마지막으로 읽거나 쓴 이 객체의 내용(save가 바뀐 항목만 고르는 기준)
