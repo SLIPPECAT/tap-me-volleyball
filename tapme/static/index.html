@@ -638,10 +638,22 @@ function renderBatchBar(s) {
   // 다 찼으면 나머지 체크를 막고 이유를 보여 준다
   const full = state.picked.size >= batchRoom(s);
   document.querySelectorAll(".pick-check input").forEach((cb) => { cb.disabled = full && !cb.checked; });
-  const sc = Object.values((s && s.scenes) || {});
-  const r = sc.filter((x) => x.status === "rendering").length, q = sc.filter((x) => x.status === "queued").length;
-  const d = sc.filter((x) => x.status === "done").length;
-  $("batch-status").textContent = state.batchMode && full ? t("batchMax", { m: BATCH_MAX }) : r + q ? t("batchStatus", { r, q, d }) : "";
+  // 서버는 하나씩 만든다. 'rendering'이어도 차례(render_turns)를 기다리면 대기로 센다 — 둘 다 '만드는 중'으로 보였다(10/31 아이폰)
+  const entries = Object.entries((s && s.scenes) || {}), turns = (s && s.render_turns) || {};
+  const waiting = ([k, x]) => x.status === "queued" || (x.status === "rendering" && turns[k]);
+  const q = entries.filter(waiting).length, r = entries.filter(([k, x]) => x.status === "rendering" && !turns[k]).length;
+  const d = entries.filter(([, x]) => x.status === "done").length;
+  // 모두 끝나는 때: 대기 수 × 한 개 예상 + 만드는 것의 남은 시간(renderEta와 같은 셈)
+  let eta = "";
+  if (r + q) {
+    const per = (state.est || {}).highlight_sec || 600, now = Date.now();
+    state.batchSeen = state.batchSeen || {};
+    const cur = entries.find(([k, x]) => x.status === "rendering" && !turns[k]);
+    if (cur && !state.batchSeen[cur[0]]) state.batchSeen[cur[0]] = now;
+    const left = q * per + (cur ? Math.max(30, per - (now - state.batchSeen[cur[0]]) / 1000) : 0);
+    eta = " · " + t("etaLeft", { m: fmtLeft(left), c: clockAt(left) });
+  }
+  $("batch-status").textContent = state.batchMode && full ? t("batchMax", { m: BATCH_MAX }) : r + q ? t("batchStatus", { r, q, d }) + eta : "";
 }
 $("batch-toggle").onclick = () => { state.batchMode = !state.batchMode; state.picked.clear(); render(state.last); };
 $("batch-start").onclick = async () => {

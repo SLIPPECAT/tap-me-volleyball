@@ -82,7 +82,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _json(self, data: dict) -> None:
-        self._send(200, json.dumps(data).encode(), "application/json")
+        # 서버 화면의 서비스 워커(꺼졌을 때 보이는 깨우기 화면)가 상태를 읽을 수 있게 서버 주소에만 허용한다(10/31)
+        self._send(200, json.dumps(data).encode(), "application/json", {"Access-Control-Allow-Origin": TARGET})
 
     def do_GET(self) -> None:
         if self.path == "/status":

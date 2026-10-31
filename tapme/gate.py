@@ -7,6 +7,9 @@ TAPME_MEMBERS_ONLY=1인 서버(배포)는 입장 쿠키(tapme_session)가 없으
 배구구 앱의 배너는 폰 기본 브라우저로 열리고 앱 로그인은 브라우저와 따로라, 처음 한 번은 브라우저에서 배구구 웹에 로그인해야 한다
 (로그인 화면 returnUrl=/ → 배구구 홈 → 배너). 앱이 웹 로그인 넘기기(app-handoff)로 배너를 열면 없앨 수 있다(배구구 앱 수정, 추후)
 심사용 초대는 지금 막아 둔다(TAPME_JUDGE_ACCESS=1이면 연다, GitHub 이슈로 추후 결정).
+
+작업은 만든 사람만(10/31 사용자: 특정 사용자가 다른 사람의 영상에 접근할 수 없어야): 입장 쿠키에 그 사람 코드의 열쇠 해시(o)를
+넣고, 작업·이어 올리기마다 그 작업을 만든 코드와 맞는지 본다(server._members_only). 회원은 회원당 코드가 하나라 다른 기기도 같다.
 """
 
 from __future__ import annotations
@@ -32,23 +35,35 @@ def _sign(body: bytes) -> str:
     return base64.urlsafe_b64encode(hmac.new(SECRET.encode(), body, hashlib.sha256).digest()).decode().rstrip("=")
 
 
-def make(kind: str, now: float | None = None) -> str:
-    """입장 쿠키 값. kind: member(회원 확인)·code(회원 코드)·judge."""
-    body = base64.urlsafe_b64encode(json.dumps({"k": kind, "e": int((time.time() if now is None else now) + MAX_AGE)}).encode()).decode().rstrip("=")
+def owner_key(code: str) -> str:
+    """코드의 열쇠 해시(쿠키에 코드를 그대로 두지 않게). 대소문자·하이픈은 무시한다."""
+    norm = "".join(c for c in code.upper() if c.isalnum())
+    return hmac.new(SECRET.encode(), f"owner:{norm}".encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def make(kind: str, now: float | None = None, owner: str = "") -> str:
+    """입장 쿠키 값. kind: member(회원 확인)·code(회원 코드)·judge. owner: 그 사람의 코드(작업 주인 확인용)."""
+    data = {"k": kind, "e": int((time.time() if now is None else now) + MAX_AGE), "o": owner_key(owner) if owner else ""}
+    body = base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
     return f"{body}.{_sign(body.encode())}"
 
 
-def valid(value: str | None, now: float | None = None) -> bool:
+def session(value: str | None, now: float | None = None) -> dict | None:
+    """서명이 맞고 기한이 남은 입장 쿠키의 내용. 아니면 None."""
     if not value or not SECRET or "." not in value:
-        return False
+        return None
     body, sig = value.rsplit(".", 1)
     if not hmac.compare_digest(sig, _sign(body.encode())):
-        return False
+        return None
     try:
         data = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     except ValueError:
-        return False
-    return data.get("e", 0) > (time.time() if now is None else now)
+        return None
+    return data if data.get("e", 0) > (time.time() if now is None else now) else None
+
+
+def valid(value: str | None, now: float | None = None) -> bool:
+    return session(value, now) is not None
 
 
 def is_open(path: str) -> bool:

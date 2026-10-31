@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -130,11 +132,37 @@ def _rate_wait(ip: str, group: str, now: float) -> float:
 async def _members_only(request, call_next):
     """배구구 회원 전용 잠금(tapme/gate.py). 입장 쿠키가 없으면 화면은 안내로, 나머지 요청은 401.
     다른 미들웨어보다 먼저 등록해 가장 안쪽에서 돈다 — 속도 제한·보안 헤더는 잠긴 응답에도 붙는다."""
-    if gate.MEMBERS_ONLY and not gate.is_open(request.url.path) and not gate.valid(request.cookies.get(gate.COOKIE)):
-        if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
-            return HTMLResponse(gate.PAGE, status_code=403)
-        return JSONResponse({"detail": "배구구 회원 전용이에요. 배구구 홈의 배너로 들어와 주세요"}, status_code=401)
+    if gate.MEMBERS_ONLY and not gate.is_open(request.url.path):
+        sess = gate.session(request.cookies.get(gate.COOKIE))
+        if sess is None:
+            if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+                return HTMLResponse(gate.PAGE, status_code=403)
+            return JSONResponse({"detail": "배구구 회원 전용이에요. 배구구 홈의 배너로 들어와 주세요"}, status_code=401)
+        # 작업·이어 올리기는 만든 사람만(10/31 사용자). 남의 것은 있는지도 알려 주지 않는다(404)
+        if (m := _OWNED.match(request.url.path)) and m.group(2) != "browser":
+            code = _owner_code(m.group(1), m.group(2))
+            if not code or not hmac.compare_digest(gate.owner_key(code), sess.get("o", "")):
+                return JSONResponse({"detail": "작업이 없다"}, status_code=404)
     return await call_next(request)
+
+
+_OWNED = re.compile(r"^/(jobs|uploads)/([A-Za-z0-9]+)(?:/|$)")
+
+
+def _owner_code(kind: str, item_id: str) -> str | None:
+    """작업(job.code)·이어 올리기(시작할 때 낸 코드)를 만든 코드. 없으면 None."""
+    try:
+        return jobs.load_job(item_id).code if kind == "jobs" else jobs.upload_status(item_id).get("code")
+    except (KeyError, FileNotFoundError, ValueError):
+        return None
+
+
+def _own_code(request: Request, code: str) -> None:
+    """새 작업·이어 올리기는 이 기기가 들어올 때 쓴 코드로만 만든다(남의 코드로 만들어 남의 횟수를 쓰지 않게)."""
+    if gate.MEMBERS_ONLY:
+        sess = gate.session(request.cookies.get(gate.COOKIE)) or {}
+        if not hmac.compare_digest(gate.owner_key(code), sess.get("o", "")):
+            raise HTTPException(403, "이 기기에서 들어올 때 쓴 코드로만 올릴 수 있어요")
 
 
 @app.middleware("http")
@@ -485,14 +513,15 @@ def claim_code(req: ClaimRequest, request: Request) -> JSONResponse:
         code = access.claim(req.invite, _client_ip(request), member=who)
     except access.AccessDenied as e:
         raise HTTPException(403, str(e)) from e
-    return _with_session({"code": f"{code[:4]}-{code[4:]}"}, "judge" if kind == "judge" else "member")
+    return _with_session({"code": f"{code[:4]}-{code[4:]}"}, "judge" if kind == "judge" else "member", code)
 
 
-def _with_session(body: dict[str, Any], kind: str) -> JSONResponse:
-    """회원 전용 잠금이면 입장 쿠키(이 주소에서만, 30일)를 같이 준다."""
+def _with_session(body: dict[str, Any], kind: str, code: str) -> JSONResponse:
+    """회원 전용 잠금이면 입장 쿠키(이 주소에서만, 30일)를 같이 준다. 코드는 작업 주인 확인용 해시로만 담는다."""
     resp = JSONResponse(body)
     if gate.MEMBERS_ONLY:
-        resp.set_cookie(gate.COOKIE, gate.make(kind), max_age=gate.MAX_AGE, httponly=True, secure=True, samesite="lax", path="/")
+        resp.set_cookie(gate.COOKIE, gate.make(kind, owner=code), max_age=gate.MAX_AGE, httponly=True, secure=True,
+                        samesite="lax", path="/")
     return resp
 
 
@@ -508,7 +537,7 @@ def enter_with_code(req: EnterRequest, request: Request) -> JSONResponse:
     if not access.can_enter(req.code, judges=gate.JUDGE_ACCESS):
         _bad_code_check(ip, req.code, True)
         raise HTTPException(403, "배구구 배너로 받은 코드가 아니에요")
-    return _with_session({"ok": True}, "code")
+    return _with_session({"ok": True}, "code", req.code)
 
 
 @app.get("/robots.txt")
@@ -569,9 +598,10 @@ MAX_SEGMENT_BYTES = 400 * 1024 * 1024  # 랠리 구간 원본(키프레임 간�
 
 
 @app.post("/jobs/browser")
-def create_browser_job(req: BrowserJobRequest) -> dict[str, Any]:
+def create_browser_job(req: BrowserJobRequest, request: Request) -> dict[str, Any]:
     """브라우저 방식(10/31, H-45): 원본은 올리지 않고 길이·구간만 받아 작업을 만든다. 기기는 돌려준 계획대로
     1분 흐림본 조각을 /jobs/{id}/chunks/{i}로 올린다. 올리기 횟수·하루 한도·비용 상한은 원본 올리기와 같다."""
+    _own_code(request, req.code)
     if reason := _closed_reason(req.code):
         raise HTTPException(503, reason)
     try:
@@ -659,8 +689,9 @@ MAX_OPEN_UPLOADS = 2  # 코드 하나가 동시에 열어 둘 수 있는 이어 
 
 
 @app.post("/uploads")
-def start_upload(req: UploadInit) -> dict[str, Any]:
+def start_upload(req: UploadInit, request: Request) -> dict[str, Any]:
     """서버에 맡기기(이어 올리기): 받을 준비만 한다. 횟수는 다 받았을 때 센다(끊겨도 횟수가 줄지 않게)."""
+    _own_code(request, req.code)
     if reason := _closed_reason(req.code):
         raise HTTPException(503, reason)
     if access.REQUIRED:

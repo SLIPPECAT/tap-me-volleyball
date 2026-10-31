@@ -459,6 +459,39 @@ def test_wrong_codes_lock_the_ip_for_an_hour(client: TestClient, monkeypatch: py
     assert check(good).status_code == 200  # 다른 주소는 그대로
 
 
+def test_a_member_cannot_open_another_members_job(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 사용자: 특정 사용자가 다른 사람의 영상에 접근할 수 없어야. 작업·이어 올리기는 만든 코드의 입장 쿠키로만, 남의 것은 404
+    monkeypatch.setattr(access, "REQUIRED", True)
+    monkeypatch.setattr(member, "CHECK", True)
+    monkeypatch.setattr(gate, "MEMBERS_ONLY", True)
+    monkeypatch.setattr(gate, "SECRET", "test-secret")
+    word, who = access.new_invite("banner"), {"id": "a"}
+    monkeypatch.setattr(member, "member_id", lambda cookies: who["id"])
+
+    def enter(member_id: str) -> tuple[str, str]:
+        who["id"] = member_id
+        client.cookies.clear()
+        r = client.post("/access/claim", json={"invite": word})
+        return r.json()["code"], r.cookies[gate.COOKIE]  # Secure 쿠키라 시험용 http에선 직접 싣는다
+
+    code_a, cookie_a = enter("a")
+    code_b, cookie_b = enter("b")
+    client.cookies.set(gate.COOKIE, cookie_a)
+    up = client.post("/uploads", json={"filename": "m.mp4", "size": 1, "code": code_a}).json()["id"]
+    client.put(f"/uploads/{up}?offset=0", content=b"v")
+    job_id = client.post(f"/uploads/{up}/finish").json()["id"]
+    assert client.get(f"/jobs/{job_id}").status_code == 200
+    client.cookies.set(gate.COOKIE, cookie_b)  # 다른 회원
+    assert client.get(f"/jobs/{job_id}").status_code == 404
+    assert client.get(f"/jobs/{job_id}/rallies/0/thumb").status_code == 404
+    assert client.post(f"/jobs/{job_id}/reel", json={"order": [0]}).status_code == 404
+    assert client.get(f"/uploads/{up}").status_code == 404
+    assert client.post("/uploads", json={"filename": "m.mp4", "size": 1, "code": code_a}).status_code == 403  # 남의 코드로
+    assert client.post("/uploads", json={"filename": "m.mp4", "size": 1, "code": code_b}).status_code == 200
+    client.cookies.set(gate.COOKIE, gate.make("member"))  # 주인 정보가 없는 예전 쿠키
+    assert client.get(f"/jobs/{job_id}").status_code == 404
+
+
 def test_judge_codes_skip_the_daily_limit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(access, "REQUIRED", True)
     monkeypatch.setattr(jobs, "MAX_UPLOADS_PER_DAY", 1)
