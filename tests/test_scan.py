@@ -70,7 +70,12 @@ def test_scanning_a_range_reports_times_in_the_whole_video(tmp_path, monkeypatch
     from tapme import muse
 
     cuts: list = []
-    monkeypatch.setattr(scan, "blurred_chunk", lambda v, s, sec, out: cuts.append((s, sec)) or out)
+    def cut(v, s, sec, out):
+        cuts.append((s, sec))
+        out.write_bytes(b"blurred")
+        return out
+
+    monkeypatch.setattr(scan, "blurred_chunk", cut)
     monkeypatch.setattr(muse, "ask_about_video", lambda c, clip, prompt: muse.MuseReply(
         text='{"rallies": [{"start_sec": 1, "point_sec": 9, "confidence": 0.8}]}',
         input_tokens=1, output_tokens=1, usd=0.01, seconds=0))
@@ -79,3 +84,4 @@ def test_scanning_a_range_reports_times_in_the_whole_video(tmp_path, monkeypatch
     assert cuts == [(1200.0, 60.0), (1250.0, 25.0)]  # 구간 끝(1275초)을 넘겨 자르지 않는다
     assert [r["point_sec"] for r in rallies] == [1209.0, 1259.0]
     assert scan.unread_ranges(chunks) == []
+    assert not list(tmp_path.glob("chunk*_blur.mp4"))  # 물은 뒤 바로 지운다

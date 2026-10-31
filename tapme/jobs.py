@@ -179,6 +179,26 @@ def _spend_path() -> Path:
     return JOBS_DIR / "_spend.json"
 
 
+def uploads_today(now: float | None = None) -> int:
+    path = JOBS_DIR / "_daily.json"
+    d = json.loads(path.read_text()) if path.exists() else {}
+    return int(d.get("uploads", 0)) if d.get("day") == today(now) else 0
+
+
+def count_upload(now: float | None = None) -> None:
+    with _lock:
+        n = uploads_today(now) + 1
+        JOBS_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = JOBS_DIR / f"_daily.{threading.get_ident()}.tmp"
+        tmp.write_text(json.dumps({"day": today(now), "uploads": n}))
+        os.replace(tmp, JOBS_DIR / "_daily.json")
+
+
+def free_gb() -> float:
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    return shutil.disk_usage(JOBS_DIR).free / 1e9
+
+
 def total_spent() -> float:
     """모든 작업이 쓴 Meta API 비용(지운 작업 포함)."""
     path = _spend_path()
@@ -195,15 +215,40 @@ def _add_spend(delta: float) -> None:
     os.replace(tmp, path)
 
 
-def delete_old_jobs(hours: float, now: float | None = None) -> list[str]:
-    """마지막으로 바뀐 지 hours시간 지난 작업 폴더(원본·결과 영상)를 지운다. 도는 작업은 조각·장면마다 job.json을
-    저장해 hours(24시간) 동안 그대로일 수 없다 — 상태로 거르지 않는다(서버가 꺼져 멈춘 작업도 지우려고).
+# 하루의 시작(한국 시각). 이때 지난날 영상을 모두 지우고 하루 올리기 횟수를 새로 센다(10/31 사용자 결정).
+# 자정이 아니라 새벽 4시: 정모가 밤 10~11시에 끝나 자정 무렵 올린 영상이 만드는 도중 지워지지 않게
+DAY_START_HOUR = 4
+KST = 9 * 3600
+# 하루에 받는 영상 수(0이면 제한 없음). 디스크 100GB에 작업 하나 2~4.5GB → 20편(배포 서버에서 정한다)
+MAX_UPLOADS_PER_DAY = int(os.environ.get("TAPME_MAX_UPLOADS_PER_DAY", "0"))
+# 디스크 남은 공간이 이보다 적으면 새 영상을 받지 않는다(GB, 0이면 보지 않음). 이 맥은 원래 꽉 차 있어 배포 서버에서만
+MIN_FREE_GB = float(os.environ.get("TAPME_MIN_FREE_GB", "0"))
+IDLE_BEFORE_DELETE_SEC = 3600  # 하루가 바뀔 때 처리 중이던 작업은 한 시간 조용해진 뒤에 지운다
+
+
+def day_start(now: float | None = None) -> float:
+    """가장 최근 하루 시작(새벽 4시, 한국 시각)의 시각(epoch 초)."""
+    now = time.time() if now is None else now
+    local = now + KST - DAY_START_HOUR * 3600
+    return now - local % 86400
+
+
+def today(now: float | None = None) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(day_start(now) + KST))
+
+
+def delete_previous_days(now: float | None = None) -> list[str]:
+    """하루가 바뀌면 지난날 작업 폴더(원본·결과 영상)를 모두 지운다. 마지막 저장이 하루 시작 전이고 한 시간 넘게
+    조용한 작업만 — 하루가 바뀔 때 처리 중이던 작업은 끝난 뒤 지운다. 상태로 거르지 않는다(서버가 꺼져 멈춘 작업도).
     정모 영상에는 다른 회원 얼굴이 담겨 오래 두지 않는다(10/31 사용자 결정, 배포 서버에서만 켠다)."""
     now = time.time() if now is None else now
-    gone = []
+    start, gone = day_start(now), []
     for d in JOBS_DIR.iterdir() if JOBS_DIR.exists() else []:
         meta = d / "job.json"
-        if not d.is_dir() or not meta.exists() or now - meta.stat().st_mtime < hours * 3600:
+        if not d.is_dir() or not meta.exists():
+            continue
+        mtime = meta.stat().st_mtime
+        if mtime >= start or now - mtime < IDLE_BEFORE_DELETE_SEC:
             continue
         shutil.rmtree(d)
         gone.append(d.name)

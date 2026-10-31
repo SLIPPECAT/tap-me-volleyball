@@ -547,12 +547,30 @@ def test_spending_of_all_jobs_is_capped(job: jobs.Job, monkeypatch: pytest.Monke
     assert jobs.total_spent() == pytest.approx(0.95)
 
 
-def test_old_jobs_are_deleted_but_ledgers_stay(job: jobs.Job) -> None:
+KST_4AM_NOV1 = 1793473200.0  # 2026-11-01 04:00 한국 시각
+
+
+def test_the_day_starts_at_4am_korean_time() -> None:
+    assert jobs.day_start(KST_4AM_NOV1 + 60) == KST_4AM_NOV1
+    assert jobs.day_start(KST_4AM_NOV1 - 60) == KST_4AM_NOV1 - 86400  # 새벽 3:59는 아직 전날
+    assert (jobs.today(KST_4AM_NOV1 - 60), jobs.today(KST_4AM_NOV1 + 60)) == ("2026-10-31", "2026-11-01")
+
+
+def test_previous_days_are_wiped_but_busy_jobs_and_ledgers_stay(job: jobs.Job) -> None:
     import os
 
-    fresh = jobs.create_job("b.mp4", b"x")
-    old = time.time() - 25 * 3600
-    os.utime(job.dir / "job.json", (old, old))
+    busy, fresh = jobs.create_job("b.mp4", b"x"), jobs.create_job("c.mp4", b"x")
+    for j, t in ((job, KST_4AM_NOV1 - 3 * 3600), (busy, KST_4AM_NOV1 - 600), (fresh, KST_4AM_NOV1 + 600)):
+        os.utime(j.dir / "job.json", (t, t))
     (jobs.JOBS_DIR / "_access.json").write_text("{}")
-    assert jobs.delete_old_jobs(24) == [job.id]
-    assert not job.dir.exists() and fresh.dir.exists() and (jobs.JOBS_DIR / "_access.json").exists()
+    now = KST_4AM_NOV1 + 1800  # 새벽 4:30
+    assert jobs.delete_previous_days(now) == [job.id]  # 3:50에 저장한 작업은 아직 처리 중일 수 있다
+    assert jobs.delete_previous_days(now + 3600) == [busy.id]  # 한 시간 조용하면 지운다
+    assert fresh.dir.exists() and (jobs.JOBS_DIR / "_access.json").exists()
+
+
+def test_uploads_are_counted_per_day() -> None:
+    jobs.count_upload(KST_4AM_NOV1 - 60)
+    jobs.count_upload(KST_4AM_NOV1 + 60)
+    jobs.count_upload(KST_4AM_NOV1 + 120)
+    assert (jobs.uploads_today(KST_4AM_NOV1 + 180), jobs.uploads_today(KST_4AM_NOV1 + 86400)) == (2, 0)

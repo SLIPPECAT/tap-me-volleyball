@@ -43,11 +43,27 @@ def estimate_usd(video_sec: float) -> float:
     return video_sec * INPUT_TOKENS_PER_SEC * INPUT_USD_PER_TOKEN + OUTPUT_TOKENS_GUESS * OUTPUT_USD_PER_TOKEN
 
 
+def forget_file(client: Any, file_id: str) -> None:
+    """Meta에 올린 클립을 답을 받은 뒤 지운다. 블러본이라도 회원 영상은 남겨 두지 않는다(10/31 사용자 결정).
+    지우기가 실패해도 받은 답은 그대로 쓴다."""
+    try:
+        client.files.delete(file_id)
+    except Exception as e:  # noqa: BLE001 - 지우기 실패로 작업을 멈추지 않는다
+        print(f"Meta 파일 지우기 실패 {file_id}: {e}")
+
+
 def ask_about_video(client: Any, video: Path, prompt: str, model: str = MODEL) -> MuseReply:
     if "contributor" in model.lower():
         raise ValueError("Contributor 모드 모델은 쓰지 않는다(입력이 학습에 쓰임)")
     with video.open("rb") as f:
         file_id = client.files.create(purpose="user_data", file=f).id
+    try:
+        return _ask(client, file_id, prompt, model)
+    finally:
+        forget_file(client, file_id)
+
+
+def _ask(client: Any, file_id: str, prompt: str, model: str) -> MuseReply:
     t0 = time.perf_counter()
     resp = client.responses.create(
         model=model,

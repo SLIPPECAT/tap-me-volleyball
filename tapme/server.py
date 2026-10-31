@@ -17,21 +17,30 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Form, Header, HTTPException, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from tapme import access, jobs, muse, render, scan, score
 
-# 끝난 작업 영상을 이 시간 뒤에 지운다. 배포 서버에서만 켠다(이 맥의 시험 작업은 지우지 않게)
-DELETE_AFTER_HOURS = float(os.environ.get("TAPME_DELETE_AFTER_HOURS", "0"))
+# 매일 새벽 4시(jobs.DAY_START_HOUR)에 지난날 영상을 모두 지운다. 배포 서버에서만 켠다(이 맥의 시험 작업은 지우지 않게).
+# 서버가 꺼져 있다가 켜지면 바로 한 번 지운다
+DAILY_WIPE = os.environ.get("TAPME_DAILY_WIPE") == "1"
 
 
 def _sweep() -> None:
     while True:
         try:
-            jobs.delete_old_jobs(DELETE_AFTER_HOURS)
+            jobs.delete_previous_days()
         except Exception:  # noqa: BLE001 - 지우기가 실패해도 서버는 계속
             traceback.print_exc()
         time.sleep(600)
@@ -39,7 +48,7 @@ def _sweep() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    if DELETE_AFTER_HOURS > 0:
+    if DAILY_WIPE:
         threading.Thread(target=_sweep, daemon=True).start()
     yield
 
@@ -51,6 +60,36 @@ _step_lock = threading.Lock()
 _SERVER_PATHS = ("sam_clip", "clip_video", "video")  # 서버 안 경로는 화면에 내보내지 않는다
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")  # 아이콘·홈 화면 설정
+
+
+# 쓸 때만 켜는 서버(10/31): 마지막 요청 뒤 오래 조용하고 도는 작업이 없으면 VM이 스스로 꺼진다(deploy/idle-stop.sh가 /idle을 본다).
+# 화면을 열어 두면 2초마다 상태를 물어 켜진 채로 남는다
+_last_request = time.time()
+_busy = [0]  # 백그라운드에서 도는 단계 수(랠리 찾기·장면 준비·하이라이트, 대기 중 포함)
+_busy_lock = threading.Lock()
+
+
+class _Working:
+    def __enter__(self) -> None:
+        with _busy_lock:
+            _busy[0] += 1
+
+    def __exit__(self, *exc: object) -> None:
+        with _busy_lock:
+            _busy[0] -= 1
+
+
+@app.middleware("http")
+async def _note_request(request, call_next):
+    global _last_request
+    if request.url.path != "/idle":
+        _last_request = time.time()
+    return await call_next(request)
+
+
+@app.get("/idle")
+def idle() -> dict[str, Any]:
+    return {"idle_sec": round(time.time() - _last_request), "busy": _busy[0] > 0}
 
 
 @app.middleware("http")
@@ -151,7 +190,7 @@ def _job(job_id: str) -> jobs.Job:
 def _run(job_id: str, step: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
     """백그라운드 단계. 한 번에 하나씩 돈다(맥 한 대, 같은 job.json을 두 단계가 덮어쓰지 않게).
     실패하면 job.error에 남겨 화면이 보여 줄 수 있게 한다."""
-    with _step_lock:
+    with _Working(), _step_lock:
         job = jobs.load_job(job_id)
         try:
             step(job, *args, **kwargs)
@@ -168,7 +207,7 @@ def _run_scan(job_id: str, client: Any) -> None:
     """랠리 찾기는 장면 단계와 따로 돈다. 1시간 영상은 오래 걸려, 찾은 랠리부터 골라 장면을 만들 수 있게(10/30).
     같은 job.json은 Job.save가 서로 바꾼 항목만 합쳐 쓴다. 여러 사용자가 올리면 온 순서대로(jobs.SCAN_TURNS).
     못 찾고 끝나면 올리기 횟수를 돌려준다."""
-    with jobs.SCAN_TURNS.turn(job_id):
+    with _Working(), jobs.SCAN_TURNS.turn(job_id):
         job = jobs.load_job(job_id)
         try:
             jobs.find_rallies(job, client)
@@ -185,7 +224,12 @@ def _run_scan(job_id: str, client: Any) -> None:
 
 def _run_highlight(job_id: str, index: int, *args: Any) -> None:
     """하이라이트는 장면 준비 줄(_step_lock)과 따로 돈다. 여러 장면을 예약하면 추적은 겹치고 렌더만
-    jobs.RENDER_LOCK으로 하나씩. 실패하면 그 장면을 'failed'로 남겨 화면이 '만드는 중'에 멈추지 않게 한다."""
+    jobs.RENDER_TURNS로 하나씩. 실패하면 그 장면을 'failed'로 남겨 화면이 '만드는 중'에 멈추지 않게 한다."""
+    with _Working():
+        _make_highlight(job_id, index, *args)
+
+
+def _make_highlight(job_id: str, index: int, *args: Any) -> None:
     job = jobs.load_job(job_id)
     try:
         jobs.make_highlight(job, index, *args)
@@ -211,9 +255,14 @@ class AccessRequest(BaseModel):
     code: str = Field(default="", max_length=20)
 
 
-def _closed_reason() -> str | None:
-    """새 영상을 받을 수 없는 이유. 랠리 찾기 대기가 꽉 찼거나 전체 비용이 30분 영상 하나도 못 훑을 만큼 남았을 때."""
+def _closed_reason(code: str = "") -> str | None:
+    """새 영상을 받을 수 없는 이유. 랠리 찾기 대기가 꽉 찼거나 전체 비용이 30분 영상 하나도 못 훑을 만큼 남았을 때.
+    하루 올리기 한도는 심사용 코드에는 걸지 않는다(심사위원이 '오늘은 다 찼어요'를 보지 않게)."""
     if jobs.SCAN_TURNS.waiting() >= jobs.MAX_WAITING_SCANS:
+        return "지금 사용자가 많아요. 잠시 뒤 다시 와 주세요"
+    if jobs.MAX_UPLOADS_PER_DAY and jobs.uploads_today() >= jobs.MAX_UPLOADS_PER_DAY and not access.is_judge(code):
+        return f"오늘 받을 수 있는 영상 {jobs.MAX_UPLOADS_PER_DAY}편이 다 찼어요. 내일 새벽 {jobs.DAY_START_HOUR}시 뒤에 다시 와 주세요"
+    if jobs.MIN_FREE_GB and jobs.free_gb() < jobs.MIN_FREE_GB:
         return "지금 사용자가 많아요. 잠시 뒤 다시 와 주세요"
     if jobs.total_spent() + scan.estimate_usd(jobs.MAX_SCAN_SEC) > jobs.MAX_USD_TOTAL:
         return "이번 행사에 준비한 AI 비용을 다 써서 더 받을 수 없어요"
@@ -223,13 +272,35 @@ def _closed_reason() -> str | None:
 @app.post("/access")
 def check_access(req: AccessRequest) -> dict[str, Any]:
     """올리기 전에 묻는다: 코드가 맞는지, 남은 횟수, 지금 받을 수 있는지(2GB를 올린 뒤 거절하지 않게)."""
-    out: dict[str, Any] = {"required": access.REQUIRED, "waiting": jobs.SCAN_TURNS.waiting(), "closed": _closed_reason()}
+    out: dict[str, Any] = {"required": access.REQUIRED, "waiting": jobs.SCAN_TURNS.waiting(), "closed": _closed_reason(req.code),
+                           "wipe_hour": jobs.DAY_START_HOUR if DAILY_WIPE else None}
     if access.REQUIRED and req.code:
         try:
             out["left"] = access.left(req.code)
         except access.AccessDenied as e:
             out["denied"] = str(e)
     return out
+
+
+class ClaimRequest(BaseModel):
+    invite: str = Field(max_length=40)
+
+
+def _client_ip(request: Request) -> str:
+    """배포 서버는 Caddy 뒤에 있어 Caddy가 붙인 X-Forwarded-For의 첫 주소. 다른 곳에서 온 헤더는 믿지 않는다."""
+    host = request.client.host if request.client else ""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    return forwarded.split(",")[0].strip() if host == "127.0.0.1" and forwarded else host
+
+
+@app.post("/access/claim")
+def claim_code(req: ClaimRequest, request: Request) -> dict[str, str]:
+    """초대 링크(배구구 배너·심사용)로 들어온 기기에 코드를 하나 만들어 준다."""
+    try:
+        code = access.claim(req.invite, _client_ip(request))
+    except access.AccessDenied as e:
+        raise HTTPException(403, str(e)) from e
+    return {"code": f"{code[:4]}-{code[4:]}"}
 
 
 @app.get("/admin/summary")
@@ -240,20 +311,22 @@ def admin_summary(x_admin_token: str = Header("")) -> dict[str, Any]:
         raise HTTPException(404)
     return {"spent_usd": round(jobs.total_spent(), 3), "max_usd": jobs.MAX_USD_TOTAL, "limits": access.LIMITS,
             "waiting_scans": jobs.SCAN_TURNS.waiting(), "waiting_renders": jobs.RENDER_TURNS.waiting(),
-            "codes": access._load()}
+            "codes": access._load(),
+            "invites": {k: {f: e.get(f) for f in ("word", "issued", "max")} for k, e in access._load_invites().items()}}
 
 
 @app.post("/jobs")
 def upload(file: UploadFile, background: BackgroundTasks, match: str = Form(""),
            start: float = Form(0.0), end: float = Form(0.0), code: str = Form("")) -> dict[str, Any]:
     """start·end: 훑을 구간(초). 30분(jobs.MAX_SCAN_SEC)보다 긴 영상은 화면에서 고른다. code: 사용 코드(배포 서버)."""
-    if reason := _closed_reason():
+    if reason := _closed_reason(code):
         raise HTTPException(503, reason)
     try:
         access.use(code, "uploads")
     except access.AccessDenied as e:
         raise HTTPException(403, str(e)) from e
     job = jobs.create_job(file.filename or "video.mp4", file.file, match, start, end, access.normalize(code))
+    jobs.count_upload()
     background.add_task(_run_scan, job.id, client_factory())
     return {"id": job.id}
 

@@ -66,10 +66,12 @@ def test_track_players_streams_concept_prompt(tmp_path: Path) -> None:
         sent.update(kw)
         return Stream()
 
-    client = SimpleNamespace(files=SimpleNamespace(create=lambda purpose, file: SimpleNamespace(id="f")),
+    deleted: list = []
+    client = SimpleNamespace(files=SimpleNamespace(create=lambda purpose, file: SimpleNamespace(id="f"), delete=deleted.append),
                              responses=SimpleNamespace(stream=stream))
     wire, usage, _ = track.track_players(client, clip)
     assert wire == WIRE and usage == {"frames": 2}
+    assert deleted == ["f"]  # 추적이 끝나면 Meta에 올린 클립을 지운다
     assert sent["model"] == "sam-3.1"
     assert sent["input"][0]["content"][0] == {"type": "input_text", "text": "volleyball player"}
 

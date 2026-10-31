@@ -45,6 +45,7 @@ FONT_CANDIDATES = (
     "/System/Library/Fonts/AppleSDGothicNeo.ttc",
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
     "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # 리눅스 서버(fonts-noto-cjk)
 )
 _NO_GLYPH = ""  # 사설 영역 문자. 어느 글꼴에도 없어 '없는 글자' 모양을 알려 준다
 

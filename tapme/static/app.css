@@ -79,6 +79,10 @@ summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2
 .drop.has-file { min-height: 112px; }
 .drop.has-file span { background: none; color: var(--color-ink); border: var(--rule-hair) solid var(--color-rule); }
 .picked { display: grid; gap: var(--space-sm); padding: var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); }
+/* 올리기 전 동의 */
+.consent { display: grid; gap: var(--space-xs); padding: var(--space-md); border: var(--rule-hair) solid var(--color-rule); background: var(--color-paper-2); font-size: var(--text-sm); }
+.consent ul { margin: 0; padding-left: 1.2em; display: grid; gap: var(--space-2xs); color: var(--color-ink-2); }
+.consent .check { display: flex; gap: var(--space-xs); align-items: center; cursor: pointer; }
 /* 30분보다 긴 영상: 훑을 구간 고르기 */
 .range { display: grid; gap: var(--space-xs); }
 .range video { width: 100%; max-height: 40vh; background: var(--color-paper-3); }

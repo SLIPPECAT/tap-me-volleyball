@@ -133,6 +133,7 @@ def scan_video(
                 answer = muse.parse_json_reply(replies[-1].text)
             except ValueError:
                 answer = None
+        clip.unlink(missing_ok=True)  # 물은 뒤에는 쓰지 않는다(작업당 약 0.4GB, 흐림본이라도 회원 영상이라 바로 지운다)
         result = {"chunk": i, "start": start, "seconds": seconds,
                   "answer": answer if answer is not None else {"rallies": [], "unreadable": True},
                   "attempts": len(replies), "usd": sum(r.usd for r in replies),

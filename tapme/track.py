@@ -25,6 +25,8 @@ from meta_sam_parser import (
     video_segmentation_format,
 )
 
+from tapme import muse
+
 MODEL = "sam-3.1"
 CONCEPT = "volleyball player"  # 실험 H-02: "person"보다 선심·관중이 덜 잡힘
 USD_PER_FRAME = 0.20 / 1000  # 영상은 50프레임보다 짧아도 50으로 과금(공식 문서)
@@ -107,8 +109,11 @@ def track_players(client: Any, clip: Path, concept: str = CONCEPT) -> tuple[str,
     with clip.open("rb") as f:
         file_id = client.files.create(purpose="user_data", file=f).id
     t0 = time.perf_counter()
-    wire, usage = _stream_text(client, [{"type": "input_text", "text": concept},
-                                        {"type": "input_video", "file_id": file_id}])
+    try:
+        wire, usage = _stream_text(client, [{"type": "input_text", "text": concept},
+                                            {"type": "input_video", "file_id": file_id}])
+    finally:
+        muse.forget_file(client, file_id)
     return wire, usage, round(time.perf_counter() - t0, 2)
 
 

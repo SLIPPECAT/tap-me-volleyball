@@ -39,6 +39,8 @@ async function load() {
     ["대기", `랠리 찾기 ${s.waiting_scans}명 · 렌더 ${s.waiting_renders}개`],
     ["코드", `${codes.length}개 (쓴 코드 ${codes.filter(([, e]) => e.uploads).length}개)`],
     ["올린 영상", `${used("uploads")}편`], ["만든 하이라이트", `${used("highlights")}개`],
+    // 초대 링크: 입구 주소 뒤에 붙인다. 퍼졌으면 서버에서 초대말을 새로 만든다(python -m tapme.access invite banner)
+    ...Object.entries(s.invites || {}).map(([k, e]) => [`초대 ${{ banner: "배너", judge: "심사" }[k] || k}`, `${e.issued}/${e.max}개 발급 · 입구주소/?invite=${e.word}`]),
   ].map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join("");
   $("codes").innerHTML = "<tr><th>코드</th><th>영상</th><th>하이라이트</th><th>메모</th></tr>" + codes.map(([c, e]) =>
     `<tr><td>${esc(c.slice(0, 4) + "-" + c.slice(4))}</td><td>${e.uploads}/${s.limits.uploads}</td><td>${e.highlights}/${s.limits.highlights}</td><td>${esc(e.label)}</td></tr>`).join("");

@@ -47,6 +47,12 @@
     <p class="muted" data-t="captureTip"></p>
     <div class="field" id="code-field" hidden><label for="code" data-t="codeLabel"></label><input type="text" id="code" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
     <p class="muted" id="access-status" aria-live="polite"></p>
+    <p class="muted" id="wipe-note" hidden></p>
+    <div class="consent" id="consent">
+      <p><strong data-t="consentTitle"></strong></p>
+      <ul><li data-t="consent1"></li><li data-t="consent2"></li><li data-t="consent3"></li><li data-t="consent4"></li></ul>
+      <label class="check"><input type="checkbox" id="consent-check"> <span data-t="consentCheck"></span></label>
+    </div>
     <div class="field"><label for="match-name" data-t="matchLabel"></label><input type="text" id="match-name" maxlength="40"></div>
     <label class="drop"><span data-t="pickVideo"></span><small data-t="dropHint"></small><input type="file" id="file" accept="video/*"></label>
     <div class="picked" id="picked" hidden>
@@ -189,13 +195,13 @@
 const T = {
   ko: {
     rangeNote: "이 영상은 {d} 길이예요. 한 번에 {m}분까지 훑으니 훑을 구간을 골라 주세요 (세트마다 한 번씩 하면 좋아요).", rangeStart: "여기서 시작", rangeEnd: "여기서 끝", rangeFirst: "앞 {m}분", rangeNext: "다음 {m}분", rangeLast: "뒤 {m}분", rangeLabel: "{s} ~ {e} ({m}분)", rangeUnknown: "영상 길이를 읽지 못했어요. {m}분보다 길면 앞 {m}분만 훑어요.",
-    codeLabel: "사용 코드 (배구구에서 받은 코드)", codeNeed: "배구구에서 받은 사용 코드를 넣어 주세요.", codeWrong: "코드가 맞지 않아요.", codeLeft: "이 코드로 영상 {u}편 · 하이라이트 {h}개를 더 만들 수 있어요.", codeNoUploads: "이 코드로 올릴 수 있는 영상을 다 썼어요.", leftNote: "이 코드로 하이라이트 {h}개를 더 만들 수 있어요.", stQueue: "앞에 {n}명이 랠리 찾기를 기다리고 있어요. 화면을 닫아도 차례가 오면 진행돼요.", queuedTurn: "만들 차례를 기다리는 중이에요 (앞에 {n}개). 화면을 닫아도 돼요.",
+    codeIssued: "코드가 발급됐어요: {c} — 다른 기기에서 쓰려면 적어 두세요.", consentTitle: "올리기 전에 확인해 주세요", consent1: "랠리 찾기와 선수 추적에 Meta의 AI(Muse Spark, SAM 3.1)를 써요. AI로 보내는 장면은 모든 얼굴을 블러 처리한 뒤 보내지만, 아주 작거나 가려진 얼굴은 블러가 빠질 수 있어요.", consent2: "AI에 올린 파일은 답을 받은 뒤 바로 지워요. 다만 무료 크레딧으로 처리한 장면은 Meta의 제품 개선에 쓰일 수 있어요.", consent3: "영상에 나오는 사람들의 동의를 받은 영상만 올려 주세요. 미성년자가 나오는 영상은 올리지 마세요.", consent4: "결과 영상에서 다른 사람 얼굴 모자이크는 기본으로 켜져 있어요. 끄고 공유할 때는 함께 나온 사람의 동의를 받아 주세요.", consentCheck: "위 내용을 확인했고 동의해요", wipeNote: "올린 영상과 만든 하이라이트는 매일 새벽 {h}시에 모두 지워져요. 하이라이트는 만들자마자 저장해 주세요.", codeLabel: "사용 코드 (배구구에서 받은 코드)", codeNeed: "배구구에서 받은 사용 코드를 넣어 주세요.", codeWrong: "코드가 맞지 않아요.", codeLeft: "이 코드로 영상 {u}편 · 하이라이트 {h}개를 더 만들 수 있어요.", codeNoUploads: "이 코드로 올릴 수 있는 영상을 다 썼어요.", leftNote: "이 코드로 하이라이트 {h}개를 더 만들 수 있어요.", stQueue: "앞에 {n}명이 랠리 찾기를 기다리고 있어요. 화면을 닫아도 차례가 오면 진행돼요.", queuedTurn: "만들 차례를 기다리는 중이에요 (앞에 {n}개). 화면을 닫아도 돼요.",
     keepOpen: "업로드가 끝날 때까지 이 화면을 켜 두세요.", canClose: "화면을 닫아도 맥에서 계속 진행돼요. 이 링크로 다시 들어오면 이어서 볼 수 있어요.",
     copyLink: "이 작업 링크 복사", copied: "복사했어요", prefsTitle: "기다리는 동안 옵션 미리 정하기",
     stWhistles: "휘슬 소리를 찾는 중…", stRallies: "AI가 영상을 1분씩 훑으며 랠리를 찾는 중… {d}/{n}", scanNote: "아직 찾는 중이에요 ({d}/{n}). 지금까지 찾은 랠리부터 골라 만들 수 있어요.", waitCost: "영상 {m}분 · 예상 AI 비용 약 ${u}", stPreviews: "미리보기 만드는 중… {d}/{n}",
     stScore_time: "득점 순간을 찾는 중…", stBlur: "AI로 보낼 장면의 얼굴을 흐리는 중…", stTracking: "나를 따라가는 중… (SAM)",
     stCommentary: "해설 자막을 만드는 중…", stRender: "영상을 만드는 중… {p}%", stWorking: "처리하는 중…",
-    uploadIntro: "정모 경기 영상을 올리면 랠리를 찾아 드려요. AI로 보내는 장면은 늘 얼굴을 흐린 뒤 보냅니다. 결과 영상의 모자이크는 직접 고를 수 있어요.",
+    uploadIntro: "경기 영상을 올리면 랠리를 찾고, 그 랠리에서 나의 활약을 추적해요. AI로 보내는 장면은 모든 얼굴을 블러 처리한 뒤 보내요. 결과 영상의 얼굴 모자이크는 직접 켜고 끌 수 있어요.",
     captureTip: "팁: 폰을 삼각대나 난간에 고정하고 코트 전체가 보이게 찍은 영상이 가장 잘 돼요. 공을 따라 카메라를 움직이면 화면 밖으로 나간 나를 놓칠 수 있어요.",
     pickVideo: "영상 고르기", dropHint: "또는 영상 파일을 여기로 끌어다 놓으세요", startUpload: "이 영상으로 시작", pickAgain: "다른 영상 고르기", dropNotVideo: "영상 파일만 올릴 수 있어요 (mp4·mov 등)", matchLabel: "경기 이름 (선택, 저장 파일 이름에 씀)", fileHighlight: "하이라이트", fileReel: "모음", uploading: "올리는 중… {p}%", uploadFail: "업로드 실패 ({c})",
     findingRallies: "랠리를 찾는 중… (영상 길이에 따라 몇 분)",
@@ -218,13 +224,13 @@ const T = {
   },
   ja: {
     rangeNote: "動画が{d}あるので、一度に{m}分まで見ます。見る区間を選んでください（セットごとに1回ずつがおすすめ）。", rangeStart: "ここから", rangeEnd: "ここまで", rangeFirst: "最初の{m}分", rangeNext: "次の{m}分", rangeLast: "最後の{m}分", rangeLabel: "{s} 〜 {e}（{m}分）", rangeUnknown: "動画の長さを読めませんでした。{m}分より長い場合は最初の{m}分だけ見ます。",
-    codeLabel: "利用コード（Baeguguで受け取ったコード）", codeNeed: "Baeguguで受け取った利用コードを入力してください。", codeWrong: "コードが正しくありません。", codeLeft: "このコードで動画あと{u}本・ハイライトあと{h}本作れます。", codeNoUploads: "このコードでアップロードできる動画を使い切りました。", leftNote: "このコードでハイライトをあと{h}本作れます。", stQueue: "{n}人がラリー探しの順番を待っています。画面を閉じても順番が来たら進みます。", queuedTurn: "作る順番を待っています（前に{n}件）。画面を閉じても大丈夫です。",
+    codeIssued: "コードを発行しました: {c} — 別の端末で使うときのためにメモしてください。", consentTitle: "アップロードの前にご確認ください", consent1: "ラリー探しと選手の追跡にMetaのAI（Muse Spark、SAM 3.1）を使います。AIに送るシーンはすべての顔をぼかしてから送りますが、とても小さい顔や隠れた顔はぼかしが漏れることがあります。", consent2: "AIにアップロードしたファイルは回答を受け取ったらすぐ削除します。ただし無料クレジットで処理したシーンはMetaの製品改善に使われることがあります。", consent3: "映っている人の同意を得た動画だけをアップロードしてください。未成年が映っている動画はアップロードしないでください。", consent4: "完成動画では他の人の顔モザイクが最初からオンです。オフにして共有するときは、一緒に映っている人の同意を得てください。", consentCheck: "上の内容を確認し、同意します", wipeNote: "アップロードした動画と作ったハイライトは毎日午前{h}時（韓国時間）にすべて削除されます。ハイライトはできたらすぐ保存してください。", codeLabel: "利用コード（Baeguguで受け取ったコード）", codeNeed: "Baeguguで受け取った利用コードを入力してください。", codeWrong: "コードが正しくありません。", codeLeft: "このコードで動画あと{u}本・ハイライトあと{h}本作れます。", codeNoUploads: "このコードでアップロードできる動画を使い切りました。", leftNote: "このコードでハイライトをあと{h}本作れます。", stQueue: "{n}人がラリー探しの順番を待っています。画面を閉じても順番が来たら進みます。", queuedTurn: "作る順番を待っています（前に{n}件）。画面を閉じても大丈夫です。",
     keepOpen: "アップロードが終わるまでこの画面を開いたままにしてください。", canClose: "画面を閉じてもMacで処理は続きます。このリンクから戻れば続きが見られます。",
     copyLink: "この作業のリンクをコピー", copied: "コピーしました", prefsTitle: "待っている間にオプションを決めておく",
     stWhistles: "ホイッスルの音を探しています…", stRallies: "AIが動画を1分ずつ見てラリーを探しています… {d}/{n}", scanNote: "まだ探しています（{d}/{n}）。見つかったラリーから選んで作れます。", waitCost: "動画 {m}分 · AI費用の見込み 約${u}", stPreviews: "プレビューを作っています… {d}/{n}",
     stScore_time: "得点の瞬間を探しています…", stBlur: "AIに送るシーンの顔をぼかしています…", stTracking: "自分を追いかけています…（SAM）",
     stCommentary: "実況字幕を作っています…", stRender: "動画を作っています… {p}%", stWorking: "処理しています…",
-    uploadIntro: "練習試合の動画をアップすると、ラリーを見つけます。AIに送るシーンは必ず顔をぼかしてから送ります。完成動画のモザイクは自分で選べます。",
+    uploadIntro: "試合の動画をアップすると、ラリーを見つけて、そのラリーでのあなたの活躍を追いかけます。AIに送るシーンはすべての顔をぼかしてから送ります。完成動画の顔モザイクは自分でオン・オフできます。",
     captureTip: "ヒント：スマホを三脚や手すりに固定して、コート全体が映るように撮った動画がいちばんうまくいきます。ボールを追ってカメラを動かすと、画面の外に出た自分を見失うことがあります。",
     pickVideo: "動画を選ぶ", dropHint: "または動画ファイルをここにドラッグ＆ドロップ", startUpload: "この動画で始める", pickAgain: "別の動画を選ぶ", dropNotVideo: "動画ファイルだけアップロードできます（mp4・movなど）", matchLabel: "試合名（任意、保存ファイル名に使います）", fileHighlight: "ハイライト", fileReel: "まとめ", uploading: "アップロード中… {p}%", uploadFail: "アップロード失敗 ({c})",
     findingRallies: "ラリーを探しています…（動画の長さにより数分）",
@@ -247,13 +253,13 @@ const T = {
   },
   en: {
     rangeNote: "This video is {d} long. Up to {m} minutes are scanned at a time, so pick the part to scan (one set at a time works well).", rangeStart: "Start here", rangeEnd: "End here", rangeFirst: "First {m} min", rangeNext: "Next {m} min", rangeLast: "Last {m} min", rangeLabel: "{s} – {e} ({m} min)", rangeUnknown: "Couldn't read the video length. If it's longer than {m} minutes, only the first {m} are scanned.",
-    codeLabel: "Access code (from Baegugu)", codeNeed: "Enter the access code you got from Baegugu.", codeWrong: "That code isn't right.", codeLeft: "This code can make {u} more videos and {h} more highlights.", codeNoUploads: "This code has used up its video uploads.", leftNote: "This code can make {h} more highlights.", stQueue: "{n} ahead of you in line for rally finding. You can close this screen; it continues when it's your turn.", queuedTurn: "Waiting for its turn ({n} ahead). You can close this screen.",
+    codeIssued: "Your code: {c} — write it down to use it on another device.", consentTitle: "Please read before uploading", consent1: "Rally finding and player tracking use Meta's AI (Muse Spark, SAM 3.1). Every face is blurred before a scene is sent to the AI, but very small or hidden faces can slip through.", consent2: "Files sent to the AI are deleted as soon as the answer comes back. Scenes processed with free credits may still be used to improve Meta's products.", consent3: "Only upload videos that the people in them have agreed to. Don't upload videos with minors in them.", consent4: "Pixelation of other people's faces is on by default in the final video. If you turn it off before sharing, get the agreement of the people in it.", consentCheck: "I have read the above and agree", wipeNote: "Uploaded videos and made highlights are all deleted every day at {h}:00 (Korea time). Save your highlights as soon as they're made.", codeLabel: "Access code (from Baegugu)", codeNeed: "Enter the access code you got from Baegugu.", codeWrong: "That code isn't right.", codeLeft: "This code can make {u} more videos and {h} more highlights.", codeNoUploads: "This code has used up its video uploads.", leftNote: "This code can make {h} more highlights.", stQueue: "{n} ahead of you in line for rally finding. You can close this screen; it continues when it's your turn.", queuedTurn: "Waiting for its turn ({n} ahead). You can close this screen.",
     keepOpen: "Keep this screen open until the upload finishes.", canClose: "You can close this screen; your Mac keeps working. Open this link again to continue.",
     copyLink: "Copy link to this job", copied: "Copied", prefsTitle: "Set options while you wait",
     stWhistles: "Finding whistles…", stRallies: "AI is scanning the video a minute at a time for rallies… {d}/{n}", scanNote: "Still scanning ({d}/{n}). You can pick from the rallies found so far.", waitCost: "{m}-minute video · estimated AI cost about ${u}", stPreviews: "Making previews… {d}/{n}",
     stScore_time: "Finding the scoring moment…", stBlur: "Blurring faces before sending to AI…", stTracking: "Following you… (SAM)",
     stCommentary: "Writing commentary subtitles…", stRender: "Making the video… {p}%", stWorking: "Working…",
-    uploadIntro: "Upload a match video and we'll find the rallies. Anything sent to the AI is always face-blurred first. You choose whether the final video pixelates faces.",
+    uploadIntro: "Upload a match video and we'll find the rallies and follow your play in them. Every face is blurred before any scene is sent to the AI. You can turn face pixelation in the final video on or off.",
     captureTip: "Tip: works best when the phone is fixed on a tripod or railing with the whole court in view. If the camera follows the ball, it can lose you when you leave the frame.",
     pickVideo: "Choose a video", dropHint: "or drag and drop a video file here", startUpload: "Start with this video", pickAgain: "Choose another video", dropNotVideo: "Only video files can be uploaded (mp4, mov and so on)", matchLabel: "Match name (optional, used in saved file names)", fileHighlight: "highlight", fileReel: "reel", uploading: "Uploading… {p}%", uploadFail: "Upload failed ({c})",
     findingRallies: "Finding rallies… (a few minutes, depending on length)",
@@ -811,7 +817,7 @@ $("start-upload").onclick = async () => {
   if (!state.pending) return;
   $("start-upload").disabled = true;
   await checkAccess();  // 올리는 사이 대기가 차거나 비용이 다했을 수 있다
-  if (state.access.ok) uploadVideo(state.pending);
+  if (state.access.ok && $("consent-check").checked) uploadVideo(state.pending);
 };
 
 // 사용 코드(배포 서버, 10/31 사용자): 올리기 전에 코드·남은 횟수·지금 받을 수 있는지 묻는다(2GB를 올린 뒤 거절하지 않게)
@@ -821,20 +827,40 @@ async function checkAccess() {
   let a;
   try { a = await postJson("/access", { code }); } catch { return; }
   $("code-field").hidden = !a.required;
+  $("wipe-note").hidden = a.wipe_hour == null;
+  if (a.wipe_hour != null) $("wipe-note").textContent = t("wipeNote", { h: a.wipe_hour });
   const ok = !a.closed && (!a.required || Boolean(a.left && a.left.uploads > 0));
   let msg = a.closed || "";
   if (!msg && a.required) {
     msg = !code ? t("codeNeed") : a.denied ? t("codeWrong") : a.left.uploads > 0 ? t("codeLeft", { u: a.left.uploads, h: a.left.highlights }) : t("codeNoUploads");
   }
+  if (state.claimed) msg = t("codeIssued", { c: state.claimed }) + " " + msg;
+  else if (state.claimError) msg = state.claimError + " " + msg;
   $("access-status").textContent = msg;
   state.access = { ok };
   if (ok && a.required) storeSet("code", code);
-  $("start-upload").disabled = !ok;
+  updateStart();
 }
+// 동의(10/31 사용자 결정): 어떤 AI로 무엇이 가는지 보고 동의해야 올릴 수 있다. 한 번 동의하면 이 기기에서 기억한다
+const CONSENT_KEY = "consent-v1";  // 안내 내용을 바꾸면 v2로 올려 다시 묻는다
+$("consent-check").checked = storeGet(CONSENT_KEY) === "yes";
+$("consent-check").onchange = () => { storeSet(CONSENT_KEY, $("consent-check").checked ? "yes" : ""); updateStart(); };
+function updateStart() { $("start-upload").disabled = !(state.access.ok && $("consent-check").checked); }
 let codeTimer = 0;
 $("code").addEventListener("input", () => { clearTimeout(codeTimer); codeTimer = setTimeout(checkAccess, 400); });
 $("code").value = storeGet("code") || "";
-checkAccess();
+// 초대 링크(배구구 배너·심사용, 10/31 사용자 결정): ?invite=… 으로 오면 이 기기에 코드가 없을 때만 하나 받는다
+async function claimInvite() {
+  const invite = new URLSearchParams(location.search).get("invite");
+  if (!invite) return;
+  history.replaceState(null, "", location.pathname + location.hash);  // 주소창에서 초대말을 지워 그대로 퍼지지 않게
+  if (storeGet("code")) return;  // 이미 받은 코드가 있으면 새로 받지 않는다(하루 한도를 아끼게)
+  try {
+    const r = await postJson("/access/claim", { invite });
+    $("code").value = r.code; storeSet("code", r.code); state.claimed = r.code;
+  } catch (e) { state.claimError = e.message; }
+}
+claimInvite().then(checkAccess);
 
 // 끌어다 놓기(웹에서 더 편함, 10/30 사용자): 올리기 화면이 보이고 아직 올리는 중이 아닐 때, 화면 어디에 놓아도 올린다
 const dropZone = document.querySelector(".drop");

@@ -5,6 +5,8 @@
 
 사용법:
   uv run python -m tapme.bench <cases.json> [--only T1] [--base http://127.0.0.1:8000]
+  # 배포 서버: 사용 코드를 주고, 결과 영상 검사(QA·얼굴·선명도)는 서버 파일이 없어 건너뛴다
+  uv run python -m tapme.bench <cases.json> --base https://… --code XXXX-XXXX
 """
 
 from __future__ import annotations
@@ -78,8 +80,9 @@ def sharpness(video: Path) -> dict[str, Any]:
 
 
 class Run:
-    def __init__(self, base: str) -> None:
+    def __init__(self, base: str, code: str = "") -> None:
         self.http = httpx.Client(base_url=base, timeout=120)
+        self.code = code  # 있으면 배포 서버: 올릴 때 보내고, 로컬 파일을 보는 검사는 건너뛴다
 
     def status(self, job: str) -> dict[str, Any]:
         return self.http.get(f"/jobs/{job}").json()
@@ -103,7 +106,8 @@ def run_case(run: Run, case: dict[str, Any], out_dir: Path) -> dict[str, Any]:
     res: dict[str, Any] = {"case": case["id"], "video": video.name, "minutes": None}
     t0 = time.time()
     with video.open("rb") as f:
-        job = run.http.post("/jobs", files={"file": (video.name, f)}, data={"match": case["id"]}, timeout=3600).json()["id"]
+        r = run.http.post("/jobs", files={"file": (video.name, f)}, data={"match": case["id"], "code": run.code}, timeout=3600)
+    job = r.raise_for_status().json()["id"]
     res["job"] = job
     res["upload_sec"] = round(time.time() - t0, 1)
     first: dict[str, float] = {}
@@ -164,6 +168,8 @@ def run_scene(run: Run, job: str, index: int, out_dir: Path, fps: int = 0) -> di
     out["tracking_sec"] = round(marks.get("render", end) - marks.get("tracking", t), 1)
     out["render_sec"] = round(end - marks.get("render", end), 1)
     out["status"] = s["scenes"][str(index)]["status"]
+    if run.code:
+        return out
     report = qa.check_scene(job, index)
     out.update(score_in_clip=report["score_in_clip"], clip_sec=report["clip_sec"], tracking=report["tracking"])
     out["privacy"] = visible_faces(Path(report["qa_video"]))
@@ -178,11 +184,12 @@ def main() -> None:
     p.add_argument("cases", type=Path)
     p.add_argument("--only", nargs="*", help="이 케이스만(예: T1)")
     p.add_argument("--base", default="http://127.0.0.1:8000")
+    p.add_argument("--code", default="", help="배포 서버의 사용 코드")
     a = p.parse_args()
     cases = [c for c in json.loads(a.cases.read_text())["cases"] if not a.only or c["id"] in a.only]
     out_dir = Path("data/bench") / datetime.now().strftime("%m%d-%H%M")
     out_dir.mkdir(parents=True, exist_ok=True)
-    run, results = Run(a.base), []
+    run, results = Run(a.base, a.code), []
     for c in cases:
         print("==", c["id"], flush=True)
         try:

@@ -11,7 +11,7 @@ from tapme import muse
 class _FakeClient:
     def __init__(self, text: str) -> None:
         self.sent: dict = {}
-        self.files = SimpleNamespace(create=self._upload)
+        self.files = SimpleNamespace(create=self._upload, delete=lambda fid: self.sent.setdefault("deleted", []).append(fid))
         self.responses = SimpleNamespace(create=self._respond)
         self._text = text
 
@@ -36,6 +36,21 @@ def test_ask_about_video_sends_prompt_and_file(tmp_path: Path) -> None:
     assert client.sent["model"] == muse.MODEL
     assert reply.usd == pytest.approx(2000 * 1.25e-6 + 1000 * 4.25e-6)
     assert muse.parse_json_reply(reply.text) == {"is_rally": True}
+    assert client.sent["deleted"] == ["file-1"]  # 답을 받은 뒤 Meta에 올린 클립을 지운다
+
+
+def test_uploaded_clip_is_deleted_even_when_the_request_fails(tmp_path: Path) -> None:
+    clip = tmp_path / "c.mp4"
+    clip.write_bytes(b"x")
+    client = _FakeClient("{}")
+
+    def boom(**kw):
+        raise RuntimeError("네트워크 끊김")
+
+    client.responses = SimpleNamespace(create=boom)
+    with pytest.raises(RuntimeError):
+        muse.ask_about_video(client, clip, "q")
+    assert client.sent["deleted"] == ["file-1"]
 
 
 def test_contributor_model_is_refused(tmp_path: Path) -> None:

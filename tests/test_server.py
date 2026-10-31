@@ -294,6 +294,13 @@ def test_full_queue_or_spent_budget_turns_new_videos_away(client: TestClient, mo
     monkeypatch.setattr(jobs, "MAX_WAITING_SCANS", 5)
     monkeypatch.setattr(jobs, "MAX_USD_TOTAL", 0.5)  # 30분 영상 하나(약 $1.1)도 못 훑는다
     assert "비용" in client.post("/access", json={}).json()["closed"]
+    monkeypatch.setattr(jobs, "MAX_USD_TOTAL", 100.0)
+    monkeypatch.setattr(jobs, "MIN_FREE_GB", 1e9)  # 디스크가 꽉 찼다
+    assert client.post("/access", json={}).json()["closed"]
+    monkeypatch.setattr(jobs, "MIN_FREE_GB", 0.0)
+    monkeypatch.setattr(jobs, "MAX_UPLOADS_PER_DAY", 2)  # 하루 두 편
+    codes = [client.post("/jobs", files={"file": ("m.mp4", b"v")}).status_code for _ in range(3)]
+    assert codes == [200, 200, 503] and "오늘" in client.post("/access", json={}).json()["closed"]
 
 
 def test_admin_summary_needs_the_token(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,3 +308,49 @@ def test_admin_summary_needs_the_token(client: TestClient, monkeypatch: pytest.M
     monkeypatch.setenv("TAPME_ADMIN_TOKEN", "t0ken")
     assert client.get("/admin/summary", headers={"X-Admin-Token": "wrong"}).status_code == 404
     assert client.get("/admin/summary", headers={"X-Admin-Token": "t0ken"}).json()["max_usd"] == jobs.MAX_USD_TOTAL
+
+
+def test_idle_reports_quiet_time_and_running_work(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 쓸 때만 켜는 서버: 도는 작업이 있으면 오래 조용해도 끄지 않는다
+    job_id = _awaiting_tap(client, monkeypatch)
+    seen: list = []
+    monkeypatch.setattr(jobs, "make_highlight", lambda *a: seen.append(client.get("/idle").json()["busy"]))
+    client.post(f"/jobs/{job_id}/rallies/0/highlight", json=TAP)
+    assert seen == [True] and client.get("/idle").json()["busy"] is False
+    monkeypatch.setattr(server, "_last_request", 0.0)
+    assert client.get("/idle").json()["idle_sec"] > 3600  # /idle을 묻는 것은 요청으로 치지 않는다
+
+
+def test_invite_link_gives_a_code_with_limits(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 사용자 결정: 배구구 배너(고정 주소)로 들어오면 코드를 만들어 준다. 퍼짐은 IP당 하루 3개·총 개수로 막는다
+    monkeypatch.setattr(access, "REQUIRED", True)
+    word = access.new_invite("banner", max_codes=4)
+    claim = lambda w: client.post("/access/claim", json={"invite": w})
+    assert claim("wrong").status_code == 403
+    got = [claim(word) for _ in range(4)]
+    assert [r.status_code for r in got] == [200, 200, 200, 403]  # 같은 접속에서 하루 3개
+    code = got[0].json()["code"]
+    assert client.post("/access", json={"code": code}).json()["left"] == {"uploads": 2, "highlights": 3}
+    monkeypatch.setattr(server, "_client_ip", lambda request: "203.0.113.9")
+    assert claim(word).status_code == 200 and "모두" in claim(word).json()["detail"]  # 총 4개까지
+    new_word = access.new_invite("banner")  # 초대말을 바꾸면 예전 말은 막히고 받은 코드는 그대로
+    assert claim(word).status_code == 403 and new_word != word
+    assert client.post("/access", json={"code": code}).json()["left"]["uploads"] == 2
+
+
+def test_judge_codes_skip_the_daily_limit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(access, "REQUIRED", True)
+    monkeypatch.setattr(jobs, "MAX_UPLOADS_PER_DAY", 1)
+    member, judge = access.new_codes(1)[0], client.post("/access/claim", json={"invite": access.new_invite("judge")}).json()["code"]
+    assert client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": member}).status_code == 200
+    assert client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": member}).status_code == 503  # 하루 1편 찼다
+    assert client.post("/access", json={"code": judge}).json()["closed"] is None
+    assert client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": judge}).status_code == 200
+
+
+def test_client_ip_trusts_forwarded_header_only_from_the_local_proxy() -> None:
+    from types import SimpleNamespace
+
+    proxied = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"), headers={"x-forwarded-for": "198.51.100.7, 10.0.0.1"})
+    direct = SimpleNamespace(client=SimpleNamespace(host="198.51.100.8"), headers={"x-forwarded-for": "1.2.3.4"})
+    assert (server._client_ip(proxied), server._client_ip(direct)) == ("198.51.100.7", "198.51.100.8")
