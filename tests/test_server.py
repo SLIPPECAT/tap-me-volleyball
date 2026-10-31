@@ -528,14 +528,14 @@ def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeyp
 
     monkeypatch.setattr(jobs, "find_rallies", four_rallies)
     monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
-    answers = {0: {"card": 2, "confidence": 0.9}, 1: {"card": 1, "confidence": 0.5}, 2: {"card": -1, "confidence": 0.9},
-               3: {"card": 0, "confidence": 0.95}}
+    answers = {0: {"frame": "score", "card": 2, "confidence": 0.9}, 1: {"frame": "b2", "card": 1, "confidence": 0.5},
+               2: {"frame": "score", "card": -1, "confidence": 0.9}, 3: {"frame": "start", "card": 0, "confidence": 0.95}}
     monkeypatch.setattr(auto, "find_me", lambda job, i, ref, hint, c: answers[i])
     monkeypatch.setattr(jobs, "prepare_scene", lambda job, i, c: job.scenes.__setitem__(str(i), {"index": i, "status": "awaiting_tap"}))
     rendered: list[tuple[int, int, str]] = []
 
-    def fake_render(job_id: str, i: int, card: int, a: dict, c) -> None:
-        rendered.append((i, card, a["team"]))
+    def fake_render(job_id: str, i: int, frame: str, card: int, a: dict, c) -> None:
+        rendered.append((i, frame, card, a["team"]))
         job = jobs.load_job(job_id)
         job.scenes[str(i)]["status"] = "done"
         job.save()
@@ -553,11 +553,12 @@ def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeyp
             break
         _time.sleep(0.05)
     a = client.get(f"/jobs/{job_id}").json()["auto"]
-    assert a["state"] == "done" and a["made"] == [0, 3] and a["review"] == [1] and "me" not in a
-    assert rendered == [(0, 2, "초록"), (3, 0, "초록")]
+    # 나는 모든 랠리에 있다(11/1 사용자): 못 찾은 랠리(-1)도 건너뛰지 않고 확인 묶음으로. 고른 장면 종류로 만든다
+    assert a["state"] == "done" and a["made"] == [0, 3] and a["review"] == [1, 2] and "me" not in a
+    assert rendered == [(0, "score", 2, "초록"), (3, "start", 0, "초록")]
     assert client.get(f"/jobs/{job_id}").json()["reel"]["order"] == [0, 3]  # 둘 이상이면 모음도
     # 장면마다가 아니라 끝날 때 한 번(이 시험은 찾기가 맡기기보다 먼저 끝나 랠리 알림이 앞에 하나 있다)
-    assert [k for k, _ in sent if k != "rallies"] == ["auto_done"] and sent[-1] == ("auto_done", {"n": 2, "review": 1})
+    assert [k for k, _ in sent if k != "rallies"] == ["auto_done"] and sent[-1] == ("auto_done", {"n": 2, "review": 2})
     assert client.post(f"/jobs/{job_id}/auto", json={"t": 1, "x": 1, "y": 1, "team": "a"}).status_code == 409  # 한 번만
     long_id = _send(client).json()["id"]
     job = jobs.load_job(long_id)
@@ -597,7 +598,7 @@ def test_one_shot_starts_when_settings_arrive_during_the_scan_and_resumes_after_
     monkeypatch.setattr(auto, "find_me", find_me)
     monkeypatch.setattr(jobs, "prepare_scene", lambda job, i, c: job.scenes.__setitem__(str(i), {"index": i, "status": "awaiting_tap"}))
 
-    def fake_render(job_id: str, i: int, card: int, a: dict, c) -> None:
+    def fake_render(job_id: str, i: int, frame: str, card: int, a: dict, c) -> None:
         job = jobs.load_job(job_id)
         job.scenes[str(i)]["status"] = "done"
         job.save()

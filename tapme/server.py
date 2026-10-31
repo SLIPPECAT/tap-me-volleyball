@@ -370,7 +370,7 @@ def _make_highlight(job_id: str, index: int, *args: Any) -> None:
 
 # ---- 한 번에 맡기기(tapme/auto.py, 10/31 사용자) ----
 _auto_lock = threading.Lock()
-AUTO_EXTRA_USD = 1.2  # 나 찾기 질문(랠리당 최대 $0.03 × 20) + 하이라이트 추적(8개)만큼 작업 상한을 늘린다
+AUTO_EXTRA_USD = 1.8  # 나 찾기(랠리당 질문 최대 $0.05 + 선수 찾기 3장 × 20) + 하이라이트 추적(8개)만큼 작업 상한을 늘린다
 
 
 def _auto_set(job_id: str, **kv: Any) -> jobs.Job:
@@ -416,11 +416,11 @@ def _run_auto(job_id: str, client: Any) -> None:
             _auto_set(job_id, state="failed", error=f"처리 중 오류: {e}")
 
 
-def _auto_render(job_id: str, index: int, card: int, a: dict[str, Any], client: Any) -> None:
-    """화면의 일괄 만들기와 같은 길로 예약한다(득점 장면에서 고른 선수 카드)."""
+def _auto_render(job_id: str, index: int, frame: str, card: int, a: dict[str, Any], client: Any) -> None:
+    """화면의 일괄 만들기와 같은 길로 예약한다(나를 찾은 장면의 선수 카드)."""
     o = a.get("options", {})
     threading.Thread(target=_run_highlight, daemon=True, args=(
-        job_id, index, [("score", card)], a["team"], o.get("languages", []), o.get("role", ""),
+        job_id, index, [(frame, card)], a["team"], o.get("languages", []), o.get("role", ""),
         o.get("privacy", render.DEFAULT_PRIVACY), o.get("zoom", render.DEFAULT_ZOOM), client,
         o.get("face_mosaic", True), o.get("fps", 0))).start()
 
@@ -474,7 +474,7 @@ def _auto_steps(job_id: str, client: Any) -> None:
         job.save()
         made.append(i)
         _auto_set(job_id, made=made)
-        _auto_render(job_id, i, found["card"], a, client)
+        _auto_render(job_id, i, found.get("frame", "score"), found["card"], a, client)
     _auto_set(job_id, state="making", made=made, review=review)
     while any(jobs.load_job(job_id).scenes.get(str(i), {}).get("status") in ("queued", "rendering") for i in made):
         time.sleep(10)
