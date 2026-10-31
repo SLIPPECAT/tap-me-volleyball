@@ -307,6 +307,13 @@ def new_upload(meta: dict[str, Any]) -> str:
     return upload_id
 
 
+def open_uploads(code: str) -> int:
+    """이 코드로 열어 둔(아직 작업이 되지 않은) 이어 올리기 자리 수."""
+    d = JOBS_DIR / "_uploads"
+    return sum(json.loads((p / "meta.json").read_text()).get("code") == code
+               for p in (d.iterdir() if d.exists() else []) if (p / "meta.json").exists())
+
+
 def upload_status(upload_id: str) -> dict[str, Any]:
     d = _upload_dir(upload_id)
     if not (d / "meta.json").exists():
@@ -340,6 +347,21 @@ def finish_upload(upload_id: str) -> Job:
                      st.get("end", 0.0), st.get("code", ""))
     shutil.rmtree(_upload_dir(upload_id))
     return job
+
+
+# ---- 의견(10/31 사용자: 베타 의견 받기) ----
+# 작업 폴더 밖(_feedback.jsonl)에 둬 새벽 4시 삭제와 상관없이 남는다. 영상은 담지 않는다
+def add_feedback(entry: dict[str, Any]) -> None:
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    with _lock, (JOBS_DIR / "_feedback.jsonl").open("a") as f:
+        f.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() + KST)), **entry},
+                           ensure_ascii=False) + "\n")
+
+
+def feedback(limit: int = 100) -> list[dict[str, Any]]:
+    path = JOBS_DIR / "_feedback.jsonl"
+    lines = path.read_text().splitlines() if path.exists() else []
+    return [json.loads(x) for x in lines[-limit:]][::-1]  # 최근 것부터
 
 
 def browser_chunks_received(job: Job) -> list[int]:

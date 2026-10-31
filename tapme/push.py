@@ -45,6 +45,19 @@ MESSAGES = {
 }
 
 
+# 브라우저가 주는 구독 주소는 이 푸시 서비스들뿐이다. 그 밖의 주소로는 보내지 않는다(서버가 아무 주소로나 요청을 보내는 데
+# 쓰이지 않게, 10/31 보안 검토). 크롬·안드로이드(FCM), 사파리·아이폰(애플), 파이어폭스(모질라), 엣지(윈도)
+PUSH_HOSTS = ("fcm.googleapis.com", "push.apple.com", "push.services.mozilla.com", "notify.windows.com")
+
+
+def allowed_endpoint(url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "https" and any(host == h or host.endswith("." + h) for h in PUSH_HOSTS)
+
+
 def enabled() -> bool:
     return bool(public_key() and _private_key())
 

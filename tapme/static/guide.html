@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>사용 안내 · Tap Me Volleyball</title>
+<link rel="manifest" href="/static/manifest.json">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .guide { display: grid; gap: var(--space-lg); max-width: 40rem; margin-inline: auto; padding: var(--space-md) 16px var(--space-2xl); box-sizing: border-box; }
+  .guide section { display: grid; gap: var(--space-xs); }
+  .guide h2 { margin: 0; font-size: var(--text-lg); }
+  .guide ol, .guide ul { margin: 0; padding-left: 1.3em; display: grid; gap: var(--space-2xs); color: var(--color-ink-2); }
+  .guide table { border-collapse: collapse; font-size: var(--text-sm); width: 100%; }
+  .guide td { padding: var(--space-2xs) var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule-2); vertical-align: top; }
+  [data-lang] { display: none; }
+  html[lang="ko"] [data-lang="ko"], html[lang="en"] [data-lang="en"] { display: grid; }
+</style>
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <h1><a href="/" style="color: inherit; text-decoration: none">Tap Me Volleyball</a></h1>
+  <div class="langs-ui"><button data-set="ko">한</button><button data-set="en">EN</button></div>
+</div></header>
+
+<main class="guide" data-lang="ko">
+  <section>
+    <h2>무엇을 하나요</h2>
+    <p>경기 영상을 올리면 AI가 랠리와 득점 순간을 찾고, 내가 고른 랠리에서 <strong>나를 따라가는 세로 하이라이트</strong>를 만들어 줘요.</p>
+  </section>
+
+  <section>
+    <h2>준비</h2>
+    <ul>
+      <li><strong>사용 코드</strong>: 배구구 배너로 들어오면 자동으로 받아요(이 기기에 기억). 코드 하나로 영상 2편, 하이라이트 3개를 만들 수 있어요.</li>
+      <li><strong>영상</strong>: 폰을 삼각대나 난간에 고정하고 <strong>코트 전체가 보이게 가로로</strong> 찍은 영상이 가장 잘 돼요. 공을 따라 카메라를 움직이면 화면 밖으로 나간 나를 놓칠 수 있어요.</li>
+      <li><strong>길이</strong>: 한 번에 30분까지 봐요. 더 긴 영상은 구간(예: 한 세트)을 골라 주세요.</li>
+      <li><strong>와이파이</strong>에서 하길 추천해요(영상이 커요).</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>순서</h2>
+    <ol>
+      <li><strong>영상 고르기</strong> → (긴 영상이면 구간 고르기) → 동의 체크 → <strong>이 영상으로 시작</strong></li>
+      <li>기기 속도를 잰 뒤 두 가지 중 하나를 골라요. 끝나는 시각도 같이 보여요.
+        <ul>
+          <li><strong>이 기기에서 처리</strong>: 원본이 폰 밖으로 나가지 않아요. 끝날 때까지 화면을 켜 두세요.</li>
+          <li><strong>서버에 맡기기</strong>: 올리기만 끝나면 폰을 써도 돼요.</li>
+        </ul>
+      </li>
+      <li><strong>랠리 목록</strong>에서 장면 사진을 눌러 미리 보고, 만들 랠리를 골라요. 찾는 중에도 찾은 랠리부터 고를 수 있어요.</li>
+      <li><strong>나를 고르기</strong>: 선수 카드에서 나를 고르거나 사진에서 내 몸을 탭해요. 여러 장면에서 고를수록 정확해요.</li>
+      <li>옵션(자막·확대·얼굴 모자이크)을 고르고 <strong>만들기</strong>. 여러 랠리를 한꺼번에 예약할 수도 있어요.</li>
+      <li>완성되면 <strong>저장</strong>하거나 <strong>공유</strong>해요. 자막·확대는 비용 없이 다시 만들 수 있어요.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>걸리는 시간 (대략)</h2>
+    <table>
+      <tr><td>처음 들어올 때</td><td>서버가 켜지는 데 30초 안팎</td></tr>
+      <tr><td>랠리 찾기(30분 영상)</td><td>서버에 맡기면 약 45분 · 기기에서는 기기 속도에 따라(시작할 때 알려 줘요). 찾은 랠리는 몇 분 뒤부터 보여요</td></tr>
+      <tr><td>하이라이트 하나</td><td>약 6분. 사람이 많으면 순서를 기다려요</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>끝나면 알려 드려요</h2>
+    <ul>
+      <li><strong>안드로이드(크롬)</strong>: 알림을 물으면 '허용'을 눌러 주세요.</li>
+      <li><strong>아이폰</strong>: 사파리 공유 버튼 → <strong>'홈 화면에 추가'</strong>로 연 앱에서만 알림이 와요.</li>
+      <li>알림이 없어도 이 페이지 주소(링크 복사)로 다시 들어오면 이어서 볼 수 있어요. <strong>이 링크는 본인만 쓰세요</strong> — 링크를 아는 사람은 새벽 4시까지 영상을 볼 수 있어요.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>중간에 끊기면</h2>
+    <ul>
+      <li>화면이 꺼지거나 연결이 끊기면 <strong>'이어 올리기' / '이어서 처리하기'</strong>가 떠요. 처음부터 다시 하지 않아요.</li>
+      <li>페이지를 새로 열었다면 같은 영상을 다시 골라 주세요. 멈춘 곳부터 이어 가요.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>얼굴과 영상은 이렇게 다뤄요</h2>
+    <ul>
+      <li>랠리 찾기와 선수 추적에 <strong>Meta의 AI(Muse Spark, SAM 3.1)</strong>를 써요. AI로 보내는 장면은 <strong>모든 얼굴을 블러 처리</strong>한 뒤 보내요(아주 작거나 가려진 얼굴은 빠질 수 있어요).</li>
+      <li>AI에 올린 파일은 답을 받은 뒤 바로 지워요. 다만 무료 크레딧으로 처리한 장면은 Meta의 제품 개선에 쓰일 수 있어요.</li>
+      <li>올린 영상과 만든 하이라이트는 <strong>매일 새벽 4시에 모두 지워져요</strong>. 하이라이트는 만들자마자 저장해 주세요.</li>
+      <li>결과 영상에서 다른 사람 얼굴 모자이크는 기본으로 켜져 있어요. 끄고 공유할 때는 함께 나온 사람의 동의를 받아 주세요.</li>
+      <li>영상에 나오는 사람들의 동의를 받은 영상만 올려 주세요. <strong>미성년자가 나오는 영상은 올리지 마세요.</strong></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>의견·문의</h2>
+    <ul>
+      <li>화면 맨 아래 <strong>'의견 남기기'</strong>로 좋았던 점, 불편했던 점, 이상하게 나온 장면을 알려 주세요. 어떤 장면이었는지 함께 전달돼요.</li>
+      <li>영상 삭제 요청·문의: 이메일 <a href="mailto:baegugu@naver.com">baegugu@naver.com</a> · 인스타그램 <a href="https://instagram.com/baegugu_official" rel="noopener">@baegugu_official</a> DM (배구구 공식 문의처)</li>
+    </ul>
+  </section>
+</main>
+
+<main class="guide" data-lang="en">
+  <section>
+    <h2>What it does</h2>
+    <p>Upload a match video. AI finds the rallies and scoring moments, then makes a <strong>vertical highlight that follows you</strong> in the rally you pick.</p>
+  </section>
+  <section>
+    <h2>Before you start</h2>
+    <ul>
+      <li><strong>Access code</strong>: you get one automatically from the invite link (kept on this device). One code makes 2 videos and 3 highlights.</li>
+      <li><strong>Video</strong>: best when the phone is fixed (tripod or railing) and films <strong>the whole court in landscape</strong>. Following the ball with the camera can lose you.</li>
+      <li><strong>Length</strong>: up to 30 minutes at a time. For longer videos, pick a part (e.g. one set).</li>
+      <li>Use <strong>Wi-Fi</strong> if you can (videos are large).</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Steps</h2>
+    <ol>
+      <li><strong>Choose a video</strong> → (pick a part if it's long) → agree → <strong>Start with this video</strong></li>
+      <li>After a quick speed check, pick one (with the expected finish time):
+        <ul>
+          <li><strong>Process on this device</strong>: the original never leaves your phone. Keep the screen on.</li>
+          <li><strong>Let the server do it</strong>: use your phone once the upload finishes.</li>
+        </ul>
+      </li>
+      <li>In the <strong>rally list</strong>, tap a photo to preview, then pick a rally. You can pick while it's still scanning.</li>
+      <li><strong>Pick yourself</strong> from the player cards or tap your body in the photo. Picking in more scenes is more accurate.</li>
+      <li>Choose options (captions, zoom, face pixelation) and <strong>Make</strong>. You can queue several rallies at once.</li>
+      <li><strong>Save</strong> or <strong>share</strong> the result. Captions and zoom can be redone for free.</li>
+    </ol>
+  </section>
+  <section>
+    <h2>How long it takes (roughly)</h2>
+    <table>
+      <tr><td>First visit</td><td>about 30 seconds for the server to wake up</td></tr>
+      <tr><td>Finding rallies (30-minute video)</td><td>about 45 minutes on the server · on your device it depends on the device (shown before you start). Found rallies appear within minutes</td></tr>
+      <tr><td>One highlight</td><td>about 6 minutes; you may wait in line when it's busy</td></tr>
+    </table>
+  </section>
+  <section>
+    <h2>We'll notify you when it's done</h2>
+    <ul>
+      <li><strong>Android (Chrome)</strong>: tap 'Allow' when asked about notifications.</li>
+      <li><strong>iPhone</strong>: notifications only work in the app opened from Safari's Share button → <strong>'Add to Home Screen'</strong>.</li>
+      <li>Without notifications, open this page's link again to continue. <strong>Keep the link to yourself</strong> — anyone with it can see the video until 4:00.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>If it stops halfway</h2>
+    <ul>
+      <li>If the screen turns off or the connection drops, <strong>'Resume upload' / 'Continue processing'</strong> appears. Nothing starts over.</li>
+      <li>If you reopened the page, pick the same video again to continue from where it stopped.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>How faces and videos are handled</h2>
+    <ul>
+      <li>Rally finding and player tracking use <strong>Meta's AI (Muse Spark, SAM 3.1)</strong>. <strong>Every face is blurred</strong> before a scene is sent (very small or hidden faces can slip through).</li>
+      <li>Files sent to the AI are deleted as soon as the answer comes back. Scenes processed with free credits may be used to improve Meta's products.</li>
+      <li>Uploaded videos and highlights are <strong>all deleted every day at 4:00 (Korea time)</strong>. Save your highlights right away.</li>
+      <li>Pixelation of other people's faces is on by default. If you turn it off before sharing, get their agreement.</li>
+      <li>Only upload videos the people in them have agreed to. <strong>Don't upload videos with minors.</strong></li>
+    </ul>
+  </section>
+  <section>
+    <h2>Feedback and contact</h2>
+    <ul>
+      <li>Use <strong>'Send feedback'</strong> at the bottom of the app. The scene you were on is included.</li>
+      <li>Deletion requests and questions: email <a href="mailto:baegugu@naver.com">baegugu@naver.com</a> · Instagram DM <a href="https://instagram.com/baegugu_official" rel="noopener">@baegugu_official</a> (Baegugu's official contact)</li>
+    </ul>
+  </section>
+</main>
+<script>
+// 언어: ?lang=en, 앱에서 고른 언어(localStorage lang), 기기 언어 순. 일본어 화면이면 영어로
+const pick = (l) => (l === "ko" ? "ko" : "en");
+let lang = new URLSearchParams(location.search).get("lang");
+try { lang ||= localStorage.getItem("lang"); } catch { /* 저장소를 못 쓰면 기기 언어 */ }
+lang = pick(lang || (navigator.language || "en").slice(0, 2));
+const apply = () => {
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-set]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.set === lang)));
+};
+document.querySelectorAll("[data-set]").forEach((b) => { b.onclick = () => { lang = b.dataset.set; apply(); }; });
+apply();
+</script>
+</body>
+</html>

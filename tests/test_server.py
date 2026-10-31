@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,6 +23,16 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     monkeypatch.setattr(jobs, "find_rallies", fake_find)
     return TestClient(server.app)
+
+
+def _send(client: TestClient, code: str = "", data: bytes = b"v") -> Any:
+    """배포 서버의 올리기(이어 올리기): 자리 열기 → 조각 → 끝내기. 처음 거절되면 그 응답, 아니면 끝내기 응답."""
+    r = client.post("/uploads", json={"filename": "m.mp4", "size": len(data), "code": code})
+    if r.status_code != 200:
+        return r
+    up = r.json()["id"]
+    client.put(f"/uploads/{up}?offset=0", content=data)
+    return client.post(f"/uploads/{up}/finish")
 
 
 def test_upload_lists_rally_candidates(client: TestClient) -> None:
@@ -256,11 +267,12 @@ def test_codes_limit_uploads_and_highlights(client: TestClient, monkeypatch: pyt
     code = access.new_codes(1)[0]
     assert client.post("/access", json={"code": "nope"}).json()["denied"]
     assert client.post("/access", json={"code": f"{code[:4]}-{code[4:].lower()}"}).json()["left"] == {"uploads": 2, "highlights": 3}
-    assert client.post("/jobs", files={"file": ("m.mp4", b"v")}).status_code == 403  # 코드 없이
+    assert _send(client).status_code == 403  # 코드 없이
+    assert client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": code}).status_code == 410  # 한 번에 올리기는 닫힘
     for _ in range(2):
-        assert client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": code}).status_code == 200
-    r = client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": code})
-    assert r.status_code == 403 and "2편" in r.json()["detail"]
+        assert _send(client, code).status_code == 200
+    r = _send(client, code)
+    assert r.status_code == 403 and "다 썼어요" in r.json()["detail"]
 
     job = jobs.load_job(job_id)
     job.code = code
@@ -285,7 +297,7 @@ def test_failed_work_gives_the_count_back(client: TestClient, monkeypatch: pytes
     monkeypatch.setattr(jobs, "make_highlight", boom)
     client.post(f"/jobs/{job_id}/rallies/0/highlight", json=TAP)
     monkeypatch.setattr(jobs, "find_rallies", boom)
-    client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": code})
+    _send(client, code)
     assert access.left(code) == {"uploads": 2, "highlights": 3}
 
 
@@ -324,13 +336,14 @@ def test_idle_reports_quiet_time_and_running_work(client: TestClient, monkeypatc
 
 
 def test_invite_link_gives_a_code_with_limits(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 10/31 사용자 결정: 배구구 배너(고정 주소)로 들어오면 코드를 만들어 준다. 퍼짐은 IP당 하루 3개·총 개수로 막는다
+    # 10/31 사용자 결정: 배구구 배너(고정 주소)로 들어오면 코드를 만들어 준다. 퍼짐은 IP당 하루 한도·총 개수로 막는다
     monkeypatch.setattr(access, "REQUIRED", True)
+    monkeypatch.setattr(access, "CLAIMS_PER_IP_PER_DAY", 3)  # 실제는 10(여러 사람이 한 IP를 나눠 쓴다)
     word = access.new_invite("banner", max_codes=4)
     claim = lambda w: client.post("/access/claim", json={"invite": w})
     assert claim("wrong").status_code == 403
     got = [claim(word) for _ in range(4)]
-    assert [r.status_code for r in got] == [200, 200, 200, 403]  # 같은 접속에서 하루 3개
+    assert [r.status_code for r in got] == [200, 200, 200, 403]  # 같은 접속에서 하루 한도
     code = got[0].json()["code"]
     assert client.post("/access", json={"code": code}).json()["left"] == {"uploads": 2, "highlights": 3}
     monkeypatch.setattr(server, "_client_ip", lambda request: "203.0.113.9")
@@ -344,10 +357,10 @@ def test_judge_codes_skip_the_daily_limit(client: TestClient, monkeypatch: pytes
     monkeypatch.setattr(access, "REQUIRED", True)
     monkeypatch.setattr(jobs, "MAX_UPLOADS_PER_DAY", 1)
     member, judge = access.new_codes(1)[0], client.post("/access/claim", json={"invite": access.new_invite("judge")}).json()["code"]
-    assert client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": member}).status_code == 200
-    assert client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": member}).status_code == 503  # 하루 1편 찼다
+    assert _send(client, member).status_code == 200
+    assert _send(client, member).status_code == 503  # 하루 1편 찼다
     assert client.post("/access", json={"code": judge}).json()["closed"] is None
-    assert client.post("/jobs", files={"file": ("m.mp4", b"v")}, data={"code": judge}).status_code == 200
+    assert _send(client, judge).status_code == 200
 
 
 def test_client_ip_trusts_forwarded_header_only_from_the_local_proxy() -> None:
@@ -423,12 +436,12 @@ def test_push_notifies_subscribers_in_their_language(client: TestClient, monkeyp
         text='{"rallies": [{"start_sec": 2, "point_sec": 9, "confidence": 0.9}]}', input_tokens=1, output_tokens=1, usd=0.01, seconds=0))
     job_id = client.post("/jobs/browser", json={"filename": "a.mp4", "duration": 50}).json()["id"]
     assert client.post(f"/jobs/{job_id}/push", json={"subscription": {"endpoint": "http://x"}}).status_code == 422
-    for ep, lang in (("https://push/ko", "ko"), ("https://push/ja", "ja")):
+    for ep, lang in (("https://fcm.googleapis.com/fcm/send/ko", "ko"), ("https://fcm.googleapis.com/fcm/send/ja", "ja")):
         assert client.post(f"/jobs/{job_id}/push", json={"subscription": {"endpoint": ep, "keys": {}}, "lang": lang}).json() == {"status": "ok"}
     client.post(f"/jobs/{job_id}/chunks/0", files={"file": ("c.mp4", b"blur")})  # 하나뿐인 조각 → 랠리 찾기 끝
     assert [(ep, d["title"], d["url"], d["tag"]) for ep, d in sent] == [
-        ("https://push/ko", "랠리 1개를 찾았어요", f"/#job={job_id}", f"job-{job_id}"),
-        ("https://push/ja", "ラリーが1件見つかりました", f"/#job={job_id}", f"job-{job_id}")]
+        ("https://fcm.googleapis.com/fcm/send/ko", "랠리 1개를 찾았어요", f"/#job={job_id}", f"job-{job_id}"),
+        ("https://fcm.googleapis.com/fcm/send/ja", "ラリーが1件見つかりました", f"/#job={job_id}", f"job-{job_id}")]
     assert push.message("done", "ko", left=2)[1] == "열어서 저장하거나 공유해 보세요 (나머지 2개도 만드는 중)"
 
 
@@ -448,7 +461,7 @@ def test_push_tells_when_a_highlight_is_done_or_failed(client: TestClient, monke
     monkeypatch.setenv("TAPME_VAPID_PUBLIC", "pub")
     monkeypatch.setenv("TAPME_VAPID_PRIVATE", "priv")
     job_id = _awaiting_tap(client, monkeypatch)
-    client.post(f"/jobs/{job_id}/push", json={"subscription": {"endpoint": "https://push/en"}, "lang": "en"})
+    client.post(f"/jobs/{job_id}/push", json={"subscription": {"endpoint": "https://fcm.googleapis.com/fcm/send/en"}, "lang": "en"})
     monkeypatch.setattr(jobs, "make_highlight", lambda job, i, *a: job.scenes[str(i)].update(status="done"))
     client.post(f"/jobs/{job_id}/rallies/0/highlight", json=TAP)
 
@@ -493,3 +506,71 @@ def test_browser_job_reports_which_chunks_arrived(client: TestClient, monkeypatc
     client.post(f"/jobs/{job_id}/chunks/0", files={"file": ("c.mp4", b"x")})
     client.post(f"/jobs/{job_id}/chunks/2", files={"file": ("c.mp4", b"x")})
     assert client.get(f"/jobs/{job_id}").json()["chunks_received"] == [0, 2]  # 끊긴 기기는 1·3부터 이어 처리
+
+
+def test_feedback_is_kept_with_its_scene_and_shown_to_the_operator(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    job_id = _awaiting_tap(client, monkeypatch)
+    assert client.post("/feedback", json={}).status_code == 422  # 빈 의견
+    assert client.post("/feedback", json={"rating": "meh"}).status_code == 422
+    r = client.post("/feedback", json={"rating": "bad", "text": "제가 아니라 옆 사람을 따라가요", "job": job_id, "rally": 0, "lang": "ko"})
+    assert r.json() == {"status": "ok"}
+    client.post("/feedback", json={"rating": "good"})
+    jobs.delete_previous_days(1e12)  # 새벽 4시 삭제가 지나도 의견은 남는다
+    monkeypatch.setenv("TAPME_ADMIN_TOKEN", "t")
+    got = client.get("/admin/summary", headers={"X-Admin-Token": "t"}).json()["feedback"]
+    assert [(f["rating"], f.get("scene")) for f in got] == [("good", None), ("bad", "awaiting_tap")]
+    assert got[1]["text"] == "제가 아니라 옆 사람을 따라가요" and got[1]["job"] == job_id
+
+
+def test_rate_limit_slows_down_repeated_requests(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 10/31 보안 검토: 무료 요청도 IP별로 속도를 제한한다(배포 서버에서만 켬)
+    monkeypatch.setattr(server, "RATE_LIMIT", True)
+    monkeypatch.setattr(server, "_buckets", {})
+    monkeypatch.setattr(server, "_client_ip", lambda request: "198.51.100.1")
+    codes = [client.post("/feedback", json={"rating": "good"}).status_code for _ in range(32)]
+    assert codes[:30] == [200] * 30 and codes[30] == 429
+    r = client.post("/feedback", json={"rating": "good"})
+    assert r.json()["detail"].startswith("요청이 너무 많아요") and int(r.headers["retry-after"]) >= 1
+    assert client.get("/").status_code == 200  # 다른 묶음(일반)은 따로 센다
+    monkeypatch.setattr(server, "_client_ip", lambda request: "198.51.100.2")
+    assert client.post("/feedback", json={"rating": "good"}).status_code == 200  # 다른 사람은 막히지 않는다
+    assert server._rate_group("POST", "/jobs/x/rallies/0/prepare", "ahead=true") == "general"
+    assert server._rate_group("POST", "/jobs/x/rallies/0/rerender", "") == "heavy"
+
+
+def test_security_headers_and_push_hosts(client: TestClient) -> None:
+    from tapme import push
+
+    r = client.get("/")
+    assert r.headers["x-frame-options"] == "DENY" and r.headers["x-content-type-options"] == "nosniff"
+    assert push.allowed_endpoint("https://fcm.googleapis.com/fcm/send/abc")
+    assert push.allowed_endpoint("https://web.push.apple.com/QGx")
+    assert not push.allowed_endpoint("https://evil.example.com/fcm.googleapis.com")
+    assert not push.allowed_endpoint("http://fcm.googleapis.com/x") and not push.allowed_endpoint("https://fcm.googleapis.com.evil.io/x")
+
+
+def test_rerender_and_reel_cannot_be_piled_up(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 계속 눌러 렌더 줄을 막지 못하게: 만드는 중이면 거절, 실패해도 앞서 만든 영상으로 돌아간다
+    job_id = _awaiting_tap(client, monkeypatch)
+    job = jobs.load_job(job_id)
+    job.scenes["0"].update(status="done", video="v.mp4")
+    job.save()
+    seen: list = []
+    monkeypatch.setattr(jobs, "rerender", lambda job, i, *a: seen.append(jobs.load_job(job.id).scenes["0"]["status"]) or 1 / 0)
+    assert client.post(f"/jobs/{job_id}/rallies/0/rerender", json={}).json() == {"status": "rendering"}
+    assert seen == ["rendering"] and jobs.load_job(job_id).scenes["0"]["status"] == "done"  # 실패해도 그대로
+    job = jobs.load_job(job_id)
+    job.scenes["0"]["status"] = "rendering"
+    job.reel = {"status": "rendering"}
+    job.save()
+    assert client.post(f"/jobs/{job_id}/rallies/0/rerender", json={}).status_code == 409
+    job.scenes["0"]["status"] = "done"
+    job.save()
+    assert client.post(f"/jobs/{job_id}/reel", json={"order": [0]}).status_code == 409
+
+
+def test_one_code_cannot_open_endless_uploads(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(access, "REQUIRED", True)
+    code = access.new_codes(1)[0]
+    ok = [client.post("/uploads", json={"size": 10, "code": code}).status_code for _ in range(3)]
+    assert ok == [200, 200, 429]

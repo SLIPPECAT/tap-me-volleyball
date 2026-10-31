@@ -28,7 +28,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -81,6 +81,55 @@ class _Working:
             _busy[0] -= 1
 
 
+# IP별 요청 속도 제한(10/31 보안 검토: 무료 요청을 1초에 수백 번 보내도 막지 못했다). 서버가 하나라 메모리로 센다.
+# 배포 서버에서만 켠다(TAPME_RATE_LIMIT=1). (몇 번, 몇 초 동안). 체육관 와이파이·통신사 LTE처럼 여러 사람이 한 IP를
+# 나눠 쓰므로 사람은 막지 않고 폭주(초당 10회 넘게)만 막을 만큼 넉넉히
+RATE_LIMIT = os.environ.get("TAPME_RATE_LIMIT") == "1"
+RATE_LIMITS = {"general": (600, 60), "light": (30, 60), "heavy": (60, 3600)}
+_LIGHT_POSTS = ("/feedback", "/speedtest", "/push/test", "/access", "/access/claim", "/uploads", "/jobs/browser")
+_buckets: dict[tuple[str, str], tuple[float, float]] = {}
+_bucket_lock = threading.Lock()
+
+
+def _rate_group(method: str, path: str, query: str) -> str:
+    """light: 의견·속도 재기·알림·코드 확인처럼 가볍지만 반복될 수 있는 요청. heavy: 다시 렌더·모음·구간 올리기·장면 준비(CPU)."""
+    if method != "POST":
+        return "general"
+    if path in _LIGHT_POSTS or path.endswith("/push"):
+        return "light"
+    last = path.rsplit("/", 1)[-1]
+    if last in ("rerender", "reel", "segment") or (last == "prepare" and "ahead=true" not in query):
+        return "heavy"
+    return "general"
+
+
+def _rate_wait(ip: str, group: str, now: float) -> float:
+    """토큰 통: 쓸 수 있으면 0, 아니면 기다릴 초."""
+    cap, per = RATE_LIMITS[group]
+    with _bucket_lock:
+        if len(_buckets) > 20000:  # 오래 안 쓴 IP는 잊는다
+            for k in [k for k, (_, last) in _buckets.items() if now - last > 3600]:
+                del _buckets[k]
+        tokens, last = _buckets.get((ip, group), (float(cap), now))
+        tokens = min(float(cap), tokens + (now - last) * cap / per)
+        if tokens < 1:
+            _buckets[(ip, group)] = (tokens, now)
+            return (1 - tokens) * per / cap
+        _buckets[(ip, group)] = (tokens - 1, now)
+        return 0.0
+
+
+@app.middleware("http")
+async def _limit_rate(request, call_next):
+    ip = _client_ip(request)
+    if RATE_LIMIT and ip not in ("127.0.0.1", "::1"):  # 서버 안(꺼짐 확인 등)은 세지 않는다
+        wait = _rate_wait(ip, _rate_group(request.method, request.url.path, request.url.query), time.monotonic())
+        if wait > 0:
+            return JSONResponse({"detail": "요청이 너무 많아요. 잠시 뒤 다시 해 주세요"}, status_code=429,
+                                headers={"Retry-After": str(int(wait) + 1)})
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def _note_request(request, call_next):
     global _last_request
@@ -101,6 +150,10 @@ async def _isolate(request, call_next):
     response = await call_next(request)
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    # 기본 보안 헤더(10/31 보안 검토): 다른 사이트가 이 화면을 몰래 띄워 누르게 하지 못하게, 파일 종류를 추측하지 않게
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     # 화면 파일은 쓸 때마다 바뀌었는지 묻게 한다(바뀌지 않았으면 304라 다시 받지 않음). 배포 뒤에도 예전 app.css를
     # 캐시에서 써 새 화면이 깨져 보였다(10/31)
     if request.url.path in ("/", "/sw.js") or request.url.path.startswith("/static/"):
@@ -285,7 +338,7 @@ def subscribe_push(job_id: str, req: PushRequest) -> dict[str, str]:
     _job(job_id)
     if not push.enabled():
         raise HTTPException(404, "알림을 쓰지 않는 서버다")
-    if not str(req.subscription.get("endpoint", "")).startswith("https://"):
+    if not push.allowed_endpoint(str(req.subscription.get("endpoint", ""))):
         raise HTTPException(422, "구독 주소가 맞지 않다")
     push.subscribe(job_id, req.subscription, req.lang)
     return {"status": "ok"}
@@ -294,7 +347,7 @@ def subscribe_push(job_id: str, req: PushRequest) -> dict[str, str]:
 @app.post("/push/test")
 def push_test(req: PushRequest) -> dict[str, str]:
     """알림 시험: 보낸 기기에만 바로 하나(작업 없이). 그 기기 자신의 구독 주소로만 가서 다른 사람에게는 못 보낸다."""
-    if not push.enabled() or not str(req.subscription.get("endpoint", "")).startswith("https://"):
+    if not push.enabled() or not push.allowed_endpoint(str(req.subscription.get("endpoint", ""))):
         raise HTTPException(404, "알림을 쓰지 않는 서버다")
     try:
         push.send_test(req.subscription, req.lang)
@@ -378,6 +431,31 @@ def claim_code(req: ClaimRequest, request: Request) -> dict[str, str]:
     return {"code": f"{code[:4]}-{code[4:]}"}
 
 
+class FeedbackRequest(BaseModel):
+    rating: str = Field(default="", pattern="^(|good|bad)$")
+    text: str = Field(default="", max_length=2000)
+    contact: str = Field(default="", max_length=100)
+    job: str = Field(default="", max_length=20)
+    rally: int | None = None
+    lang: str = Field(default="", max_length=5)
+
+
+@app.post("/feedback")
+def send_feedback(req: FeedbackRequest) -> dict[str, str]:
+    """의견 남기기: 좋아요/아쉬워요·글·연락처(선택). 어떤 작업·장면이었는지 붙여 고치기 쉽게. 운영 현황에서 본다."""
+    if not req.rating and not req.text.strip():
+        raise HTTPException(422, "좋아요/아쉬워요를 고르거나 내용을 적어 주세요")
+    entry = req.model_dump()
+    if req.job:
+        try:
+            job = jobs.load_job(req.job)
+            entry.update(mode=job.mode, code=job.code[:4], scene=job.scenes.get(str(req.rally), {}).get("status"))
+        except KeyError:
+            entry["job"] = ""
+    jobs.add_feedback(entry)
+    return {"status": "ok"}
+
+
 @app.get("/admin/summary")
 def admin_summary(x_admin_token: str = Header("")) -> dict[str, Any]:
     """운영자용: 코드별 사용 횟수·전체 비용·대기. TAPME_ADMIN_TOKEN을 둔 서버에서만."""
@@ -387,7 +465,8 @@ def admin_summary(x_admin_token: str = Header("")) -> dict[str, Any]:
     return {"spent_usd": round(jobs.total_spent(), 3), "max_usd": jobs.MAX_USD_TOTAL, "limits": access.LIMITS,
             "waiting_scans": jobs.SCAN_TURNS.waiting(), "waiting_renders": jobs.RENDER_TURNS.waiting(),
             "codes": access._load(),
-            "invites": {k: {f: e.get(f) for f in ("word", "issued", "max")} for k, e in access._load_invites().items()}}
+            "invites": {k: {f: e.get(f) for f in ("word", "issued", "max")} for k, e in access._load_invites().items()},
+            "feedback": jobs.feedback()}
 
 
 class BrowserJobRequest(BaseModel):
@@ -464,7 +543,11 @@ def upload_chunk(job_id: str, index: int, file: UploadFile, background: Backgrou
 @app.post("/jobs")
 def upload(file: UploadFile, background: BackgroundTasks, match: str = Form(""),
            start: float = Form(0.0), end: float = Form(0.0), code: str = Form("")) -> dict[str, Any]:
-    """start·end: 훑을 구간(초). 30분(jobs.MAX_SCAN_SEC)보다 긴 영상은 화면에서 고른다. code: 사용 코드(배포 서버)."""
+    """start·end: 훑을 구간(초). 30분(jobs.MAX_SCAN_SEC)보다 긴 영상은 화면에서 고른다. code: 사용 코드(배포 서버).
+    한 번에 올리기는 크기 제한이 없어 디스크를 채울 수 있다(10/31 보안 검토) → 배포 서버는 이어 올리기(/uploads)만.
+    이 맥에서는 성능 테스트(tapme.bench)가 쓴다."""
+    if access.REQUIRED:
+        raise HTTPException(410, "이어 올리기(/uploads)를 써 주세요")
     if reason := _closed_reason(code):
         raise HTTPException(503, reason)
     try:
@@ -487,6 +570,7 @@ class UploadInit(BaseModel):
 
 
 MAX_UPLOAD_PIECE = 32 * 1024 * 1024  # 이어 올리기 한 번에 받는 크기(기기는 16MB씩)
+MAX_OPEN_UPLOADS = 2  # 코드 하나가 동시에 열어 둘 수 있는 이어 올리기 자리
 
 
 @app.post("/uploads")
@@ -500,6 +584,9 @@ def start_upload(req: UploadInit) -> dict[str, Any]:
                 raise HTTPException(403, "이 코드로 올릴 수 있는 영상을 다 썼어요")
         except access.AccessDenied as e:
             raise HTTPException(403, str(e)) from e
+    # 코드 하나로 이어 올리기 자리를 끝없이 열어 디스크를 채우지 못하게(10/31 보안 검토)
+    if access.REQUIRED and jobs.open_uploads(access.normalize(req.code)) >= MAX_OPEN_UPLOADS:
+        raise HTTPException(429, "올리던 영상이 이미 있어요. 그 영상을 마저 올리거나 내일 다시 해 주세요")
     upload_id = jobs.new_upload({**req.model_dump(), "code": access.normalize(req.code)})
     return {"id": upload_id, "received": 0}
 
@@ -518,6 +605,8 @@ async def upload_piece(upload_id: str, offset: int, request: Request) -> dict[st
     """원본의 offset부터 한 조각. offset이 받은 크기와 다르면 409와 받은 크기(기기가 거기서부터 다시)."""
     import io
 
+    if jobs.MIN_FREE_GB and jobs.free_gb() < jobs.MIN_FREE_GB:  # 올리는 도중에도 디스크를 지킨다
+        raise HTTPException(503, "지금 사용자가 많아요. 잠시 뒤 '이어 올리기'를 눌러 주세요")
     body = bytearray()
     async for block in request.stream():
         body += block
@@ -716,13 +805,27 @@ def highlight(job_id: str, index: int, req: TapRequest, background: BackgroundTa
 
 @app.post("/jobs/{job_id}/rallies/{index}/rerender")
 def rerender(job_id: str, index: int, req: RenderOptions, background: BackgroundTasks) -> dict[str, str]:
-    scene = _job(job_id).scenes.get(str(index))
+    job = _job(job_id)
+    scene = job.scenes.get(str(index))
     if not scene or scene.get("status") != "done":
-        raise HTTPException(409, "하이라이트를 먼저 만든다")
+        # 이미 다시 만드는 중이면 거절한다. 계속 눌러 렌더 줄을 막지 못하게(10/31 보안 검토)
+        raise HTTPException(409, "하이라이트를 먼저 만든다(이미 만드는 중이면 기다린다)")
+    scene["status"] = "rendering"
+    job.save()
     # 자막을 처음 켜거나 역할을 바꾸면 해설(Muse), '몸 실루엣'을 처음 고르면 다른 선수 추적(SAM)이 한 번 필요하다
-    background.add_task(_run, job_id, jobs.rerender, index, req.languages, req.role, req.privacy, req.zoom,
+    background.add_task(_run_rerender, job_id, index, req.languages, req.role, req.privacy, req.zoom,
                         client_factory(), req.face_mosaic, req.fps)
     return {"status": "rendering"}
+
+
+def _run_rerender(job_id: str, index: int, *args: Any) -> None:
+    """다시 렌더가 실패해도 장면은 앞서 만든 영상으로 남긴다('만드는 중'에 멈추지 않게)."""
+    _run(job_id, jobs.rerender, index, *args)
+    job = jobs.load_job(job_id)
+    scene = job.scenes.get(str(index), {})
+    if scene.get("status") == "rendering" and scene.get("video"):
+        scene["status"] = "done"
+        job.save()
 
 
 @app.get("/jobs/{job_id}/rallies/{index}/video")
@@ -738,6 +841,10 @@ def reel(job_id: str, req: ReelRequest, background: BackgroundTasks) -> dict[str
     job = _job(job_id)
     if any(job.scenes.get(str(i), {}).get("status") != "done" for i in req.order):
         raise HTTPException(409, "완성된 장면만 모을 수 있다")
+    if job.reel.get("status") == "rendering":
+        raise HTTPException(409, "모음 영상을 만드는 중이다")
+    job.reel = {"status": "rendering", "order": req.order}
+    job.save()
     background.add_task(_run, job_id, jobs.make_reel, req.order)
     return {"status": "rendering"}
 

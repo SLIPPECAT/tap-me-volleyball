@@ -101,13 +101,25 @@ class Run:
         raise TimeoutError(job)
 
 
+def _upload_resumable(run: Run, video: Path, match: str) -> str:
+    size = video.stat().st_size
+    up = run.http.post("/uploads", json={"filename": video.name, "size": size, "match": match, "code": run.code}).raise_for_status().json()["id"]
+    with video.open("rb") as f:
+        while (pos := f.tell()) < size:
+            run.http.put(f"/uploads/{up}", params={"offset": pos}, content=f.read(16 * 1024 * 1024), timeout=600).raise_for_status()
+    return run.http.post(f"/uploads/{up}/finish").raise_for_status().json()["id"]
+
+
 def run_case(run: Run, case: dict[str, Any], out_dir: Path) -> dict[str, Any]:
     video = Path(case["video"]).expanduser()
     res: dict[str, Any] = {"case": case["id"], "video": video.name, "minutes": None}
     t0 = time.time()
-    with video.open("rb") as f:
-        r = run.http.post("/jobs", files={"file": (video.name, f)}, data={"match": case["id"], "code": run.code}, timeout=3600)
-    job = r.raise_for_status().json()["id"]
+    if run.code:  # 배포 서버는 이어 올리기만 받는다(10/31 보안 검토)
+        job = _upload_resumable(run, video, case["id"])
+    else:
+        with video.open("rb") as f:
+            r = run.http.post("/jobs", files={"file": (video.name, f)}, data={"match": case["id"]}, timeout=3600)
+        job = r.raise_for_status().json()["id"]
     res["job"] = job
     res["upload_sec"] = round(time.time() - t0, 1)
     first: dict[str, float] = {}

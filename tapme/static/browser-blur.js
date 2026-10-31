@@ -7,6 +7,13 @@
     "https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js",
     "https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.1/build/mp4-muxer.min.js",
   ];
+  // 외부 스크립트 무결성(SRI, 10/31 보안 검토): 배포처의 파일이 바뀌면 받지 않는다. 버전을 올리면 다시 계산한다
+  // (curl -s URL | openssl dgst -sha384 -binary | openssl base64 -A). onnxruntime이 뒤에 받는 .wasm은 여기서 확인하지 못한다
+  const INTEGRITY = {
+    [LIBS[0]]: "sha384-6hgW9I+eQKl5CrHLstudPd4L3E2eTYHm+qNKvf4pI+RZnfBJILOHAiaalHV+trgG",
+    [LIBS[1]]: "sha384-9oK16t6TCKqCB5OpB/LwRkNa48prlRFQPTYw8tb9uj699JvQ1wjxIq7YO8Z4hn3a",
+    [LIBS[2]]: "sha384-53pBfagDTItQJ22xfdceasmWxlheAxIBk28yeg05+R9oWPW02xExIznXrB0AFPe4",
+  };
   const MODEL = "/static/models/yunet_dyn.onnx";  // tapme/browser_model.py로 만든다
   const FPS = 2, CHUNK_SEC = 60, STEP_SEC = 50;  // 서버 tapme/scan.py와 같게
   const THR = 0.5, NMS_IOU = 0.3, TILE_OVERLAP = 48;
@@ -30,7 +37,8 @@
     return new Promise((ok, bad) => {
       if (document.querySelector(`script[src="${src}"]`)) return ok();
       const s = document.createElement("script");
-      s.src = src; s.crossOrigin = "anonymous"; s.onload = ok; s.onerror = () => bad(new Error("처리 도구를 받지 못했어요"));
+      s.src = src; s.crossOrigin = "anonymous"; if (INTEGRITY[src]) s.integrity = INTEGRITY[src];
+      s.onload = ok; s.onerror = () => bad(new Error("처리 도구를 받지 못했어요"));
       document.head.append(s);
     });
   }
