@@ -725,6 +725,21 @@ def _ensure_commentary(job: Job, scene: dict[str, Any], languages: list[str], ro
     scene.update(commentary=lines or [], role=role, commentary_failed=lines is None)
 
 
+_number_lock = threading.Lock()
+
+
+def assign_number(job: Job, scene: dict[str, Any]) -> int:
+    """저장 파일 번호: 이 경기에서 하이라이트를 만든 순서. 다시 만들어도 그대로(10/30 사용자 요청).
+    여러 장면을 동시에 만들면 각자 처음 읽은 job으로 번호를 매겨 겹쳤다(10/31 한 번에 맡기기: _02가 둘) →
+    디스크의 최신 번호를 잠금 안에서 보고 바로 저장한다."""
+    with _number_lock:
+        if "number" not in scene:
+            taken = [sc.get("number", 0) for sc in load_job(job.id).scenes.values()]
+            scene["number"] = 1 + max(taken + [sc.get("number", 0) for sc in job.scenes.values()], default=0)
+            job.save()
+    return scene["number"]
+
+
 def make_highlight(
     job: Job, index: int, taps: list[tuple[str, float, float]], team_label: str,
     languages: list[str], role: str, privacy: str, zoom: float, client: Any, face_mosaic: bool = True, max_fps: int = 0,
@@ -766,8 +781,7 @@ def make_highlight(
         raise TapMissed("탭한 곳에서 선수를 찾지 못했다. 선수 몸 위를 다시 탭해 주세요")
 
     scene["team"] = team_label
-    # 저장 파일 번호: 이 경기에서 하이라이트를 만든 순서. 다시 만들어도 그대로(10/30 사용자 요청)
-    scene.setdefault("number", 1 + max((sc.get("number", 0) for sc in job.scenes.values()), default=0))
+    assign_number(job, scene)
     if languages:
         job.step("commentary")
     _ensure_commentary(job, scene, languages, role, client)

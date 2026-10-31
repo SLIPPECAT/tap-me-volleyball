@@ -613,3 +613,14 @@ def test_browser_segment_keeps_original_times(tmp_path: Path, monkeypatch: pytes
     job.rallies[0]["point_sec"] = 5.0  # 구간(9초~)이 장면(득점 7초 전~)을 못 덮으면 거절
     with pytest.raises(ValueError, match="덮지"):
         jobs.save_segment(job, 0, piece("v", tmp_path / "v2.mp4"), None, first)
+
+
+def test_highlight_numbers_do_not_repeat_when_made_at_once(job: jobs.Job) -> None:
+    # 10/31 한 번에 맡기기: 동시에 만든 장면이 각자 처음 읽은 job으로 번호를 매겨 _02가 둘이었다
+    job.scenes = {"0": {"index": 0}, "1": {"index": 1}, "2": {"index": 2}}
+    job.save()
+    first, second, third = jobs.load_job(job.id), jobs.load_job(job.id), jobs.load_job(job.id)  # 따로 돈 세 작업
+    numbers = [jobs.assign_number(first, first.scenes["0"]), jobs.assign_number(second, second.scenes["1"]),
+               jobs.assign_number(third, third.scenes["2"])]
+    assert numbers == [1, 2, 3]
+    assert jobs.assign_number(second, second.scenes["1"]) == 2  # 다시 만들어도 그대로
