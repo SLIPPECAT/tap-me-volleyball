@@ -15,12 +15,11 @@ SAM은 5fps로만 돌리고(비용), 박스를 프레임 사이에 직선으로 
 from __future__ import annotations
 
 import json
-import multiprocessing
 import os
 import subprocess
 from collections import deque
 from collections.abc import Callable
-from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures import Future
 from pathlib import Path
 
 import cv2
@@ -297,7 +296,9 @@ def _worker_init(threads: int, two_detectors: bool) -> None:
 
 
 def _worker_faces(args: tuple) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
-    buf, width, height, crop, out_size, side = args
+    buf, width, height, crop, out_size, side, two_detectors = args
+    if "detector" not in _W or (two_detectors and _W.get("plain") is None):  # 같이 쓰는 프로세스(anonymize._worker_init)
+        _worker_init(WORKER_CV_THREADS, two_detectors)
     bgr = np.ascontiguousarray(np.frombuffer(buf, np.uint8).reshape(height, width, 3)[..., ::-1])
     return _find_faces(bgr, _W["detector"], _W["profile"] if side else None, _W["plain"], crop, out_size)  # type: ignore[arg-type]
 
@@ -392,10 +393,8 @@ def render_video(
     )
     assert dec.stdout and enc.stdin
     size = width * height * 3
-    pool = None
-    if face_mosaic and RENDER_WORKERS > 1:
-        pool = ProcessPoolExecutor(RENDER_WORKERS, mp_context=multiprocessing.get_context("spawn"),
-                                   initializer=_worker_init, initargs=(WORKER_CV_THREADS, two_detectors))
+    # 얼굴 찾기 프로세스는 흐리기와 같이 쓴다(anonymize.acquire_pool, 11/1 메모리). 일꾼 쪽 검출기는 처음 쓸 때 올린다
+    pool = anonymize.acquire_pool() if face_mosaic and RENDER_WORKERS > 1 else None
     # 앞으로 읽어 둔 프레임과 그 얼굴 찾기(여러 프로세스면 미리 맡겨 둔다). 프레임 순서대로 꺼낸다
     ahead: deque[tuple[bytes, Future | None]] = deque()
     depth, read_i = (RENDER_WORKERS * 2 if pool else 1), 0
@@ -406,7 +405,7 @@ def render_video(
             job = None
             if pool is not None and read_i % face_every == 0:
                 job = pool.submit(_worker_faces, (buf, width, height, crops[min(read_i, n - 1)], (out_w, out_h),
-                                                  read_i % PROFILE_EVERY == 0))
+                                                  read_i % PROFILE_EVERY == 0, two_detectors))
             ahead.append((buf, job))
             read_i += 1
 
@@ -453,7 +452,10 @@ def render_video(
     finally:
         _MASKS.clear()
         if pool is not None:
-            pool.shutdown(cancel_futures=True)
+            for _, job in ahead:  # 같이 쓰는 프로세스라 남은 내 일만 거둔다
+                if job is not None:
+                    job.cancel()
+            anonymize.release_pool()
         dec.stdout.close()
         dec.wait()
         enc.stdin.close()

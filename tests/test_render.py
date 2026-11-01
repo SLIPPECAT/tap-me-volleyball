@@ -192,7 +192,7 @@ def test_profile_faces_are_searched_every_other_frame(tmp_path: Path, monkeypatc
     monkeypatch.setitem(render._W, "plain", None)
     buf = np.zeros((4, 4, 3), np.uint8).tobytes()
     for side in (True, False):
-        render._worker_faces((buf, 4, 4, (0, 0, 4, 4), (4, 4), side))
+        render._worker_faces((buf, 4, 4, (0, 0, 4, 4), (4, 4), side, False))
     assert used == [True, False]
 
 
@@ -294,3 +294,34 @@ def test_team_mosaic_clears_only_heads_of_that_team() -> None:
     assert render.off_team(faces, [ours, theirs], {"a"}) == [their_head, our_back, nobody]
     overlap = Box("c", 120, 90, 220, 400)  # 우리 팀 머리 자리에 다른 사람 머리도 겹치면 가린다
     assert render.off_team([our_head], [ours, overlap], {"a"}) == [our_head]
+
+
+def test_render_and_blur_share_one_face_pool_that_closes_when_idle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/1 H-53 C1: 흐리기와 렌더가 얼굴 찾기 프로세스를 따로 8개씩 띄워 메모리가 16GB 중 15.5GB였다 → 하나를 같이 쓰고
+    # 쉬면 닫는다. 여러 프로세스로 렌더해도 한 프로세스와 결과가 같아야 한다
+    import hashlib
+    import time
+
+    from tapme import anonymize
+
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x568:rate=10:duration=1",
+                    "-pix_fmt", "yuv420p", str(src)], check=True)
+
+    def frames(p: Path) -> str:
+        return hashlib.md5(subprocess.check_output(["ffmpeg", "-loglevel", "error", "-i", str(p), "-f", "rawvideo", "-"])).hexdigest()
+
+    one = tmp_path / "one.mp4"
+    render.render_video(src, one, {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=True)
+    monkeypatch.setattr(render, "RENDER_WORKERS", 2)
+    monkeypatch.setattr(anonymize, "BLUR_WORKERS", 2)
+    monkeypatch.setattr(anonymize, "IDLE_CLOSE_SEC", 0.3)
+    monkeypatch.setattr(anonymize, "_pool", None)
+    two = tmp_path / "two.mp4"
+    render.render_video(src, two, {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=True)
+    assert frames(one) == frames(two)
+    shared = anonymize._pool
+    assert shared is not None and anonymize.acquire_pool() is shared  # 흐리기도 같은 프로세스를 쓴다
+    anonymize.release_pool()
+    time.sleep(1.0)
+    assert anonymize._pool is None  # 아무도 안 쓰면 닫힌다

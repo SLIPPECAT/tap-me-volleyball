@@ -24,6 +24,7 @@ import multiprocessing
 import os
 import subprocess
 import threading
+import time
 from collections import deque
 from concurrent.futures import Future, ProcessPoolExecutor
 from pathlib import Path
@@ -156,13 +157,41 @@ def _worker_detect(args: tuple) -> list[tuple[int, int, int, int]]:
     return detect_faces(frame, _W["detector"])  # type: ignore[arg-type]
 
 
-def _blur_pool() -> ProcessPoolExecutor:
-    """랠리 찾기는 1분 조각마다 부르므로 프로세스를 한 번 띄워 계속 쓴다."""
-    global _pool
+# 얼굴 찾기 프로세스는 흐리기(랠리 찾기·장면 준비)와 결과 영상 렌더(render.py)가 같이 쓴다(11/1, H-53 C1): 따로 8개씩
+# 띄우니 10분 영상에서 메모리가 16GB 중 15.5GB였고, 랠리 찾기 뒤에도 8개가 약 4GB를 쥔 채 남았다. 코어가 8개라 합쳐도
+# 속도는 거의 같다. 아무도 안 쓴 채 IDLE_CLOSE_SEC이 지나면 닫는다(랠리 찾기는 1분 조각마다 부르므로 그사이엔 그대로)
+IDLE_CLOSE_SEC = 60.0
+_users = 0
+_last_used = 0.0
+
+
+def acquire_pool() -> ProcessPoolExecutor:
+    """같이 쓰는 얼굴 찾기 프로세스. 다 쓰면 release_pool()."""
+    global _pool, _users
     with _pool_lock:
         if _pool is None:
             _pool = ProcessPoolExecutor(BLUR_WORKERS, mp_context=multiprocessing.get_context("spawn"), initializer=_worker_init)
+        _users += 1
         return _pool
+
+
+def release_pool() -> None:
+    global _users, _last_used
+    with _pool_lock:
+        _users -= 1
+        _last_used = time.monotonic()
+        if _users == 0:
+            t = threading.Timer(IDLE_CLOSE_SEC, _close_if_idle)
+            t.daemon = True
+            t.start()
+
+
+def _close_if_idle() -> None:
+    global _pool
+    with _pool_lock:
+        if _users == 0 and _pool is not None and time.monotonic() - _last_used >= IDLE_CLOSE_SEC - 1:
+            _pool.shutdown(wait=False)
+            _pool = None
 
 
 def anonymize_video(src: Path, dst: Path) -> dict[str, int]:
@@ -176,7 +205,7 @@ def anonymize_video(src: Path, dst: Path) -> dict[str, int]:
 
     writer: cv2.VideoWriter | None = None
     stats = {"frames": 0, "frames_with_faces": 0, "face_boxes": 0}
-    pool = _blur_pool() if BLUR_WORKERS > 1 else None
+    pool = acquire_pool() if BLUR_WORKERS > 1 else None
     ahead: deque[tuple[np.ndarray, Future | None]] = deque()  # 미리 읽어 얼굴 찾기를 맡겨 둔 프레임(순서대로 꺼낸다)
 
     def fill() -> None:
@@ -207,6 +236,11 @@ def anonymize_video(src: Path, dst: Path) -> dict[str, int]:
         cap.release()
         if writer is not None:
             writer.release()
+        if pool is not None:
+            for _, job in ahead:  # 같이 쓰는 프로세스라 남은 내 일만 거둔다
+                if job is not None:
+                    job.cancel()
+            release_pool()
 
     if writer is None:
         raise RuntimeError(f"프레임을 읽지 못했습니다: {src}")
