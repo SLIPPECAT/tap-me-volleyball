@@ -40,10 +40,9 @@ if threads := int(os.environ.get("TAPME_CV_THREADS", "0")):
 SCORE_THRESHOLD = 0.5
 DETECT_UPSCALE = 2.0  # 프레임을 이만큼 키워 YuNet을 돌린다(작은 얼굴)
 PROFILE_MIN_NEIGHBORS = 4
-PROFILE_SCALE_FACTOR = 1.1  # 결과 영상 모자이크(render.py)는 그대로
-# Meta로 보내는 흐림본: 옆얼굴 검출 간격을 넓혀 1시간 영상 랠리 찾기 78분 → 약 47분. 지금 방식이 찾는 얼굴의 99.4%를
-# 그대로 가린다(H-41, 10/30 사용자 결정). 옆얼굴 검출기가 시간의 60%를 쓰고 더하는 얼굴은 0.7%였다
-FAST_PROFILE_SCALE_FACTOR = 1.2
+PROFILE_SCALE_FACTOR = 1.1  # 결과 영상 모자이크(render.py)만 쓴다
+# Meta로 보내는 흐림본은 옆얼굴 검출 없이 YuNet만(11/1 사용자 결정, H-51): 옆얼굴로만 잡던 얼굴은 0.14%(70분 경기 296장에
+# 선수 얼굴 1~2개)이고 얼굴 찾기 시간은 장당 999 → 461ms. 기기에서 흐리는 쪽(browser-blur.js)도 YuNet만 쓴다
 NMS_THRESHOLD = 0.3
 MAX_FACES = 5000
 BOX_PAD = 0.25  # 얼굴 박스를 각 변 기준 이 비율만큼 넓힌다(귀·머리카락까지 가리기 위해)
@@ -148,13 +147,13 @@ _W: dict[str, object] = {}
 
 def _worker_init() -> None:
     cv2.setNumThreads(1)
-    _W["detector"], _W["profile"] = load_detector(), load_profile_detector()
+    _W["detector"] = load_detector()
 
 
 def _worker_detect(args: tuple) -> list[tuple[int, int, int, int]]:
     buf, shape = args
     frame = np.frombuffer(buf, np.uint8).reshape(shape)
-    return detect_faces(frame, _W["detector"], _W["profile"], FAST_PROFILE_SCALE_FACTOR)  # type: ignore[arg-type]
+    return detect_faces(frame, _W["detector"])  # type: ignore[arg-type]
 
 
 def _blur_pool() -> ProcessPoolExecutor:
@@ -172,7 +171,6 @@ def anonymize_video(src: Path, dst: Path) -> dict[str, int]:
         raise RuntimeError(f"영상을 열지 못했습니다: {src}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     detector = load_detector()
-    profile = load_profile_detector()
     dst.parent.mkdir(parents=True, exist_ok=True)
     silent = dst.with_name(dst.stem + ".silent.mp4")
 
@@ -198,7 +196,7 @@ def anonymize_video(src: Path, dst: Path) -> dict[str, int]:
                 writer = cv2.VideoWriter(
                     str(silent), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
                 )
-            boxes = job.result() if job else detect_faces(frame, detector, profile, FAST_PROFILE_SCALE_FACTOR)
+            boxes = job.result() if job else detect_faces(frame, detector)
             stats["frames"] += 1
             if boxes:
                 stats["frames_with_faces"] += 1

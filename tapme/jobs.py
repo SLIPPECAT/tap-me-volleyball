@@ -653,8 +653,7 @@ def _blurred_still(video: Path, sec: float, out: Path) -> None:
     png = subprocess.check_output(["ffmpeg", "-loglevel", "error", "-ss", f"{max(0.0, sec):.3f}", "-i", str(video),
                                    "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"])
     frame = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
-    boxes = anonymize.detect_faces(frame, anonymize.load_detector(), anonymize.load_profile_detector(),
-                                   anonymize.FAST_PROFILE_SCALE_FACTOR)
+    boxes = anonymize.detect_faces(frame, anonymize.load_detector())
     cv2.imwrite(str(out), anonymize.pixelate_boxes(frame, boxes), [cv2.IMWRITE_JPEG_QUALITY, 92])
 
 

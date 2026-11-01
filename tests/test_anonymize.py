@@ -95,18 +95,17 @@ def test_no_faces_on_blank_frame() -> None:
     assert anonymize.detect_faces(blank, detector) == []
 
 
-def test_clips_for_meta_use_the_faster_profile_setting(tmp_path, monkeypatch) -> None:
-    # H-41(10/30 사용자 결정): Meta로 보내는 흐림본만 옆얼굴 검출 간격을 넓힌다. 결과 영상 모자이크는 그대로
+def test_clips_for_meta_skip_the_profile_detector(tmp_path, monkeypatch) -> None:
+    # H-51(11/1 사용자 결정): Meta로 보내는 흐림본은 옆얼굴 검출 없이 YuNet만. 결과 영상 모자이크는 그대로
     import subprocess
 
     src = tmp_path / "s.mp4"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=5:duration=0.4",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
     seen: list = []
-    monkeypatch.setattr(anonymize, "detect_faces", lambda f, d, p=None, s=anonymize.PROFILE_SCALE_FACTOR: seen.append(s) or [])
+    monkeypatch.setattr(anonymize, "detect_faces", lambda f, d, p=None, s=anonymize.PROFILE_SCALE_FACTOR: seen.append(p) or [])
     anonymize.anonymize_video(src, tmp_path / "out.mp4")
-    assert seen and set(seen) == {anonymize.FAST_PROFILE_SCALE_FACTOR}
-    assert anonymize.FAST_PROFILE_SCALE_FACTOR > anonymize.PROFILE_SCALE_FACTOR
+    assert seen and set(seen) == {None}
 
 
 def test_parallel_blur_matches_single_process(tmp_path, monkeypatch) -> None:
