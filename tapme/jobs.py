@@ -705,11 +705,25 @@ def scene_people(job: Job, scene: dict[str, Any], client: Any) -> dict[int, list
 MOSAIC_TEAMS = ("all", "opponent", "mine")
 TEAM_QUESTION_USD = 0.03  # 선수 카드 20장 안팎 + 생각 '중간'. 넉넉히 잡고 charge, 실제 토큰으로 다시 셈
 TEAM_PROMPT = """첫 번째 사진은 배구 경기 영상에서 '나'(기준 선수)를 잘라 낸 것이다. 그 뒤 사진들은 같은 장면의 다른 사람들이고,
-각 사진 앞과 사진 왼쪽 위에 '후보 번호'가 있다(사진에 적힌 번호를 쓴다). 한 사진에 여러 사람이 있으면 가운데 가장 크게
-잡힌 사람이 그 후보다. 얼굴은 모두 흐려져 있으니 유니폼 색·무늬·바지로 판단한다.
+각 사진 앞과 사진 왼쪽 위에 '후보 번호'가 있다(사진에 적힌 번호를 쓴다). 후보는 사진 가운데 밝은 자리의 사람이고,
+테두리의 어두운 자리에 보이는 사람은 다른 후보다. 밝은 자리에 여러 사람이 겹쳐 누구인지 애매하면 unsure. 얼굴은 모두 흐려져 있으니 유니폼 색·무늬·바지로 판단한다.
 후보마다 '나'와 같은 팀 유니폼이면 same, 상대 팀 선수면 other, 심판·관중·코트 밖 사람이거나 잘 안 보이면 unsure.
 {team}
 JSON 하나로만 답한다: {{"teams": {{"0": "same" 또는 "other" 또는 "unsure", ...}}}}"""
+
+
+def dimmed_card(img: Image.Image, box: track.Box | list[float]) -> Image.Image:
+    """선수 카드처럼 자르되(여유 자리 포함) 상자 밖은 어둡게. Muse에 보낼 후보 사진 — 여유 자리에 겹쳐 보인 옆 사람을
+    후보로 착각했다(H-49: 나 찾기에서 앞 선수 카드 뒤의 다른 선수, 팀 나누기에서 겹친 초록 선수를 상대 팀으로)."""
+    left, top, right, bottom = (box.left, box.top, box.right, box.bottom) if isinstance(box, track.Box) else box
+    pad_w, pad_h = (right - left) * 0.15, (bottom - top) * 0.08
+    crop = (max(0, left - pad_w), max(0, top - pad_h), min(img.width, right + pad_w), min(img.height, bottom + pad_h))
+    card = img.convert("RGB").crop(crop)
+    mask = Image.new("L", card.size, 150)  # 상자 밖은 60% 어둡게
+    ImageDraw.Draw(mask).rectangle((left - crop[0], top - crop[1], right - crop[0], bottom - crop[1]), fill=0)
+    card = Image.composite(Image.new("RGB", card.size, (0, 0, 0)), card, mask)
+    card.thumbnail((160, 240))
+    return card
 
 
 def _card_img(path: Path) -> dict[str, str]:
@@ -750,11 +764,7 @@ def scene_teams(job: Job, scene: dict[str, Any], client: Any) -> dict[str, str]:
         if not frame.exists():
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(sam_clip), "-vf", f"select=eq(n\\,{k})",
                             "-frames:v", "1", str(frame)], check=True)
-        img = Image.open(frame)
-        pad_w, pad_h = (b.right - b.left) * 0.15, (b.bottom - b.top) * 0.08  # 선수 카드(player_cards)와 같게
-        card = img.crop((max(0, b.left - pad_w), max(0, b.top - pad_h),
-                         min(img.width, b.right + pad_w), min(img.height, b.bottom + pad_h)))
-        card.thumbnail((160, 240))
+        card = dimmed_card(Image.open(frame), b)
         label = "ME" if oid == "me" else str(n - 1)  # 번호를 사진에도 쓴다(글로만 주면 한 칸 밀려 답했다, H-49)
         ImageDraw.Draw(card).rectangle((0, 0, 8 + 8 * len(label), 16), fill=(0, 0, 0))
         ImageDraw.Draw(card).text((4, 2), label, fill=(255, 255, 0))

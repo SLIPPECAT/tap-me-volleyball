@@ -55,20 +55,10 @@ def _img(path: Path, name: str = "") -> dict[str, str]:
 
 
 def _candidate(frame: Path, box: list[float], name: str, label: str) -> dict[str, str]:
-    """후보 사진: 선수 카드(player_cards)처럼 자르되 상자 밖(여유 자리)은 어둡게 하고 이름을 쓴다. 여유 자리에 뒤 사람이
-    겹쳐 보이면 그 사람을 후보로 착각해 골랐다(11/1 H-49: 앞 선수 카드 뒤에 보인 다른 선수 → 앞 선수를 추적)."""
-    img = Image.open(frame).convert("RGB")
-    left, top, right, bottom = box
-    pad_w, pad_h = (right - left) * 0.15, (bottom - top) * 0.08
-    crop = (max(0, left - pad_w), max(0, top - pad_h), min(img.width, right + pad_w), min(img.height, bottom + pad_h))
-    card = img.crop(crop)
-    dim = Image.new("RGB", card.size, (0, 0, 0))
-    mask = Image.new("L", card.size, 150)  # 상자 밖은 60% 어둡게
-    ImageDraw.Draw(mask).rectangle((left - crop[0], top - crop[1], right - crop[0], bottom - crop[1]), fill=0)
-    card = Image.composite(dim, card, mask)
-    card.thumbnail((160, 240))
+    """후보 사진: 상자 밖은 어둡게(jobs.dimmed_card) 하고 이름을 쓴다. 여유 자리에 뒤 사람이 겹쳐 보이면 그 사람을 후보로
+    착각해 골랐다(11/1 H-49: 앞 선수 카드 뒤에 보인 다른 선수 → 앞 선수를 추적)."""
     path = frame.parent / f"cand_{name}.jpg"
-    card.save(path)
+    jobs.dimmed_card(Image.open(frame), box).save(path)
     return _img(path, label)
 
 
