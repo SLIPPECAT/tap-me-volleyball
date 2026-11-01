@@ -545,6 +545,14 @@ def _auto_steps(job_id: str, client: Any) -> None:
         if job.scenes.get(str(i), {}).get("status") not in ("frames_ready", "awaiting_tap", "failed"):
             jobs.prepare_frames(job, i, client)
         found = auto.find_me(job, i, ref, a.get("hint", ""), client)
+        # 득점 팀용(H-55): 그 랠리에서 '나'가 있는 쪽(고른 선수 상자) + 서브 쪽(Muse). 실패해도 나 찾기는 그대로
+        scene = job.scenes[str(i)]
+        if found.get("card", -1) >= 0:
+            scene["me_side"] = jobs.side_of(scene.get("players", {}).get(found.get("frame", ""), []), found["card"])
+        try:
+            jobs.serve_side(job, i, client)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
         with _auto_lock:
             auto_now = jobs.load_job(job_id).auto
             done = {**auto_now.get("found", {}), str(i): found}
@@ -1068,7 +1076,8 @@ def status(job_id: str) -> dict[str, Any]:
             "scenes": {k: {f: v for f, v in s.items() if f not in _SERVER_PATHS}
                        for k, s in job.scenes.items()},
             "reel": {k: v for k, v in job.reel.items() if k != "video"},
-            "auto": {k: v for k, v in job.auto.items() if k != "me"}}
+            "auto": {k: v for k, v in job.auto.items() if k != "me"},
+            "winners": jobs.point_winners(job) if job.auto else {}}
 
 
 def _left(job: jobs.Job) -> dict[str, int] | None:

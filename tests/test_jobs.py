@@ -91,7 +91,7 @@ def _prepared(job: jobs.Job, monkeypatch: pytest.MonkeyPatch, sam: list) -> None
 
     monkeypatch.setattr(track, "track_players", fake_track)
 
-    def fake_commentary(c, clip, team, t, role, sec):
+    def fake_commentary(c, clip, team, t, role, sec, winner="mine"):
         sam.append(f"muse:{role}")
         return [{"t": 1.0, "ko": "서브!", "ja": "サーブ!", "en": "Serve!"}, {"t": t, "ko": "득점!", "ja": "得点!", "en": "Point!"}], _reply()
 
@@ -740,3 +740,18 @@ def test_render_turns_alternate_between_jobs() -> None:
     fifo = jobs.Turns(1)  # 묶음이 없으면 온 순서대로(랠리 찾기)
     fifo._waiting = ["A/1", "B/0"]
     assert fifo.position("B/0") == 2
+
+
+def test_point_winner_is_the_team_that_serves_the_next_rally_on_our_side_per_set() -> None:
+    # 11/1 H-55: 배구는 이긴 팀이 다음 서브. 우리 팀 쪽은 세트마다 '나'의 쪽 다수결(하나 틀려도), 세트 사이(90초 넘게 빔)는 모름
+    job = jobs.Job(id="w0000000000a", video="")
+    starts = [0, 25, 50, 75, 200, 225, 250]  # 75 → 200: 세트가 바뀜(코트를 바꿔 우리 팀이 먼 쪽)
+    me = ["near", "near", "far", "near", "far", "near", "far"]  # 2번·5번은 틀린 값(다수결로 바로잡힘)
+    serve = ["far", "near", "near", "far", "near", "far", "near"]
+    job.rallies = [{"index": i, "start_sec": float(s), "is_rally": True} for i, s in enumerate(starts)]
+    job.scenes = {str(i): {"index": i, "me_side": me[i], "serve": {"side": serve[i]}} for i in range(len(starts))}
+    assert jobs.point_winners(job) == {"0": "mine", "1": "mine", "2": "opponent", "4": "mine", "5": "opponent"}
+    job.scenes["1"]["serve"]["side"] = "unsure"
+    assert "0" not in jobs.point_winners(job)  # 다음 서브를 모르면 모름
+    boxes = [[0, 100, 10, 300], [0, 100, 10, 500], [0, 100, 10, 420]]
+    assert jobs.side_of(boxes, 1) == "near" and jobs.side_of(boxes, 0) == "far" and jobs.side_of(boxes, 5) == "unknown"

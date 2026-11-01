@@ -30,15 +30,26 @@ ROLE_TEXT = {
 }
 
 
-def commentary_prompt(team_label: str, score_time_sec: float, role: str, clip_sec: float) -> str:
-    """실제 배구 중계처럼 장면에 맞춰 나오는 해설 2~4줄. 마지막 줄은 득점 순간."""
+# 득점 팀(jobs.point_winners, H-55): 전에는 늘 "우리 팀 득점"이라고 써 상대가 득점한 랠리에 틀린 해설이 붙었다(11/1)
+WINNER_TEXT = {
+    "mine": "The point at {t:.1f}s was won by the team the user calls '{team}' (do not change it). ",
+    "opponent": ("The point at {t:.1f}s was won by the opponents of the team the user calls '{team}' (do not change it). "
+                 "Call it honestly but focus on how '{team}' fought for the rally. "),
+    None: ("The point is decided at {t:.1f}s; it is not known which team won it, so never say which team won. "
+           "The user's team is the one they call '{team}'. "),
+}
+
+
+def commentary_prompt(team_label: str, score_time_sec: float, role: str, clip_sec: float, winner: str | None = "mine") -> str:
+    """실제 배구 중계처럼 장면에 맞춰 나오는 해설 2~4줄. 마지막 줄은 득점 순간. winner: mine · opponent · None(모름)."""
     if role not in ROLE_TEXT:
         raise ValueError(f"역할은 {tuple(ROLE_TEXT)} 중 하나: {role}")
-    who = ROLE_TEXT[role] or "Do not describe the highlighted player's role; talk about the team's play."
+    # '내가 득점'은 우리 팀이 득점했을 때만 맞는 말이다
+    who = (ROLE_TEXT[role] if winner == "mine" or role != "score" else "") or \
+        "Do not describe the highlighted player's role; talk about the team's play."
     return (
         f"This {clip_sec:.0f}-second clip is one rally from an amateur volleyball match (faces are pixelated). "
-        f"The point at {score_time_sec:.1f}s was won by the team the user calls '{team_label}' "
-        "(decided by the user, do not change it). " + who + " "
+        + WINNER_TEXT[winner].format(t=score_time_sec, team=team_label) + who + " "
         "Write 2 to 4 short lines of live TV volleyball commentary that follow the play, like a broadcaster "
         "calling the game: build up through the rally and make the last line the scoring moment, timed near "
         f"{score_time_sec:.1f}s. Only describe plays that are clearly visible; never invent a play. "
@@ -73,16 +84,34 @@ def subtitle_cues(
     return cues
 
 
+# 득점 팀을 알려고 다음 랠리의 서브 쪽을 묻는다(배구는 랠리를 이긴 팀이 다음 서브). 유니폼 색은 비슷한 색 팀에서
+# 틀려(H-54, 76%) 위치를 묻는다(H-55: 서브 쪽 15/17, 득점 팀 81~88%)
+SERVE_SIDE_PROMPT = (
+    "This short clip is the start of one rally in an amateur volleyball match, filmed from behind one end of the court "
+    "(faces are pixelated). Which side serves: the team on the NEAR court (closer to the camera, players appear larger and "
+    "lower in the picture) or the FAR court (beyond the net)? The server tosses and hits the ball from behind an end line. "
+    'Answer with JSON only: {"server_side": "near" or "far" or "unsure", "confidence": 0.0 to 1.0, "reason": "one short sentence"}'
+)
+
+
+def ask_serve_side(client: Any, clip: Path) -> tuple[dict[str, Any], muse.MuseReply]:
+    reply = muse.ask_about_video(client, clip, SERVE_SIDE_PROMPT)
+    try:
+        return muse.parse_json_reply(reply.text), reply
+    except ValueError:  # 빈 답이 온 적이 있다(H-54)
+        return {"server_side": "unsure", "confidence": 0.0}, reply
+
+
 def ask_score_time(client: Any, rally_clip: Path) -> tuple[dict[str, Any], muse.MuseReply]:
     reply = muse.ask_about_video(client, rally_clip, SCORE_TIME_PROMPT)
     return muse.parse_json_reply(reply.text), reply
 
 
 def ask_commentary(
-    client: Any, clip: Path, team_label: str, score_time_sec: float, role: str, clip_sec: float
+    client: Any, clip: Path, team_label: str, score_time_sec: float, role: str, clip_sec: float, winner: str | None = "mine"
 ) -> tuple[list[dict[str, Any]] | None, muse.MuseReply]:
     """(해설 줄, 답). 답을 읽을 수 없으면 줄 대신 None(낸 돈은 reply로 센다)."""
-    reply = muse.ask_about_video(client, clip, commentary_prompt(team_label, score_time_sec, role, clip_sec))
+    reply = muse.ask_about_video(client, clip, commentary_prompt(team_label, score_time_sec, role, clip_sec, winner))
     try:
         lines = muse.parse_json_reply(reply.text).get("lines") or []
     except ValueError:

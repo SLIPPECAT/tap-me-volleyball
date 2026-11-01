@@ -61,3 +61,11 @@ def test_ask_score_time_parses_json(tmp_path: Path) -> None:
     answer, _ = score.ask_score_time(_client('{"score_time_sec": 8.4}', sent), clip)
     assert answer["score_time_sec"] == 8.4
     assert sent["input"][0]["content"][0]["text"] == score.SCORE_TIME_PROMPT
+
+
+def test_commentary_follows_who_won_the_point() -> None:
+    # 11/1: 전에는 늘 "우리 팀 득점"이라고 써 상대 득점 랠리에 틀린 해설이 붙었다
+    assert "won by the team the user calls '검정'" in score.commentary_prompt("검정", 6.0, "", 10.0)
+    opp = score.commentary_prompt("검정", 6.0, "score", 10.0, "opponent")
+    assert "won by the opponents" in opp and "won the point themselves" not in opp  # '내가 득점'은 빼고
+    assert "never say which team won" in score.commentary_prompt("검정", 6.0, "assist", 10.0, None)

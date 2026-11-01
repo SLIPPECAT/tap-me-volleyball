@@ -22,6 +22,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -958,21 +959,87 @@ def _render_locked(job: Job, scene: dict[str, Any], src: Path, by: Any, masks: A
     return out
 
 
+# ---- 득점 팀(11/1 사용자, H-55): 다음 랠리에서 서브하는 쪽 + 그 세트에서 우리 팀이 있는 쪽('나'의 위치) ----
+SERVE_BEFORE_SEC, SERVE_AFTER_SEC = 1.5, 2.5
+SET_GAP_SEC = 90.0  # 랠리 시작 사이가 이보다 길면 세트가 바뀐 것으로 본다(코트를 바꾼다, H-54에서 세트 사이 132초)
+
+
+def side_of(boxes: list[list[float]], card: int) -> str:
+    """선수 상자들 중 card번이 카메라 쪽(near)인지 먼 쪽(far)인지: 발(상자 아래)이 가운데값보다 아래면 카메라 쪽."""
+    if not 0 <= card < len(boxes):
+        return "unknown"
+    feet = sorted(b[3] for b in boxes)
+    return "near" if boxes[card][3] > feet[len(feet) // 2] else "far"
+
+
+def serve_side(job: Job, index: int, client: Any) -> dict[str, Any]:
+    """랠리 시작의 서브 쪽(Muse, 약 $0.013). 장면에 저장해 다시 묻지 않는다."""
+    scene = job.scenes.setdefault(str(index), {"index": index})
+    if scene.get("serve"):
+        return scene["serve"]
+    r = job.rallies[index]
+    start = max(0.0, r["start_sec"] - SERVE_BEFORE_SEC)
+    video, offset = _source(job, index, start)
+    work = job.dir / f"scene{index:02d}"
+    work.mkdir(exist_ok=True)
+    raw, clip = work / "serve_raw.mp4", work / "serve_blur.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{offset:.2f}", "-i", str(video),
+                    "-t", f"{SERVE_BEFORE_SEC + SERVE_AFTER_SEC}", "-vf", "fps=5,scale=1280:-2", "-an",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(raw)], check=True)
+    try:
+        anonymize.anonymize_video(raw, clip)  # Meta로 보내는 것은 흐림본만
+        job.charge(muse.estimate_usd(SERVE_BEFORE_SEC + SERVE_AFTER_SEC))
+        answer, reply = score.ask_serve_side(client, clip)
+        job.spent_usd += reply.usd
+    finally:
+        raw.unlink(missing_ok=True)
+        clip.unlink(missing_ok=True)
+    side = answer.get("server_side") if answer.get("server_side") in ("near", "far") else "unsure"
+    scene["serve"] = {"side": side, "confidence": answer.get("confidence")}
+    job.save()
+    return scene["serve"]
+
+
+def point_winners(job: Job) -> dict[str, str]:
+    """랠리별 득점 팀: "mine"(우리 팀) · "opponent". 모르면 넣지 않는다. 랠리 i의 득점 팀 = 랠리 i+1에서 서브한 팀.
+    우리 팀 쪽은 세트마다 '나'의 쪽 다수결(한 세트 안에서는 코트를 바꾸지 않는다, H-55에서 하나 틀린 것을 바로잡음)."""
+    rallies = sorted((r for r in job.rallies if r.get("is_rally")), key=lambda r: r["start_sec"])
+    sets: list[list[dict[str, Any]]] = []
+    for r in rallies:
+        if not sets or r["start_sec"] - sets[-1][-1]["start_sec"] > SET_GAP_SEC:
+            sets.append([])
+        sets[-1].append(r)
+    out: dict[str, str] = {}
+    for part in sets:
+        sides = [job.scenes.get(str(r["index"]), {}).get("me_side") for r in part]
+        near, far = sides.count("near"), sides.count("far")
+        if near == far:
+            continue
+        ours = "near" if near > far else "far"
+        for r, nxt in pairwise(part):
+            served = job.scenes.get(str(nxt["index"]), {}).get("serve", {}).get("side")
+            if served in ("near", "far"):
+                out[str(r["index"])] = "mine" if served == ours else "opponent"
+    return out
+
+
 def _ensure_commentary(job: Job, scene: dict[str, Any], languages: list[str], role: str, client: Any) -> None:
-    """자막을 켤 때만 해설을 묻는다(약 $0.01). 이미 같은 역할로 받아 뒀으면 다시 묻지 않는다."""
-    if not languages or (scene.get("commentary") is not None and scene.get("role", "") == role):
+    """자막을 켤 때만 해설을 묻는다(약 $0.01). 이미 같은 역할·같은 득점 팀으로 받아 뒀으면 다시 묻지 않는다."""
+    winner = point_winners(job).get(str(scene["index"])) if job.auto else "mine"  # 하나씩 고르기는 사용자가 고른 득점 장면
+    if not languages or (scene.get("commentary") is not None and scene.get("role", "") == role
+                         and scene.get("commentary_winner", "mine") == winner):
         return
     window = scene["window"][1] - scene["window"][0]
     lines = None
     for _ in range(2):  # 읽을 수 없는 답이면 한 번 더 묻는다
         job.charge(muse.estimate_usd(window))
         lines, reply = score.ask_commentary(client, Path(scene["sam_clip"]), scene["team"],
-                                            scene["score_sec"] - scene["window"][0], role, window)
+                                            scene["score_sec"] - scene["window"][0], role, window, winner)
         job.spent_usd += reply.usd  # 실패한 답도 돈은 나갔다
         if lines is not None:
             break
     # 그래도 못 받으면 자막 없이 만든다(영상 자체는 막지 않는다)
-    scene.update(commentary=lines or [], role=role, commentary_failed=lines is None)
+    scene.update(commentary=lines or [], role=role, commentary_failed=lines is None, commentary_winner=winner)
 
 
 _number_lock = threading.Lock()

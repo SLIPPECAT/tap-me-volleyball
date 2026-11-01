@@ -656,10 +656,22 @@ def test_one_shot_makes_every_found_rally_without_using_code_highlights_and_asks
             if (a := jobs.load_job(job_id).auto).get("state") == "done":
                 break
             _time.sleep(0.05)
-        return {"auto": a, "code": access._load()[code]}
+        return {"auto": a, "code": access._load()[code], "id": job_id}
 
+    served: list[int] = []
+
+    def fake_serve(job, i, c):
+        served.append(i)
+        job.scenes[str(i)]["serve"] = {"side": "near" if i % 2 else "far"}
+        job.save()
+        return job.scenes[str(i)]["serve"]
+
+    monkeypatch.setattr(jobs, "serve_side", fake_serve)
+    monkeypatch.setattr(jobs, "side_of", lambda boxes, card: "near")
     r = run(5)
     assert r["auto"]["made"] == [0, 1, 2, 3, 4] and access.LIMITS["highlights"] < 5
+    assert sorted(served) == [0, 1, 2, 3, 4]  # 득점 팀용 서브 쪽도 랠리마다(H-55)
+    assert client.get(f"/jobs/{r['id']}").json()["winners"] == {"0": "mine", "1": "opponent", "2": "mine", "3": "opponent"}
     assert r["code"]["highlights"] == 0 and r["code"]["uploads"] == 1  # 영상 올리기만 센다
     asked.clear()
     r = run(8, max=2)  # 다 만들면 멈춘다: 그 뒤 랠리까지 미리 다 찾지 않는다
