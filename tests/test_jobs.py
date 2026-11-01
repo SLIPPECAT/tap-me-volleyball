@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from tapme import jobs, muse, score, track
-from tests.test_track import WIRE  # 320×334 화면, 선수 0·1
+from tests.test_track import _MASK_A, WIRE  # 320×334 화면, 선수 0·1
 
 
 def _video(path: Path, fps: int, seconds: float = 1.0) -> Path:
@@ -153,18 +153,26 @@ def test_rerender_pays_only_when_something_new_is_needed(job: jobs.Job, monkeypa
     assert scene["options"]["face_mosaic"] is False and len(calls) == 4
 
 
-def test_team_mosaic_asks_teams_once_and_clears_only_that_team(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 11/1 사용자: 상대 팀만(또는 우리 팀만) 모자이크. 다른 선수마다 '나'와 같은 유니폼인지 흐린 카드로 한 번 묻는다
+def test_team_mosaic_asks_two_moments_and_clears_only_agreed_team(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/1 사용자: 상대 팀만(또는 우리 팀만) 모자이크. 다른 선수마다 떨어진 두 순간을 따로 물어 같은 답일 때만 팀을 정한다
+    # (한 번만 물으면 겹친 카드에서 약 5% 틀렸다, H-49). 틀리면 얼굴이 드러나니 다르면 모름 = 가린다
     from tapme import render
 
     _prepared(job, monkeypatch, [])
     jobs.make_highlight(job, 0, [("score", 240, 240)], "초록", [], "", "face", 2.0, client=None)
+    scene_dir = job.dir / "scene00"
+    box = "<|box;x1={};y1=228;x2={};y2=254;w=320;h=334|>"
+    # 두 선수 모두 0프레임과 4프레임에 잡힘(시험 영상은 5프레임이라 두 순간 간격을 줄인다) — 5번이 더 크다
+    monkeypatch.setattr(jobs, "TEAM_GAP_SEC", 0.3)
+    (scene_dir / "others_wire.txt").write_text("\n".join(
+        f"<{k}f>5{box.format(150, 280)}{_MASK_A},6{box.format(10, 60)}{_MASK_A}" for k in (0, 4)))
     asked: list = []
+    replies = iter(['{"teams": {"0": "same", "1": "other"}}', '{"teams": {"0": "same", "1": "other"}}',
+                    '{"teams": {"0": "same", "1": "other"}}', '{"teams": {"0": "same", "1": "same"}}'])
 
     def create(**kw):
         asked.append(kw["input"][0]["content"])
-        return SimpleNamespace(output_text='{"teams": {"0": "same", "1": "other"}}',
-                               usage=SimpleNamespace(input_tokens=1000, output_tokens=100))
+        return SimpleNamespace(output_text=next(replies), usage=SimpleNamespace(input_tokens=1000, output_tokens=100))
 
     client = SimpleNamespace(responses=SimpleNamespace(create=create))
     cleared: list = []
@@ -173,16 +181,18 @@ def test_team_mosaic_asks_teams_once_and_clears_only_that_team(job: jobs.Job, mo
     spent = jobs.load_job(job.id).spent_usd
 
     scene = jobs.rerender(job, 0, [], "", "face", 2.0, client, mosaic_team="opponent")
-    teams = scene["teams"]
-    assert sorted(teams.values()) == ["mine", "opponent"] and len(asked) == 1
+    assert scene["teams"] == {"5": "mine", "6": "opponent"} and len(asked) == 2
     assert "초록" in asked[0][0]["text"] and asked[0][1]["text"] == "나"  # 우리 팀 이름과 '나' 카드가 먼저
-    mine = {oid for oid, t in teams.items() if t == "mine"}
-    assert cleared[-1] == mine and scene["options"]["mosaic_team"] == "opponent"
+    assert cleared[-1] == {"5"} and scene["options"]["mosaic_team"] == "opponent"
     assert jobs.load_job(job.id).spent_usd > spent
     jobs.rerender(job, 0, [], "", "face", 2.0, client, mosaic_team="mine")  # 팀은 저장해 둔 것(다시 묻지 않음)
-    assert len(asked) == 1 and cleared[-1] == set(teams) - mine
+    assert len(asked) == 2 and cleared[-1] == {"6"}
     jobs.rerender(job, 0, [], "", "face", 2.0, client, mosaic_team="all")
     assert cleared[-1] is None
+
+    scene.pop("teams")  # 두 순간 답이 다르면(한 선수: other ↔ same) 모름 → 늘 가린다
+    scene = jobs.rerender(job, 0, [], "", "face", 2.0, client, mosaic_team="mine")
+    assert scene["teams"] == {"5": "mine", "6": "unknown"} and cleared[-1] == set()
 
 
 def test_load_job_rejects_path_tricks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

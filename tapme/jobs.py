@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -730,59 +731,93 @@ def _card_img(path: Path) -> dict[str, str]:
     return {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode()}
 
 
+TEAM_GAP_SEC = 1.5  # 두 번째로 물을 순간은 첫 순간에서 이만큼 떨어진 것(같은 겹침을 두 번 보지 않게)
+
+
+def _two_moments(boxes: list[tuple[int, track.Box]], gap: int) -> list[tuple[int, track.Box]]:
+    """가장 크게 잡힌 순간, 그리고 그와 gap 프레임 이상 떨어진 순간 중 가장 큰 것(없으면 하나만)."""
+    def area(kb: tuple[int, track.Box]) -> float:
+        return (kb[1].right - kb[1].left) * (kb[1].bottom - kb[1].top)
+    first = max(boxes, key=area)
+    rest = [kb for kb in boxes if abs(kb[0] - first[0]) >= gap]
+    return [first, max(rest, key=area)] if rest else [first]
+
+
+def _ask_teams(job: Job, scene: dict[str, Any], client: Any, picks: list[tuple[str, tuple[int, track.Box]]],
+               d: Path, round_no: int) -> tuple[dict[str, str], float]:
+    """picks[0]은 '나', 나머지는 후보. 후보 번호(n-1) → same·other·unsure, 쓴 돈. 장면 사진은 d에 미리 뽑아 둔다."""
+    content: list[dict[str, str]] = [
+        {"type": "input_text", "text": TEAM_PROMPT.format(
+            team=f"사용자는 우리 팀을 '{scene['team']}'(이)라고 부른다." if scene.get("team") else "")}]
+    for n, (oid, (k, b)) in enumerate(picks):
+        card = dimmed_card(Image.open(d / f"frame_{k:04d}.jpg"), b)
+        label = "ME" if oid == "me" else str(n - 1)  # 번호를 사진에도 쓴다(글로만 주면 한 칸 밀려 답했다, H-49)
+        ImageDraw.Draw(card).rectangle((0, 0, 8 + 8 * len(label), 16), fill=(0, 0, 0))
+        ImageDraw.Draw(card).text((4, 2), label, fill=(255, 255, 0))
+        path = d / f"card{round_no}_{n:02d}.jpg"
+        card.save(path)
+        content += [{"type": "input_text", "text": "나" if oid == "me" else f"후보 {n - 1}"}, _card_img(path)]
+    resp = client.responses.create(model=muse.MODEL, max_output_tokens=16000,
+                                   input=[{"type": "message", "role": "user", "content": content}])
+    usd = (int(resp.usage.input_tokens or 0) * muse.INPUT_USD_PER_TOKEN
+           + int(resp.usage.output_tokens or 0) * muse.OUTPUT_USD_PER_TOKEN)
+    try:
+        answers = muse.parse_json_reply(resp.output_text or "").get("teams") or {}
+    except ValueError:
+        answers = {}
+    return {str(n): str(answers.get(str(n), "")).strip().lower() for n in range(len(picks) - 1)}, usd
+
+
 def scene_teams(job: Job, scene: dict[str, Any], client: Any) -> dict[str, str]:
     """다른 선수 추적(scene_people와 같은 것)의 사람마다 우리 팀(mine)·상대 팀(opponent)·모름(unknown).
-    사람마다 가장 크게 잡힌 순간을 얼굴 흐림본(sam_clip)에서 잘라, '나' 카드와 같은 유니폼인지 Muse Spark에 한 번 묻는다.
-    장면마다 한 번(약 $0.01~0.03), 저장해 다시 쓴다. 모르는 사람은 늘 가린다(render.off_team)."""
+    사람마다 떨어진 두 순간을 얼굴 흐림본(sam_clip)에서 잘라 '나' 카드와 같은 유니폼인지 Muse Spark에 따로 두 번 묻고
+    (동시에), 두 답이 같을 때만 팀을 정한다. 한 번만 물으면 겹친 카드에서 약 5% 틀렸고(H-49), 틀리면 얼굴이 드러난다.
+    한 순간만 잡힌 사람은 모름. 장면마다 한 번(약 $0.04~0.06), 저장해 다시 쓴다. 모르는 사람은 늘 가린다(render.off_team)."""
     if scene.get("teams") is not None:
         return scene["teams"]
     sam_clip = Path(scene["sam_clip"])
     others = track.boxes_by_frame(track.parse(_track_others(job, client, sam_clip).read_text()))
     me = track.boxes_by_frame(track.parse((sam_clip.parent / "me_wire.txt").read_text()))
     s0, s1 = scene["span_frames"]
-
-    def area(b: track.Box) -> float:
-        return (b.right - b.left) * (b.bottom - b.top)
-    best: dict[str, tuple[int, track.Box]] = {}  # 사람마다 가장 크게 잡힌 (프레임, 상자)
+    gap = round(TEAM_GAP_SEC * scene["sam_fps"])
+    tracks: dict[str, list[tuple[int, track.Box]]] = {}
     for k, boxes in others.items():
         for b in boxes:
-            if b.object_id not in best or area(b) > area(best[b.object_id][1]):
-                best[b.object_id] = (k, b)
+            tracks.setdefault(b.object_id, []).append((k, b))
     mine = [(k, b) for k, boxes in me.items() if s0 <= k <= s1 for b in boxes if b.object_id == track.TAPPED_ID]
-    if not best or not mine:
+    if not tracks or not mine:
         scene["teams"] = {}
         return scene["teams"]
-    people = sorted(best.items(), key=lambda kv: -area(kv[1][1]))[:MAX_PLAYER_CARDS]
-    picks = [("me", max(mine, key=lambda kb: area(kb[1])))] + [(oid, kb) for oid, kb in people]
+
+    def area(oid: str) -> float:
+        return max((b.right - b.left) * (b.bottom - b.top) for _, b in tracks[oid])
+    people = sorted(tracks, key=lambda oid: -area(oid))[:MAX_PLAYER_CARDS]
+    moments = {oid: _two_moments(tracks[oid], gap) for oid in people}
+    me_moments = _two_moments(mine, gap)
     d = sam_clip.parent / "teams"
     d.mkdir(exist_ok=True)
-    content: list[dict[str, str]] = [
-        {"type": "input_text", "text": TEAM_PROMPT.format(
-            team=f"사용자는 우리 팀을 '{scene['team']}'(이)라고 부른다." if scene.get("team") else "")}]
-    for n, (oid, (k, b)) in enumerate(picks):
+    rounds = []
+    for r in (0, 1):
+        picks = [("me", me_moments[min(r, len(me_moments) - 1)])]
+        picks += [(oid, moments[oid][r]) for oid in people if len(moments[oid]) > r]
+        rounds.append(picks)
+    for k, _ in {kb for picks in rounds for _, kb in picks}:  # 장면 사진은 먼저 차례로(두 질문이 같은 파일을 쓰지 않게)
         frame = d / f"frame_{k:04d}.jpg"
         if not frame.exists():
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(sam_clip), "-vf", f"select=eq(n\\,{k})",
                             "-frames:v", "1", str(frame)], check=True)
-        card = dimmed_card(Image.open(frame), b)
-        label = "ME" if oid == "me" else str(n - 1)  # 번호를 사진에도 쓴다(글로만 주면 한 칸 밀려 답했다, H-49)
-        ImageDraw.Draw(card).rectangle((0, 0, 8 + 8 * len(label), 16), fill=(0, 0, 0))
-        ImageDraw.Draw(card).text((4, 2), label, fill=(255, 255, 0))
-        path = d / f"card_{n:02d}.jpg"
-        card.save(path)
-        content += [{"type": "input_text", "text": "나" if oid == "me" else f"후보 {n - 1}"}, _card_img(path)]
-    job.charge(TEAM_QUESTION_USD)
-    resp = client.responses.create(model=muse.MODEL, max_output_tokens=16000,
-                                   input=[{"type": "message", "role": "user", "content": content}])
-    job.spent_usd += (int(resp.usage.input_tokens or 0) * muse.INPUT_USD_PER_TOKEN
-                      + int(resp.usage.output_tokens or 0) * muse.OUTPUT_USD_PER_TOKEN)
-    try:
-        answers = muse.parse_json_reply(resp.output_text or "").get("teams") or {}
-    except ValueError:
-        answers = {}
+    job.charge(TEAM_QUESTION_USD * 2)
+    with ThreadPoolExecutor(2) as pool:
+        replies = list(pool.map(lambda r: _ask_teams(job, scene, client, rounds[r], d, r), (0, 1)))
+    job.spent_usd += sum(usd for _, usd in replies)
+    votes: dict[str, list[str]] = {oid: [] for oid in people}
+    for (answers, _), picks in zip(replies, rounds, strict=True):
+        for n, (oid, _) in enumerate(picks[1:]):
+            votes[oid].append(answers.get(str(n), ""))
     names = {"same": "mine", "other": "opponent"}
-    scene["teams"] = {oid: names.get(str(answers.get(str(n), "")).strip().lower(), "unknown")
-                      for n, (oid, _) in enumerate(people)}
+    scene["teams"] = {oid: names.get(v[0], "unknown") if len(v) == 2 and v[0] == v[1] else "unknown"
+                      for oid, v in votes.items()}
+    scene["team_votes"] = votes  # 확인용(H-49)
     job.save()
     return scene["teams"]
 
