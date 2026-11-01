@@ -170,6 +170,32 @@ def test_face_found_once_stays_mosaicked_for_a_moment(tmp_path: Path, monkeypatc
     assert all(d > 5 for d in diff[:hold]) and all(d < 5 for d in diff[hold + 2:])
 
 
+def test_profile_faces_are_searched_every_other_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # H-52(11/1 사용자 결정): 옆얼굴 Haar는 2프레임마다. 빠진 프레임은 FACE_HOLD_SEC 유지로 덮인다
+    from tapme import anonymize
+
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=0.3",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
+    used: list[bool] = []
+    monkeypatch.setattr(anonymize, "detect_faces_split", lambda f, d, p=None, s=None: used.append(p is not None) or ([], []))
+    monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a, **k: [])
+    render.render_video(src, tmp_path / "m.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=True)
+    assert len(used) == 9 and used == [i % render.PROFILE_EVERY == 0 for i in range(9)]
+    assert render.PROFILE_EVERY == 2
+    # 서버(여러 프로세스) 경로: 일꾼에게 옆얼굴을 찾을지 함께 넘긴다
+    import numpy as np
+
+    used.clear()
+    monkeypatch.setitem(render._W, "detector", object())
+    monkeypatch.setitem(render._W, "profile", object())
+    monkeypatch.setitem(render._W, "plain", None)
+    buf = np.zeros((4, 4, 3), np.uint8).tobytes()
+    for side in (True, False):
+        render._worker_faces((buf, 4, 4, (0, 0, 4, 4), (4, 4), side))
+    assert used == [True, False]
+
+
 def test_me_marker_glows_at_the_feet_and_points_from_above() -> None:
     # 10/30 사용자 C안: 발밑 스포트라이트 + 머리 위 삼각형
     import numpy as np

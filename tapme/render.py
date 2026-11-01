@@ -243,6 +243,9 @@ def compose(
 # 그 순간만 드러났다 → 찾은 자리를 잠깐 유지하고, 박스도 넓힌다. Meta로 보내는 흐림본(anonymize)은 그대로
 FACE_HOLD_SEC = 0.2
 RENDER_BOX_PAD = 0.4
+# 옆얼굴 Haar는 이 프레임마다 한 번(11/1 사용자 결정, H-52): 매 프레임이면 얼굴 찾기의 2/3를 쓴다. 2프레임마다면
+# 장당 1,592 → 1,082ms, 옆얼굴로만 덮이던 자리의 24%가 1프레임(1/30초)씩 빠지고 다음 검출·FACE_HOLD_SEC로 다시 덮인다
+PROFILE_EVERY = 2
 MY_HEAD_SHARE = 0.35  # '나'의 얼굴로 보는 곳: 내 박스 위쪽 이 비율 안
 
 
@@ -294,9 +297,9 @@ def _worker_init(threads: int, two_detectors: bool) -> None:
 
 
 def _worker_faces(args: tuple) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
-    buf, width, height, crop, out_size = args
+    buf, width, height, crop, out_size, side = args
     bgr = np.ascontiguousarray(np.frombuffer(buf, np.uint8).reshape(height, width, 3)[..., ::-1])
-    return _find_faces(bgr, _W["detector"], _W["profile"], _W["plain"], crop, out_size)  # type: ignore[arg-type]
+    return _find_faces(bgr, _W["detector"], _W["profile"] if side else None, _W["plain"], crop, out_size)  # type: ignore[arg-type]
 
 
 def _find_faces(bgr: np.ndarray, detector: cv2.FaceDetectorYN, profile: cv2.CascadeClassifier | None,
@@ -402,7 +405,8 @@ def render_video(
         while len(ahead) < depth and len(buf := dec.stdout.read(size)) == size:
             job = None
             if pool is not None and read_i % face_every == 0:
-                job = pool.submit(_worker_faces, (buf, width, height, crops[min(read_i, n - 1)], (out_w, out_h)))
+                job = pool.submit(_worker_faces, (buf, width, height, crops[min(read_i, n - 1)], (out_w, out_h),
+                                                  read_i % PROFILE_EVERY == 0))
             ahead.append((buf, job))
             read_i += 1
 
@@ -426,7 +430,8 @@ def render_video(
                         faces, side = job.result()
                     else:
                         bgr = np.ascontiguousarray(rgb[..., ::-1])  # 검출기는 BGR
-                        faces, side = _find_faces(bgr, detector, profile, plain, crops[k], (out_w, out_h))
+                        faces, side = _find_faces(bgr, detector, profile if i % PROFILE_EVERY == 0 else None, plain,
+                                                  crops[k], (out_w, out_h))
                     if people_by_sam is not None:  # 다른 선수까지 추적했으면 몸 위에 잡힌 옆얼굴을 거른다(H-48)
                         side = off_bodies(side, people_by_sam.get(round(i * sam_fps / fps), []))
                     faces = faces + side
