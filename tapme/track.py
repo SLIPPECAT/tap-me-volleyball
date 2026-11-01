@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import time
 from dataclasses import dataclass
 from itertools import pairwise
@@ -54,6 +55,18 @@ def parse(wire_text: str) -> VideoSegmentationResult:
     parser = video_segmentation_format().create_parser()
     parser.push(wire_text)
     return parser.finish(CompletedOutcome()).result
+
+
+# 상자만 필요할 때(다른 선수 추적, '나'가 보이는 구간): 공식 해석기는 마스크를 하나하나 풀어 검사해 다른 선수 추적
+# 하나에 30초 넘게 걸렸다(11/1, H-53). 마스크 자리에 1x1 빈 마스크를 넣어 해석하면 상자는 그대로 나온다.
+# 마스크 글자에는 | < > 가 들어가지 않는다(meta_sam_parser의 알파벳)
+_MASK_TAG = re.compile(r"<\|mask;[^|]*\|>")
+_TINY_MASK = "<|mask;x=0;y=0;data=1,1,!!!!!&O.lVP|>"
+
+
+def parse_boxes(wire_text: str) -> VideoSegmentationResult:
+    """parse와 같은 상자(마스크는 빈 1x1). 마스크가 필요한 곳(렌더의 '나')은 parse를 쓴다."""
+    return parse(_MASK_TAG.sub(_TINY_MASK, wire_text))
 
 
 TAPPED_ID = "0"  # 점 프롬프트로 추적한 '나'의 object_id

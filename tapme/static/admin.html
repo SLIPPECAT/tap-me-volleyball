@@ -20,6 +20,8 @@
   <button class="primary" id="load">보기</button>
   <p class="muted" id="status" aria-live="polite"></p>
   <table id="summary"></table>
+  <h2>요청</h2>
+  <div style="overflow-x:auto"><table id="requests"></table></div>
   <h2>의견</h2>
   <table id="feedback"></table>
   <table id="codes"></table>
@@ -44,9 +46,38 @@ async function load() {
     // 초대 링크: 입구 주소 뒤에 붙인다. 퍼졌으면 서버에서 초대말을 새로 만든다(python -m tapme.access invite banner)
     ...Object.entries(s.invites || {}).map(([k, e]) => [`초대 ${{ banner: "배너", judge: "심사" }[k] || k}`, `${e.issued}/${e.max}개 발급 · highlight.baegugu.com/tapme?invite=${e.word}`]),
   ].map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join("");
+  showRequests(s.requests || []);
   showFeedback(s.feedback || []);
   $("codes").innerHTML = "<tr><th>코드</th><th>영상</th><th>하이라이트</th><th>메모</th></tr>" + codes.map(([c, e]) =>
     `<tr><td>${esc(c.slice(0, 4) + "-" + c.slice(4))}</td><td>${e.uploads}/${s.limits.uploads}</td><td>${e.highlights}/${s.limits.highlights}</td><td>${esc(e.label)}</td></tr>`).join("");
+}
+// 요청: 작업마다 한 줄(서버 _requests.jsonl의 단계별 기록을 묶는다, 30일). 시간은 올린 뒤부터
+function showRequests(rows) {
+  const byJob = new Map();
+  for (const r of [...rows].reverse()) {  // 오래된 것부터 쌓고, 표는 최근 작업부터
+    if (!byJob.has(r.job)) byJob.set(r.job, []);
+    byJob.get(r.job).push(r);
+  }
+  const min = (s) => s == null ? "" : `${Math.floor(s / 60)}분 ${s % 60}초`;
+  const line = (ev) => {
+    const one = (name) => ev.find((e) => e.event === name) || {};
+    const up = one("upload"), ra = one("rallies"), au = one("auto"), done = one("auto_done");
+    const hs = ev.filter((e) => e.event === "highlight"), ok = hs.filter((e) => e.status === "done");
+    const first = ok.length ? ok[0].t - (up.t || ok[0].t) : null, last = ev[ev.length - 1];
+    const what = [ra.duration_sec != null ? min(ra.duration_sec) : (up.duration_sec != null ? min(up.duration_sec) : ""),
+                  ra.size || "", up.size_mb != null ? `${up.size_mb}MB` : ""].filter(Boolean).join(" · ");
+    const result = [ra.rallies != null ? `랠리 ${ra.rallies}` : "", `하이라이트 ${ok.length}${hs.length > ok.length ? ` (실패 ${hs.length - ok.length})` : ""}`,
+                    done.review ? `확인 ${done.review}` : ""].filter(Boolean).join(" · ");
+    const time = [ra.sec != null ? `찾기 ${min(ra.sec)}` : "", first != null ? `첫 ${min(first)}` : "",
+                  done.sec != null ? `끝 ${min(last.t - up.t)}` : ""].filter(Boolean).join(" · ");
+    const mosaic = (au.mosaic || ok[0]?.mosaic || "");
+    const err = ev.map((e) => e.error).filter(Boolean)[0] || "";
+    return `<tr><td>${esc(up.at || ev[0].at)}</td><td>${esc(`${ev[0].code} ${ev[0].kind || ""}`)}</td>` +
+      `<td>${esc(`${au.event ? "한 번에" : "하나씩"} · ${ev[0].mode}${mosaic ? " · " + mosaic : ""}`)}</td><td>${esc(what)}</td>` +
+      `<td>${esc(result)}</td><td>${esc(time)}</td><td>$${(last.spent_usd || 0).toFixed(2)}</td><td>${esc(err)}</td></tr>`;
+  };
+  $("requests").innerHTML = "<tr><th>언제</th><th>코드</th><th>방식</th><th>영상</th><th>결과</th><th>걸린 시간</th><th>비용</th><th>오류</th></tr>" +
+    [...byJob.values()].reverse().map(line).join("");
 }
 // 의견: 최근 것부터. 어떤 작업·장면이었는지 같이 보인다(작업 id로 서버에서 찾아볼 수 있음, 새벽 4시 전까지)
 function showFeedback(list) {

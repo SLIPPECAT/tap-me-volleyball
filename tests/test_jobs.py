@@ -690,3 +690,20 @@ def test_highlight_numbers_do_not_repeat_when_made_at_once(job: jobs.Job) -> Non
                jobs.assign_number(third, third.scenes["2"])]
     assert numbers == [1, 2, 3]
     assert jobs.assign_number(second, second.scenes["1"]) == 2  # 다시 만들어도 그대로
+
+
+def test_request_log_keeps_who_when_what_but_no_names_and_drops_old_lines(tmp_path, monkeypatch) -> None:
+    # 11/1 사용자: 누가 언제 어떤 영상을 요청했는지 남긴다. 새벽 4시 삭제 뒤에도 남고 30일 지나면 지운다
+    import json
+    import time
+
+    monkeypatch.setattr(jobs, "JOBS_DIR", tmp_path)
+    job = jobs.Job(id="abc123def456", video="", match_name="우리팀 정모", code="ABCD1234")
+    old = {"at": "2026-09-01 10:00:00", "t": time.time() - 31 * 86400, "job": "old", "event": "upload"}
+    (tmp_path / "_requests.jsonl").write_text(json.dumps(old) + "\n")
+    jobs.log_request(job, "upload", "배너", size_mb=89.1)
+    rows = jobs.requests_log()
+    assert [r["job"] for r in rows] == ["abc123def456"]  # 30일 지난 줄은 지웠다
+    r = rows[0]
+    assert r["code"] == "ABCD" and r["kind"] == "배너" and r["event"] == "upload" and r["size_mb"] == 89.1
+    assert "우리팀" not in json.dumps(r, ensure_ascii=False)  # 경기 이름·파일 이름은 남기지 않는다

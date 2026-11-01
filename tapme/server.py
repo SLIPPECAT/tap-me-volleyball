@@ -17,6 +17,7 @@ import threading
 import time
 import traceback
 from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,10 @@ app = FastAPI(title="tap-me-volleyball", lifespan=_lifespan)
 # 테스트에서 가짜 API 클라이언트로 바꾼다
 client_factory: Callable[[], Any] = muse.client_from_env
 _step_lock = threading.Lock()
+# 한 번에 맡기기의 나 찾기를 랠리 몇 개씩 동시에(11/1, H-53): 랠리당 약 40초 대부분이 Meta 답을 기다리는 시간이다.
+# 만들기 예약은 지금처럼 랠리 순서대로 한다
+FIND_PARALLEL = 3
+_auto_lock = threading.Lock()  # job.auto는 통째로 저장되므로 동시에 고치는 스레드끼리 덮어쓰지 않게
 _SERVER_PATHS = ("sam_clip", "clip_video", "video")  # 서버 안 경로는 화면에 내보내지 않는다
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")  # 아이콘·홈 화면 설정
@@ -319,10 +324,36 @@ def _run(job_id: str, step: Callable[..., Any], *args: Any, **kwargs: Any) -> No
         job.save()
 
 
+def eval_rate(rate: str) -> float:
+    """ffprobe의 '30000/1001' 같은 fps."""
+    num, _, den = rate.partition("/")
+    return float(num) / float(den or 1) if float(den or 1) else 0.0
+
+
+def _kind(job: jobs.Job) -> str:
+    """요청 기록에 남길 코드 종류(배너·심사·운영자가 붙인 이름)."""
+    return access._load().get(job.code, {}).get("label", "") if job.code else ""
+
+
+def _log(job_id: str, event: str, since: float | None = None, **extra: Any) -> None:
+    """요청 기록 한 줄(jobs.log_request). 기록이 실패해도 처리는 멈추지 않는다."""
+    try:
+        job = jobs.load_job(job_id)
+        if since is not None:
+            extra["sec"] = round(time.time() - since)
+        jobs.log_request(job, event, _kind(job), **extra)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+
+
 def _run_scan(job_id: str, client: Any) -> None:
     """랠리 찾기는 장면 단계와 따로 돈다. 1시간 영상은 오래 걸려, 찾은 랠리부터 골라 장면을 만들 수 있게(10/30).
     같은 job.json은 Job.save가 서로 바꾼 항목만 합쳐 쓴다. 여러 사용자가 올리면 온 순서대로(jobs.SCAN_TURNS).
     못 찾고 끝나면 올리기 횟수를 돌려준다."""
+    t0 = time.time()
+    job = jobs.load_job(job_id)
+    size = Path(job.video).stat().st_size if job.video and Path(job.video).exists() else 0
+    _log(job_id, "upload", size_mb=round(size / 1e6, 1))
     with _Working(), jobs.SCAN_TURNS.turn(job_id):
         job = jobs.load_job(job_id)
         try:
@@ -336,6 +367,15 @@ def _run_scan(job_id: str, client: Any) -> None:
         if job.error:
             access.refund(job.code, "uploads")
         job.save()
+        try:  # 기록용(프레임 수는 세지 않는다 — render.probe는 1시간 영상이면 몇 분 걸린다)
+            out = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                           "stream=width,height,avg_frame_rate", "-of", "csv=p=0", job.video], timeout=30)
+            w, h, rate = out.decode().strip().split(",")[:3]
+            size, fps = f"{w}x{h}", round(eval_rate(rate))
+        except Exception:  # noqa: BLE001 - 기록용, 못 읽으면 비워 둔다
+            size, fps = "", 0
+        _log(job_id, "rallies", t0, status=job.status, error=job.error, duration_sec=round(job.duration_sec),
+             size=size, fps=fps, rallies=sum(bool(r.get("is_rally")) for r in job.rallies), unread=len(job.unread))
         if job.status == "rallies_ready":
             # 맡기기 설정은 올린 뒤 몇 초 늦게 저장된다 — 찾기를 시작할 때 읽은 job에는 없어 디스크에서 다시 본다(10/31 실기기)
             if jobs.load_job(job_id).auto:  # 한 번에 맡기기: 랠리 목록 알림 대신 바로 이어 만든다(끝나면 한 번 알린다)
@@ -357,6 +397,7 @@ def _run_highlight(job_id: str, index: int, *args: Any) -> None:
 
 
 def _make_highlight(job_id: str, index: int, *args: Any) -> None:
+    t0 = time.time()
     job = jobs.load_job(job_id)
     try:
         jobs.make_highlight(job, index, *args)
@@ -371,6 +412,10 @@ def _make_highlight(job_id: str, index: int, *args: Any) -> None:
         scene["status"] = "failed"
         access.refund(job.code, "highlights")
     job.save()
+    o = scene.get("options", {})
+    _log(job_id, "highlight", t0, rally=index, status=scene.get("status"), error=job.error if scene.get("status") != "done" else None,
+         auto=bool(job.auto), mosaic=(o.get("mosaic_team", "all") if o.get("face_mosaic", True) else "none") if o else None,
+         languages=o.get("languages"), zoom=o.get("zoom"))
     # 완성·실패를 알린다. 여러 장면을 예약했으면 남은 수도(다음 할 일: 열어서 저장·공유)
     left = sum(sc.get("status") in ("queued", "rendering") for k, sc in job.scenes.items() if k != str(index))
     if scene.get("status") in ("done", "failed") and not job.auto:
@@ -383,9 +428,10 @@ AUTO_EXTRA_USD = 1.8  # 나 찾기(랠리당 질문 최대 $0.05 + 선수 찾기
 
 
 def _auto_set(job_id: str, **kv: Any) -> jobs.Job:
-    job = jobs.load_job(job_id)
-    job.auto = {**job.auto, **kv}
-    job.save()
+    with _auto_lock:
+        job = jobs.load_job(job_id)
+        job.auto = {**job.auto, **kv}
+        job.save()
     return job
 
 
@@ -411,10 +457,14 @@ def _start_auto(job_id: str, client: Any) -> None:
         job.auto = {**job.auto, "state": "reference"}
         job.budget_usd = round((job.budget_usd or jobs.MAX_USD_PER_JOB) + AUTO_EXTRA_USD, 2)
         job.save()
+    o = job.auto.get("options", {})
+    _log(job_id, "auto", max=job.auto.get("max"), mosaic=o.get("mosaic_team", "all") if o.get("face_mosaic", True) else "none",
+         languages=o.get("languages", []), hint=bool(job.auto.get("hint")))
     threading.Thread(target=_run_auto, args=(job_id, client), daemon=True).start()
 
 
 def _run_auto(job_id: str, client: Any) -> None:
+    t0 = time.time()
     with _Working():
         try:
             _auto_steps(job_id, client)
@@ -423,6 +473,9 @@ def _run_auto(job_id: str, client: Any) -> None:
         except Exception as e:  # noqa: BLE001 - 서버가 죽지 않고 화면에 알린다
             traceback.print_exc()
             _auto_set(job_id, state="failed", error=f"처리 중 오류: {e}")
+    a = jobs.load_job(job_id).auto
+    _log(job_id, "auto_done", t0, state=a.get("state"), error=a.get("error"), rallies=a.get("total"),
+         found=len(a.get("found", {})), made=len(a.get("made", [])), review=len(a.get("review", [])))
 
 
 def _auto_render(job_id: str, index: int, frame: str, card: int, a: dict[str, Any], client: Any) -> None:
@@ -468,7 +521,25 @@ def _auto_steps(job_id: str, client: Any) -> None:
     made: list[int] = []
     review: list[int] = []
     _auto_set(job_id, state="finding", total=len(order), done=0)
-    for n, i in enumerate(order):
+
+    def find(i: int) -> dict[str, Any]:
+        # 나 찾기는 탭할 순간 사진만으로(랠리당 수십 초). 장면 전체 흐리기는 만들 때(_auto_render)
+        job = jobs.load_job(job_id)
+        if job.scenes.get(str(i), {}).get("status") not in ("frames_ready", "awaiting_tap", "failed"):
+            jobs.prepare_frames(job, i, client)
+        found = auto.find_me(job, i, ref, a.get("hint", ""), client)
+        with _auto_lock:
+            auto_now = jobs.load_job(job_id).auto
+            done = {**auto_now.get("found", {}), str(i): found}
+            job.auto = {**auto_now, "found": done, "done": sum(str(k) in done for k in order)}
+            job.save()
+        return found
+
+    known = job.auto.get("found", {})
+    pool = ThreadPoolExecutor(FIND_PARALLEL)
+    finding = {i: pool.submit(find, i) for i in order if str(i) not in known
+               and job.scenes.get(str(i), {}).get("status") not in ("done", "queued", "rendering")}
+    for i in order:
         if len(made) >= a["max"]:
             break
         job = jobs.load_job(job_id)
@@ -483,13 +554,7 @@ def _auto_steps(job_id: str, client: Any) -> None:
             _auto_render(job_id, i, found.get("frame", "score"), found["card"], a, client)
             continue
         if found is None:
-            # 나 찾기는 탭할 순간 사진만으로(랠리당 수십 초). 장면 전체 흐리기는 만들 때(_auto_render)
-            job = jobs.load_job(job_id)
-            if status not in ("frames_ready", "awaiting_tap", "failed"):
-                jobs.prepare_frames(job, i, client)
-            found = auto.find_me(job, i, ref, a.get("hint", ""), client)
-            job.auto = {**job.auto, "found": {**job.auto.get("found", {}), str(i): found}, "done": n + 1}
-            job.save()
+            found = finding[i].result()
         decision = auto.decide(found)
         if decision == "review":
             review.append(i)
@@ -509,6 +574,7 @@ def _auto_steps(job_id: str, client: Any) -> None:
         made.append(i)
         _auto_set(job_id, made=made)
         _auto_render(job_id, i, found.get("frame", "score"), found["card"], a, client)
+    pool.shutdown(cancel_futures=True)  # 다 만들었으면 아직 시작 안 한 나 찾기는 묻지 않는다
     _auto_set(job_id, state="making", made=made, review=review)
     while any(jobs.load_job(job_id).scenes.get(str(i), {}).get("status") in ("queued", "rendering") for i in made):
         time.sleep(10)
@@ -773,7 +839,7 @@ def admin_summary(x_admin_token: str = Header("")) -> dict[str, Any]:
             "waiting_scans": jobs.SCAN_TURNS.waiting(), "waiting_renders": jobs.RENDER_TURNS.waiting(),
             "codes": access._load(),
             "invites": {k: {f: e.get(f) for f in ("word", "issued", "max")} for k, e in access._load_invites().items()},
-            "feedback": jobs.feedback()}
+            "feedback": jobs.feedback(), "requests": jobs.requests_log()}
 
 
 class BrowserJobRequest(BaseModel):
@@ -808,6 +874,7 @@ def create_browser_job(req: BrowserJobRequest, request: Request) -> dict[str, An
         access.refund(req.code, "uploads")
         raise HTTPException(422, str(e)) from e
     jobs.count_upload()
+    _log(job.id, "upload", size_mb=round(req.size / 1e6, 1), duration_sec=round(req.duration))
     return {"id": job.id, "chunks": plan}
 
 

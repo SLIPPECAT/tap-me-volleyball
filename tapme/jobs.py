@@ -370,6 +370,36 @@ def feedback(limit: int = 100) -> list[dict[str, Any]]:
     return [json.loads(x) for x in lines[-limit:]][::-1]  # 최근 것부터
 
 
+# ---- 요청 기록(11/1 사용자): 누가(코드 앞 4자리·코드 종류) 언제 어떤 영상을 맡겨 어떻게 됐고 얼마나 걸렸는지 ----
+# 작업 폴더 밖(_requests.jsonl)이라 새벽 4시 삭제 뒤에도 남고, REQUEST_KEEP_DAYS가 지난 줄은 지운다.
+# 영상·사진·파일 이름·경기 이름·회원 번호는 담지 않는다. 의견(_feedback.jsonl)과는 작업 id로 잇는다
+REQUEST_KEEP_DAYS = 30
+
+
+def log_request(job: Job, event: str, kind: str = "", **extra: Any) -> None:
+    now = time.time()
+    entry = {"at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(now + KST)), "t": round(now), "job": job.id,
+             "event": event, "code": job.code[:4], "kind": kind, "mode": job.mode, "spent_usd": round(job.spent_usd, 4),
+             **extra}
+    path = JOBS_DIR / "_requests.jsonl"
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    with _lock:
+        lines = path.read_text().splitlines() if path.exists() else []
+        if lines and json.loads(lines[0]).get("t", now) < now - REQUEST_KEEP_DAYS * 86400:
+            keep = [x for x in lines if json.loads(x).get("t", now) >= now - REQUEST_KEEP_DAYS * 86400]
+            tmp = path.with_name(f"_requests.{threading.get_ident()}.tmp")
+            tmp.write_text("".join(x + "\n" for x in keep))
+            os.replace(tmp, path)
+        with path.open("a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def requests_log(limit: int = 300) -> list[dict[str, Any]]:
+    path = JOBS_DIR / "_requests.jsonl"
+    lines = path.read_text().splitlines() if path.exists() else []
+    return [json.loads(x) for x in lines[-limit:]][::-1]  # 최근 것부터
+
+
 def browser_chunks_received(job: Job) -> list[int]:
     """브라우저 방식: 서버가 받은 조각 번호(물었거나 묻는 중). 기기가 끊긴 뒤 빠진 조각부터 이어 처리한다."""
     d = job.dir / "rallies"
@@ -748,7 +778,7 @@ def scene_people(job: Job, scene: dict[str, Any], client: Any) -> dict[int, list
     """SAM 프레임별(렌더할 클립 기준) 모든 선수 상자. 모자이크에서 몸 위에 잡힌 옆얼굴을 거르는 데 쓴다(H-48).
     '몸 실루엣' 가리기와 같은 추적이라 장면마다 한 번(약 $0.024), 저장해 다시 쓴다."""
     sam_clip = Path(scene["sam_clip"])
-    by = track.boxes_by_frame(track.parse(_track_others(job, client, sam_clip).read_text()))
+    by = track.boxes_by_frame(track.parse_boxes(_track_others(job, client, sam_clip).read_text()))
     f0 = round((scene["clip"][0] - scene["window"][0]) * scene["sam_fps"])
     return {k - f0: v for k, v in by.items() if k >= f0}
 
@@ -827,8 +857,8 @@ def scene_teams(job: Job, scene: dict[str, Any], client: Any) -> dict[str, str]:
     if scene.get("teams") is not None:
         return scene["teams"]
     sam_clip = Path(scene["sam_clip"])
-    others = track.boxes_by_frame(track.parse(_track_others(job, client, sam_clip).read_text()))
-    me = track.boxes_by_frame(track.parse((sam_clip.parent / "me_wire.txt").read_text()))
+    others = track.boxes_by_frame(track.parse_boxes(_track_others(job, client, sam_clip).read_text()))
+    me = track.boxes_by_frame(track.parse_boxes((sam_clip.parent / "me_wire.txt").read_text()))
     s0, s1 = scene["span_frames"]
     gap = round(TEAM_GAP_SEC * scene["sam_fps"])
     tracks: dict[str, list[tuple[int, track.Box]]] = {}
@@ -969,7 +999,7 @@ def make_highlight(
     # 득점 순간에 가장 가까운 탭을 기준으로 이어서 보이는 구간을 잡는다
     score_frame = scene["tap_frames"]["score"]
     anchor = min((scene["tap_frames"][t[0]] for t in taps), key=lambda k: abs(k - score_frame))
-    span = track.visible_span(track.boxes_by_frame(track.parse(wire)), around=anchor, max_gap=fps)
+    span = track.visible_span(track.boxes_by_frame(track.parse_boxes(wire)), around=anchor, max_gap=fps)
     if span is None:
         scene["status"] = "awaiting_tap"
         job.save()

@@ -517,6 +517,60 @@ def test_judges_get_in_through_their_own_link(client: TestClient, monkeypatch: p
     assert entered.status_code == 200
 
 
+def test_one_shot_asks_several_rallies_at_once_but_queues_in_order(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # H-53(11/1): 나 찾기는 Meta 답을 기다리는 시간이 대부분이라 랠리 몇 개를 동시에 묻는다. 만들기 예약은 랠리 순서대로
+    import threading
+    import time as _time
+
+    from tapme import auto, push
+
+    def five_rallies(job: jobs.Job, client) -> None:
+        job.rallies = [{"index": i, "start_sec": 10.0 * i, "end_sec": 10.0 * i + 8, "point_sec": 10.0 * i + 7, "is_rally": True}
+                       for i in range(5)]
+        job.status = "rallies_ready"
+        job.save()
+
+    now, most, lock = [0], [0], threading.Lock()
+
+    def slow_find(job, i, ref, hint, c):
+        with lock:
+            now[0] += 1
+            most[0] = max(most[0], now[0])
+        _time.sleep(0.15 if i == 0 else 0.05)  # 첫 랠리가 늦게 끝나도 예약은 0부터
+        with lock:
+            now[0] -= 1
+        return {"frame": "score", "card": 1, "confidence": 0.9}
+
+    monkeypatch.setattr(jobs, "find_rallies", five_rallies)
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    monkeypatch.setattr(auto, "find_me", slow_find)
+    monkeypatch.setattr(jobs, "prepare_frames", lambda job, i, c: (job.scenes.__setitem__(str(i), {"index": i, "status": "frames_ready"}), job.save()))
+    rendered: list[int] = []
+
+    def fake_render(job_id: str, i: int, frame: str, card: int, a: dict, c) -> None:
+        rendered.append(i)
+        job = jobs.load_job(job_id)
+        job.scenes[str(i)]["status"] = "done"
+        job.save()
+
+    monkeypatch.setattr(server, "_auto_render", fake_render)
+    monkeypatch.setattr(jobs, "make_reel", lambda job, order: job.reel.update({"status": "done", "order": order}))
+    monkeypatch.setattr(push, "notify", lambda *a, **k: None)
+    job_id = _send(client).json()["id"]
+    assert client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "team": "초록"}).status_code == 200
+    for _ in range(100):
+        if client.get(f"/jobs/{job_id}").json()["auto"].get("state") == "done":
+            break
+        _time.sleep(0.05)
+    a = client.get(f"/jobs/{job_id}").json()["auto"]
+    assert a["state"] == "done" and a["done"] == 5 and sorted(a["found"]) == ["0", "1", "2", "3", "4"]
+    assert rendered == [0, 1, 2, 3, 4] and most[0] == server.FIND_PARALLEL
+    # 요청 기록(11/1): 올림 → 랠리 찾음 → 맡기기 → 끝, 끝 줄에 결과 수와 걸린 시간
+    events = [r for r in jobs.requests_log() if r["job"] == job_id][::-1]
+    assert [r["event"] for r in events] == ["upload", "rallies", "auto", "auto_done"]
+    assert events[-1]["made"] == 5 and events[-1]["found"] == 5 and "sec" in events[-1]
+
+
 def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     # 10/31 사용자: 처음에 영상·나·설정을 다 받아 맡기면 끝. 확실하면 만들고(0.7 이상), 애매하면 확인 묶음, 없으면 건너뛴다(H-46)
     import time as _time
@@ -622,7 +676,7 @@ def test_one_shot_starts_when_settings_arrive_during_the_scan_and_resumes_after_
         return jobs.load_job(job_id).auto
 
     job_id = _send(client).json()["id"]
-    assert wait_done(job_id)["made"] == [0, 1] and asked == [0, 1]
+    assert wait_done(job_id)["made"] == [0, 1] and sorted(asked) == [0, 1]  # 나 찾기는 동시에(H-53), 순서는 상관없다
     # 서버가 다시 켜진 경우: 랠리 0은 찾고 만든 뒤, 1은 찾기만 하고 멈췄다
     job = jobs.load_job(job_id)
     job.auto = {**job.auto, "state": "finding", "made": [0], "found": {"0": {"card": 0, "confidence": 0.9},

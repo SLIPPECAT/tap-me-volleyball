@@ -126,3 +126,12 @@ def test_no_players_found_is_an_empty_list(tmp_path: Path) -> None:
             return False
 
     assert track.detect_players(SimpleNamespace(responses=SimpleNamespace(stream=lambda **kw: Stream())), img) == []
+
+
+def test_box_only_parse_gives_the_same_boxes_without_decoding_masks() -> None:
+    # H-53(11/1): 공식 해석기는 마스크를 다 풀어 검사해 다른 선수 추적 하나에 30초 넘게 걸렸다. 상자만 필요하면 빈 마스크로
+    from meta_sam_parser import _mask_codec
+
+    assert track.boxes_by_frame(track.parse_boxes(WIRE)) == track.boxes_by_frame(track.parse(WIRE))
+    assert not track.parse_boxes(WIRE).diagnostics
+    assert _mask_codec._encode_raster(bytes([1]), 1, 1) in track._TINY_MASK  # 빈 마스크가 정식 인코딩이어야 받아 준다
