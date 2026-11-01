@@ -71,7 +71,6 @@ _step_lock = threading.Lock()
 # 한 번에 맡기기의 나 찾기를 랠리 몇 개씩 동시에(11/1, H-53): 랠리당 약 40초 대부분이 Meta 답을 기다리는 시간이다.
 # 만들기 예약은 지금처럼 랠리 순서대로 한다
 FIND_PARALLEL = 3
-_auto_lock = threading.Lock()  # job.auto는 통째로 저장되므로 동시에 고치는 스레드끼리 덮어쓰지 않게
 _SERVER_PATHS = ("sam_clip", "clip_video", "video")  # 서버 안 경로는 화면에 내보내지 않는다
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")  # 아이콘·홈 화면 설정
@@ -423,7 +422,8 @@ def _make_highlight(job_id: str, index: int, *args: Any) -> None:
 
 
 # ---- 한 번에 맡기기(tapme/auto.py, 10/31 사용자) ----
-_auto_lock = threading.Lock()
+_auto_lock = threading.Lock()  # job.auto는 통째로 저장되므로 동시에 고치는 스레드끼리 덮어쓰지 않게
+MAX_RESUMES = 2  # 서버가 다시 켜질 때 끝나지 않은 한 번에 맡기기를 이어 돌리는 횟수
 AUTO_EXTRA_USD = 1.8  # 나 찾기(랠리당 질문 최대 $0.05 + 선수 찾기 3장 × 20) + 하이라이트 추적(8개)만큼 작업 상한을 늘린다
 
 
@@ -443,7 +443,13 @@ def _resume_autos() -> None:
         except (KeyError, ValueError):
             continue
         if job.auto.get("state") in ("reference", "finding", "making"):
-            _auto_set(job.id, state="waiting")  # 중간에 멈춘 것: 처음부터 다시 돌되 찾은 것·예약한 것은 건너뛴다
+            # 중간에 멈춘 것: 처음부터 다시 돌되 찾은 것·예약한 것은 건너뛴다. 그 작업 때문에 서버가 죽었으면(메모리 부족)
+            # 이어 돌리다 또 죽기를 되풀이했다(11/1 H-53 C1) → MAX_RESUMES번까지만
+            n = job.auto.get("resumes", 0) + 1
+            if n > MAX_RESUMES:
+                _auto_set(job.id, state="failed", error="서버가 여러 번 다시 켜져 멈췄어요. 영상을 다시 맡겨 주세요")
+                continue
+            _auto_set(job.id, state="waiting", resumes=n)
         if job.auto.get("state") in ("waiting", "reference", "finding", "making"):
             _start_auto(job.id, client_factory())
 
@@ -454,8 +460,9 @@ def _start_auto(job_id: str, client: Any) -> None:
         job = jobs.load_job(job_id)
         if job.auto.get("state") != "waiting" or job.status != "rallies_ready":
             return
+        if not job.auto.get("resumes"):  # 다시 켜져 이을 때마다 한도가 늘지 않게(처음 한 번만)
+            job.budget_usd = round((job.budget_usd or jobs.MAX_USD_PER_JOB) + AUTO_EXTRA_USD, 2)
         job.auto = {**job.auto, "state": "reference"}
-        job.budget_usd = round((job.budget_usd or jobs.MAX_USD_PER_JOB) + AUTO_EXTRA_USD, 2)
         job.save()
     o = job.auto.get("options", {})
     _log(job_id, "auto", max=job.auto.get("max"), mosaic=o.get("mosaic_team", "all") if o.get("face_mosaic", True) else "none",

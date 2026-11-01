@@ -713,6 +713,17 @@ def test_one_shot_starts_when_settings_arrive_during_the_scan_and_resumes_after_
     server._resume_autos()
     a = wait_done(job_id)
     assert a["made"] == [0, 1] and asked == [] and rendered == [1]
+    # 그 작업 때문에 서버가 계속 죽으면(메모리 부족) 이어 돌리기를 되풀이하지 않고, 이을 때마다 비용 한도를 늘리지 않는다
+    budget = jobs.load_job(job_id).budget_usd
+    for _ in range(server.MAX_RESUMES + 1):
+        job = jobs.load_job(job_id)
+        job.auto = {**job.auto, "state": "finding"}
+        job.save()
+        server._resume_autos()
+        _time.sleep(0.2)
+    a = jobs.load_job(job_id).auto
+    assert a["state"] == "failed" and a["resumes"] == server.MAX_RESUMES
+    assert jobs.load_job(job_id).budget_usd == budget
 
 
 def test_judge_codes_skip_the_daily_limit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
