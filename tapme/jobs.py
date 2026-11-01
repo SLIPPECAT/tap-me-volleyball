@@ -25,6 +25,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
 
+import cv2
+import numpy as np
 from PIL import Image, ImageDraw
 
 from tapme import anonymize, muse, rally, rally_filter, render, scan, score, track
@@ -624,9 +626,9 @@ def player_cards(job: Job, index: int, kind: str, client: Any) -> list[list[floa
     return scene["players"][kind]
 
 
-def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
+def _score_window(job: Job, index: int, client: Any) -> tuple[float, float, float, dict[str, Any]]:
+    """(득점 초, 장면 시작 초, 장면 길이, 득점 답). 훑어보기가 득점 순간을 못 찾은 랠리만 Muse에 묻는다."""
     r = job.rallies[index]
-    job.scenes[str(index)] = {"index": index, "status": "preparing"}
     if r.get("point_sec") is not None:  # 훑어보기가 이미 득점 순간을 찾았다(다시 묻지 않는다)
         answer = {"score_time_sec": r["point_sec"], "confidence": r.get("confidence"), "from": "scan"}
         score_sec = float(r["point_sec"])
@@ -637,21 +639,71 @@ def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
         job.spent_usd += reply.usd
         score_sec = r["clip_start_sec"] + float(answer["score_time_sec"])
     start = max(0.0, score_sec - WINDOW_BEFORE_SEC)
-    duration = score_sec + WINDOW_AFTER_SEC - start
+    return score_sec, start, score_sec + WINDOW_AFTER_SEC - start, answer
+
+
+def _tap_frame_numbers(score_sec: float, start: float, n: int) -> dict[str, int]:
+    # 득점 근처 장면에서 탭하면 하이라이트의 핵심은 맞는 사람을 잡는다(실험 H-25)
+    return {kind: 0 if before is None else max(0, min(n - 1, round((score_sec - before - start) * SAM_FPS)))
+            for kind, before in TAP_MOMENTS.items()}
+
+
+def _blurred_still(video: Path, sec: float, out: Path) -> None:
+    """원본의 한 프레임을 얼굴 흐림본(Meta로 보내는 것과 같은 검출)으로 저장한다. 얼굴이 그대로인 사진은 남기지 않는다."""
+    png = subprocess.check_output(["ffmpeg", "-loglevel", "error", "-ss", f"{max(0.0, sec):.3f}", "-i", str(video),
+                                   "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"])
+    frame = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+    boxes = anonymize.detect_faces(frame, anonymize.load_detector(), anonymize.load_profile_detector(),
+                                   anonymize.FAST_PROFILE_SCALE_FACTOR)
+    cv2.imwrite(str(out), anonymize.pixelate_boxes(frame, boxes), [cv2.IMWRITE_JPEG_QUALITY, 92])
+
+
+def prepare_frames(job: Job, index: int, client: Any) -> dict[str, Any]:
+    """한 번에 맡기기의 나 찾기용: 탭할 순간(TAP_MOMENTS) 사진만 얼굴을 흐려 만든다(몇 초). 장면 전체(12초) 흐리기는 만들기로
+    정한 랠리만 prepare_scene이 한다 — 랠리마다 장면 전체를 먼저 흐려 나 찾기가 랠리당 약 2분이었다(H-49, 11/1)."""
+    score_sec, start, duration, answer = _score_window(job, index, client)
+    scene_dir = job.dir / f"scene{index:02d}"
+    scene_dir.mkdir(exist_ok=True)
+    frames = _tap_frame_numbers(score_sec, start, round(duration * SAM_FPS))
+    video, offset = _source(job, index, start)
+    for kind, k in frames.items():  # sam_clip의 k번째 프레임과 같은 순간(10fps)
+        _blurred_still(video, offset + k / SAM_FPS, scene_dir / f"tap_{kind}.jpg")
+    scene = {"index": index, "status": "frames_ready", "score_sec": round(score_sec, 2),
+             "window": [round(start, 2), round(start + duration, 2)], "score_answer": answer,
+             "sam_clip": str(scene_dir / "sam_blur.mp4"), "sam_fps": SAM_FPS, "tap_frames": frames, "players": {}}
+    job.scenes[str(index)] = scene
+    job.save()
+    return scene
+
+
+def prepare_scene(job: Job, index: int, client: Any) -> dict[str, Any]:
+    """탭할 장면 준비: 득점 앞뒤 장면을 얼굴 흐림본(SAM용 10fps)으로 자르고 탭할 순간 사진을 뽑는다.
+    한 번에 맡기기가 탭할 순간 사진(prepare_frames)을 먼저 만들었으면 그 사진·고른 선수 카드를 그대로 쓴다."""
+    old = job.scenes.get(str(index)) or {}
+    reuse = bool(old.get("tap_frames")) and not Path(old.get("sam_clip", "")).exists()
+    if reuse:
+        score_sec, answer = float(old["score_sec"]), old["score_answer"]
+        start, duration = old["window"][0], old["window"][1] - old["window"][0]
+    else:
+        job.scenes[str(index)] = {"index": index, "status": "preparing"}
+        score_sec, start, duration, answer = _score_window(job, index, client)
     scene_dir = job.dir / f"scene{index:02d}"
     scene_dir.mkdir(exist_ok=True)
     job.step("blur")
     sam_clip = _cut_blurred(*_source(job, index, start), duration, scene_dir / "sam_blur.mp4", SAM_FPS)
-    n = render.probe(sam_clip)[3]
-    # 득점 근처 장면에서 탭하면 하이라이트의 핵심은 맞는 사람을 잡는다(실험 H-25). 장면 사진은 로컬, 무료
-    frames = {kind: 0 if before is None else max(0, min(n - 1, round((score_sec - before - start) * SAM_FPS)))
-              for kind, before in TAP_MOMENTS.items()}
-    for kind, k in frames.items():
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(sam_clip), "-vf", f"select=eq(n\\,{k})",
-                        "-frames:v", "1", str(scene_dir / f"tap_{kind}.jpg")], check=True)
-    scene = {"index": index, "status": "awaiting_tap", "score_sec": round(score_sec, 2),
+    if reuse:
+        frames = old["tap_frames"]
+    else:
+        frames = _tap_frame_numbers(score_sec, start, render.probe(sam_clip)[3])
+        for kind, k in frames.items():  # 장면 사진은 로컬, 무료
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(sam_clip), "-vf", f"select=eq(n\\,{k})",
+                            "-frames:v", "1", str(scene_dir / f"tap_{kind}.jpg")], check=True)
+    # 한 번에 맡기기가 이미 예약한 장면(queued)은 그대로 둔다
+    status = old["status"] if reuse and old.get("status") == "queued" else "awaiting_tap"
+    scene = {"index": index, "status": status, "score_sec": round(score_sec, 2),
              "window": [round(start, 2), round(start + duration, 2)], "score_answer": answer,
-             "sam_clip": str(sam_clip), "sam_fps": SAM_FPS, "tap_frames": frames, "players": {}}
+             "sam_clip": str(sam_clip), "sam_fps": SAM_FPS, "tap_frames": frames,
+             "players": old.get("players", {}) if reuse else {}}
     job.scenes[str(index)] = scene
     job.progress = {}
     job.save()

@@ -534,7 +534,8 @@ def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeyp
     answers = {0: {"frame": "score", "card": 2, "confidence": 0.9}, 1: {"frame": "b2", "card": 1, "confidence": 0.5},
                2: {"frame": "score", "card": -1, "confidence": 0.9}, 3: {"frame": "start", "card": 0, "confidence": 0.95}}
     monkeypatch.setattr(auto, "find_me", lambda job, i, ref, hint, c: answers[i])
-    monkeypatch.setattr(jobs, "prepare_scene", lambda job, i, c: job.scenes.__setitem__(str(i), {"index": i, "status": "awaiting_tap"}))
+    # 나 찾기는 세 순간 사진만(H-49 뒤): 장면 전체 준비는 만들 때(_auto_render)
+    monkeypatch.setattr(jobs, "prepare_frames", lambda job, i, c: job.scenes.__setitem__(str(i), {"index": i, "status": "frames_ready"}))
     rendered: list[tuple[int, int, str]] = []
 
     def fake_render(job_id: str, i: int, frame: str, card: int, a: dict, c) -> None:
@@ -599,9 +600,11 @@ def test_one_shot_starts_when_settings_arrive_during_the_scan_and_resumes_after_
         return {"card": 0, "confidence": 0.9}
 
     monkeypatch.setattr(auto, "find_me", find_me)
-    monkeypatch.setattr(jobs, "prepare_scene", lambda job, i, c: job.scenes.__setitem__(str(i), {"index": i, "status": "awaiting_tap"}))
+    monkeypatch.setattr(jobs, "prepare_frames", lambda job, i, c: job.scenes.__setitem__(str(i), {"index": i, "status": "frames_ready"}))
+    rendered: list[int] = []
 
     def fake_render(job_id: str, i: int, frame: str, card: int, a: dict, c) -> None:
+        rendered.append(i)
         job = jobs.load_job(job_id)
         job.scenes[str(i)]["status"] = "done"
         job.save()
@@ -624,12 +627,21 @@ def test_one_shot_starts_when_settings_arrive_during_the_scan_and_resumes_after_
     job = jobs.load_job(job_id)
     job.auto = {**job.auto, "state": "finding", "made": [0], "found": {"0": {"card": 0, "confidence": 0.9},
                                                                       "1": {"card": 2, "confidence": 0.8}}}
-    job.scenes["1"]["status"] = "awaiting_tap"
+    job.scenes["1"]["status"] = "frames_ready"
     job.save()
-    asked.clear()
+    asked.clear(); rendered.clear()
     server._resume_autos()
     a = wait_done(job_id)
-    assert a["made"] == [0, 1] and asked == []  # 찾은 것은 다시 묻지 않고, 만든 것은 다시 만들지 않는다
+    assert a["made"] == [0, 1] and asked == [] and rendered == [1]  # 찾은 것은 다시 묻지 않고, 만든 것은 다시 만들지 않는다
+    # 예약해 둔 채(queued) 꺼진 경우: 만들던 스레드가 없으니 다시 만든다(코드 사용 수는 다시 세지 않는다)
+    job = jobs.load_job(job_id)
+    job.auto = {**job.auto, "state": "making"}
+    job.scenes["1"]["status"] = "queued"
+    job.save()
+    rendered.clear()
+    server._resume_autos()
+    a = wait_done(job_id)
+    assert a["made"] == [0, 1] and asked == [] and rendered == [1]
 
 
 def test_judge_codes_skip_the_daily_limit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

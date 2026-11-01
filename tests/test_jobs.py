@@ -195,6 +195,27 @@ def test_team_mosaic_asks_two_moments_and_clears_only_agreed_team(job: jobs.Job,
     assert scene["teams"] == {"5": "mine", "6": "unknown"} and cleared[-1] == set()
 
 
+def test_finding_me_needs_only_three_blurred_stills_and_the_scene_reuses_them(
+        job: jobs.Job, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # H-49 뒤: 나 찾기에 장면 전체(12초) 흐리기를 먼저 해 랠리당 약 2분 → 탭할 순간 사진만 흐려 묻고, 만들 때 장면 전체
+    job.video = str(_video(tmp_path / "source.mp4", 30, seconds=20.0))
+    monkeypatch.setattr(score, "ask_score_time", lambda c, clip: ({"score_time_sec": 8.5}, _reply()))
+    blurred: list[int] = []
+    real_pixelate = jobs.anonymize.pixelate_boxes
+    monkeypatch.setattr(jobs.anonymize, "pixelate_boxes", lambda f, b, **k: (blurred.append(len(b)), real_pixelate(f, b, **k))[1])
+    scene = jobs.prepare_frames(job, 0, client=None)
+    assert scene["status"] == "frames_ready" and len(blurred) == len(jobs.TAP_KINDS)  # 탭할 순간 사진 모두 흐리기를 거쳤다
+    assert all((job.dir / "scene00" / f"tap_{k}.jpg").exists() for k in jobs.TAP_KINDS)
+    assert not Path(scene["sam_clip"]).exists()  # 장면 전체는 아직
+    assert scene["tap_frames"]["score"] == round((scene["score_sec"] - scene["window"][0]) * jobs.SAM_FPS)
+    jobs.player_cards(job, 0, "score", client=None)  # 나 찾기에서 고른 선수 카드
+    job.scenes["0"]["status"] = "queued"  # 한 번에 맡기기가 만들기로 예약
+    again = jobs.prepare_scene(job, 0, client=None)
+    assert Path(again["sam_clip"]).exists() and again["status"] == "queued"
+    assert again["tap_frames"] == scene["tap_frames"] and again["players"]["score"]  # 같은 사진·카드(추적 프롬프트가 맞게)
+    assert again["window"] == scene["window"] and again["score_sec"] == scene["score_sec"]
+
+
 def test_load_job_rejects_path_tricks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(jobs, "JOBS_DIR", tmp_path)
     with pytest.raises(KeyError):

@@ -552,7 +552,7 @@ function render(s) {
   const scene = s.scenes[String(state.rally)];
   // 만드는 동안(5분 남짓) 다른 랠리를 고를 수 있다고 알린다(10/31)
   $("wait-other-box").hidden = !(scene && ["queued", "rendering"].includes(scene.status));
-  if (!scene || scene.status === "preparing") {
+  if (!scene || scene.status === "preparing" || scene.status === "frames_ready") {
     show("s-tap"); $("tap-status").textContent = s.error ? "" : t(state.segUploading === state.rally ? "segUploading" : "preparing"); $("tap-box").hidden = true;
   } else if (scene.status === "awaiting_tap" || scene.status === "failed") {
     show("s-tap"); renderTap();
@@ -661,7 +661,14 @@ function renderAuto(s) {
     ...(running ? [] : review.map((i) => {
       const r = s.rallies.find((x) => x.index === i) || {};
       const b = Object.assign(document.createElement("button"), { textContent: t("autoReview", { t: fmt(r.point_sec ?? r.start_sec ?? 0) }) });
-      b.onclick = () => { state.rally = i; setHash(); startPolling(); };
+      b.onclick = async () => {
+        state.rally = i; setHash();
+        // 한 번에 맡기기는 나 찾기에 순간 사진만 만들었다(frames_ready) → 탭 화면 전에 장면 전체를 준비한다
+        if ((s.scenes[String(i)] || {}).status === "frames_ready") {
+          try { await prepareRally(i); } catch (e) { setError(e.message); }
+        }
+        startPolling();
+      };
       return b;
     })));
 }
@@ -743,7 +750,7 @@ function renderRallies(s) {
       // 이미 준비했거나 만든 장면은 그대로 연다. 다시 준비하면 돈이 또 들고 결과가 지워진다
       const sc = state.last && state.last.scenes[String(r.index)];
       // 미리 준비 중(preparing)이면 기다리기만 한다. 준비하다 실패했을 때만 다시 요청
-      if (!sc || (sc.status === "preparing" && state.last.error)) {
+      if (!sc || sc.status === "frames_ready" || (sc.status === "preparing" && state.last.error)) {
         try { await prepareRally(r.index); } catch (e) { setError(e.message); }
       }
       startPolling();

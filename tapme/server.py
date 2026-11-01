@@ -426,12 +426,31 @@ def _run_auto(job_id: str, client: Any) -> None:
 
 
 def _auto_render(job_id: str, index: int, frame: str, card: int, a: dict[str, Any], client: Any) -> None:
-    """화면의 일괄 만들기와 같은 길로 예약한다(나를 찾은 장면의 선수 카드)."""
+    """화면의 일괄 만들기와 같은 길로 예약한다(나를 찾은 장면의 선수 카드). 나 찾기는 탭할 순간 사진만 썼으니
+    장면 전체(SAM용 흐림본)가 없으면 먼저 준비한다 — 하나씩(_step_lock), CPU를 많이 쓴다."""
     o = a.get("options", {})
-    threading.Thread(target=_run_highlight, daemon=True, args=(
-        job_id, index, [(frame, card)], a["team"], o.get("languages", []), o.get("role", ""),
-        o.get("privacy", render.DEFAULT_PRIVACY), o.get("zoom", render.DEFAULT_ZOOM), client,
-        o.get("face_mosaic", True), o.get("fps", 0), o.get("mosaic_team", "all"))).start()
+    args = (job_id, index, [(frame, card)], a["team"], o.get("languages", []), o.get("role", ""),
+            o.get("privacy", render.DEFAULT_PRIVACY), o.get("zoom", render.DEFAULT_ZOOM), client,
+            o.get("face_mosaic", True), o.get("fps", 0), o.get("mosaic_team", "all"))
+
+    def go() -> None:
+        with _Working():
+            if not Path(jobs.load_job(job_id).scenes[str(index)].get("sam_clip", "")).exists():
+                with _step_lock:
+                    job = jobs.load_job(job_id)
+                    try:
+                        jobs.prepare_scene(job, index, client)
+                    except Exception as e:  # noqa: BLE001 - 그 장면만 실패로 두고 나머지는 계속
+                        traceback.print_exc()
+                        job = jobs.load_job(job_id)
+                        job.scenes[str(index)]["status"] = "failed"
+                        job.error = f"처리 중 오류: {e}"
+                        job.save()
+                        access.refund(job.code, "highlights")
+                        return
+            _run_highlight(*args)
+
+    threading.Thread(target=go, daemon=True).start()
 
 
 def _active(job_id: str) -> int:
@@ -453,18 +472,24 @@ def _auto_steps(job_id: str, client: Any) -> None:
         if len(made) >= a["max"]:
             break
         job = jobs.load_job(job_id)
-        if job.scenes.get(str(i), {}).get("status") in ("queued", "rendering", "done"):  # 다시 켜졌을 때: 이미 예약·완성
+        status = job.scenes.get(str(i), {}).get("status")
+        found = job.auto.get("found", {}).get(str(i))
+        if status == "done":  # 다시 켜졌을 때: 이미 완성
             made.append(i)
             continue
-        found = job.auto.get("found", {}).get(str(i))
+        if status in ("queued", "rendering") and found:
+            # 다시 켜졌을 때: 예약했던 장면을 만들던 스레드는 꺼졌다 → 다시 만든다(코드 사용 수는 이미 셌다)
+            made.append(i)
+            _auto_render(job_id, i, found.get("frame", "score"), found["card"], a, client)
+            continue
         if found is None:
-            with _step_lock:
-                job = jobs.load_job(job_id)
-                if job.scenes.get(str(i), {}).get("status") not in ("awaiting_tap", "done", "failed"):
-                    jobs.prepare_scene(job, i, client)
-                found = auto.find_me(job, i, ref, a.get("hint", ""), client)
-                job.auto = {**job.auto, "found": {**job.auto.get("found", {}), str(i): found}, "done": n + 1}
-                job.save()
+            # 나 찾기는 탭할 순간 사진만으로(랠리당 수십 초). 장면 전체 흐리기는 만들 때(_auto_render)
+            job = jobs.load_job(job_id)
+            if status not in ("frames_ready", "awaiting_tap", "failed"):
+                jobs.prepare_frames(job, i, client)
+            found = auto.find_me(job, i, ref, a.get("hint", ""), client)
+            job.auto = {**job.auto, "found": {**job.auto.get("found", {}), str(i): found}, "done": n + 1}
+            job.save()
         decision = auto.decide(found)
         if decision == "review":
             review.append(i)
@@ -1024,8 +1049,9 @@ def prepare(job_id: str, index: int, background: BackgroundTasks, ahead: bool = 
         background.add_task(_run, job_id, jobs.prepare_scene, index, client_factory())
         return {"status": "preparing"}
     failed_before = scene is not None and scene.get("status") == "preparing" and job.error
-    if scene is not None and not failed_before:
+    if scene is not None and not failed_before and scene.get("status") != "frames_ready":
         # 다시 준비하면 Muse 비용이 또 들고 만든 결과가 지워진다. 앞서 준비하다 실패했을 때만 다시 한다
+        # (한 번에 맡기기가 순간 사진만 만든 장면 frames_ready는 이어서 장면 전체를 준비한다)
         raise HTTPException(409, "이미 준비했거나 준비 중인 장면이다")
     background.add_task(_run, job_id, jobs.prepare_scene, index, client_factory())
     return {"status": "preparing"}
