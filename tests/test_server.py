@@ -139,6 +139,7 @@ def test_reel_only_from_finished_scenes(client: TestClient) -> None:
     job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
     assert client.post(f"/jobs/{job_id}/reel", json={"order": [0]}).status_code == 409
     assert client.post(f"/jobs/{job_id}/reel", json={"order": []}).status_code == 422
+    assert client.post(f"/jobs/{job_id}/reel", json={"order": [0], "style": "long"}).status_code == 422  # full · short만
     assert client.get(f"/jobs/{job_id}/reel/video").status_code == 404
     assert client.get(f"/jobs/{job_id}").json()["reel"] == {}
 
@@ -599,7 +600,7 @@ def test_one_shot_asks_several_rallies_at_once_but_queues_in_order(client: TestC
         job.save()
 
     monkeypatch.setattr(server, "_auto_render", fake_render)
-    monkeypatch.setattr(jobs, "make_reel", lambda job, order: job.reel.update({"status": "done", "order": order}))
+    monkeypatch.setattr(jobs, "make_reel", lambda job, order, style="full": job.reel.update({"status": "done", "order": order, "style": style}))
     monkeypatch.setattr(push, "notify", lambda *a, **k: None)
     job_id = _send(client).json()["id"]
     assert client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "team": "초록"}).status_code == 200
@@ -643,7 +644,7 @@ def test_one_shot_makes_every_found_rally_without_using_code_highlights_and_asks
         job.save()
 
     monkeypatch.setattr(server, "_auto_render", fake_render)
-    monkeypatch.setattr(jobs, "make_reel", lambda job, order: job.reel.update({"status": "done", "order": order}))
+    monkeypatch.setattr(jobs, "make_reel", lambda job, order, style="full": job.reel.update({"status": "done", "order": order, "style": style}))
     monkeypatch.setattr(push, "notify", lambda *a, **k: None)
     monkeypatch.setattr(access, "REQUIRED", True)
 
@@ -670,6 +671,7 @@ def test_one_shot_makes_every_found_rally_without_using_code_highlights_and_asks
     monkeypatch.setattr(jobs, "side_of", lambda boxes, card: "near")
     r = run(5)
     assert r["auto"]["made"] == [0, 1, 2, 3, 4] and access.LIMITS["highlights"] < 5
+    assert jobs.load_job(r["id"]).reel == {"status": "done", "order": [0, 1, 2, 3, 4], "style": "full"}  # 모음 기본은 랠리 전체
     assert sorted(served) == [0, 1, 2, 3, 4]  # 득점 팀용 서브 쪽도 랠리마다(H-55)
     assert client.get(f"/jobs/{r['id']}").json()["winners"] == {"0": "mine", "1": "opponent", "2": "mine", "3": "opponent"}
     assert r["code"]["highlights"] == 0 and r["code"]["uploads"] == 1  # 영상 올리기만 센다
@@ -706,7 +708,7 @@ def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeyp
         job.save()
 
     monkeypatch.setattr(server, "_auto_render", fake_render)
-    monkeypatch.setattr(jobs, "make_reel", lambda job, order: job.reel.update({"status": "done", "order": order}))
+    monkeypatch.setattr(jobs, "make_reel", lambda job, order, style="full": job.reel.update({"status": "done", "order": order, "style": style}))
     sent: list[tuple[str, dict]] = []
     monkeypatch.setattr(push, "notify", lambda job_id, kind, url, **v: sent.append((kind, v)))
 
@@ -771,7 +773,7 @@ def test_one_shot_starts_when_settings_arrive_during_the_scan_and_resumes_after_
         job.save()
 
     monkeypatch.setattr(server, "_auto_render", fake_render)
-    monkeypatch.setattr(jobs, "make_reel", lambda job, order: job.reel.update({"status": "done", "order": order}))
+    monkeypatch.setattr(jobs, "make_reel", lambda job, order, style="full": job.reel.update({"status": "done", "order": order, "style": style}))
     monkeypatch.setattr(push, "notify", lambda *a, **k: None)
 
     def wait_done(job_id: str) -> dict:

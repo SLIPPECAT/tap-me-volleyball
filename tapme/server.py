@@ -224,6 +224,7 @@ class RenderOptions(BaseModel):
     privacy: str = render.DEFAULT_PRIVACY
     zoom: float = render.DEFAULT_ZOOM
     fps: int = Field(default=0, description="결과 영상 fps: 0이면 원본 그대로, 30이면 30fps까지(60fps 원본은 렌더가 약 절반)")
+    reel: str = Field(default="full", pattern="^(full|short)$", description="한 번에 맡기기의 모음 영상: full 랠리 전체 · short 득점 앞뒤")
 
     @field_validator("languages")
     @classmethod
@@ -271,6 +272,7 @@ class RenderOptions(BaseModel):
 
 class ReelRequest(BaseModel):
     order: list[int] = Field(min_length=1, max_length=10, description="모을 장면(랠리 번호)을 보여 줄 순서대로")
+    style: str = Field(default="full", pattern="^(full|short)$", description="full: 랠리 전체 · short: 득점 앞뒤 9초")
 
 
 class Tap(BaseModel):
@@ -604,7 +606,7 @@ def _auto_steps(job_id: str, client: Any) -> None:
     if len(done) >= 2:  # 득점 장면만 모은 영상도 같이(시간 순)
         job.reel = {"status": "rendering", "order": done}
         job.save()
-        _run(job_id, jobs.make_reel, done)
+        _run(job_id, jobs.make_reel, done, a.get("options", {}).get("reel", "full"))
     _auto_set(job_id, state="done")
     if done:
         push.notify(job_id, "auto_done", f"/#job={job_id}", n=len(done), review=len(review))
@@ -1288,7 +1290,7 @@ def reel(job_id: str, req: ReelRequest, background: BackgroundTasks) -> dict[str
         raise HTTPException(409, "모음 영상을 만드는 중이다")
     job.reel = {"status": "rendering", "order": req.order}
     job.save()
-    background.add_task(_run, job_id, jobs.make_reel, req.order)
+    background.add_task(_run, job_id, jobs.make_reel, req.order, req.style)
     return {"status": "rendering"}
 
 

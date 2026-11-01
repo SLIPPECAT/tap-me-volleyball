@@ -62,7 +62,9 @@ TAP_KINDS = tuple(TAP_MOMENTS)
 # 쓰지 않음). '나'를 확실히 잡은 구간이 이보다 짧으면 그 밖에서는 링·확대 따라가기를 하지 않는다
 CLIP_MIN_BEFORE_SEC = 4.0
 CLIP_MIN_AFTER_SEC = 4.0
-REEL_BEFORE_SEC = 5.0  # 모음 영상에는 장면마다 득점 5초 전~4초 뒤만. 3장면이면 약 27초
+# 모음 영상(11/2 사용자): full = 장면(랠리 전체)을 그대로 잇는다(기본, 하이라이트와 같은 길이) · short = 득점 5초 전~4초 뒤만
+REEL_STYLES = ("full", "short")
+REEL_BEFORE_SEC = 5.0
 REEL_AFTER_SEC = 4.0
 _lock = threading.Lock()
 
@@ -1152,8 +1154,8 @@ def _has_audio(video: Path) -> bool:
     return bool(out.strip())
 
 
-def make_reel(job: Job, order: list[int]) -> dict[str, Any]:
-    """완성된 장면들을 고른 순서대로, 득점 앞뒤만 잘라 한 편으로 잇는다. 이미 렌더한 영상만 써서 API 비용이 없다."""
+def make_reel(job: Job, order: list[int], style: str = "full") -> dict[str, Any]:
+    """완성된 장면들을 고른 순서대로 한 편으로 잇는다(style: REEL_STYLES). 이미 렌더한 영상만 써서 API 비용이 없다."""
     scenes = [job.scenes.get(str(i), {}) for i in order]
     if not scenes or any(s.get("status") != "done" for s in scenes):
         raise ValueError("완성된 장면만 모을 수 있다")
@@ -1167,8 +1169,9 @@ def make_reel(job: Job, order: list[int]) -> dict[str, Any]:
     for k, s in enumerate(scenes):
         clip = s.get("clip", s["window"])  # 장면 영상은 '나'가 이어서 보이는 구간만 담는다
         at = s["score_sec"] - clip[0]  # 장면 영상 안에서 득점 시각
-        start = max(0.0, at - REEL_BEFORE_SEC)
-        end = min(clip[1] - clip[0], at + REEL_AFTER_SEC)
+        start, end = 0.0, clip[1] - clip[0]
+        if style == "short":
+            start, end = max(0.0, at - REEL_BEFORE_SEC), min(end, at + REEL_AFTER_SEC)
         inputs += ["-i", s["video"]]
         parts.append(f"[{k}:v]trim={start:.3f}:{end:.3f},setpts=PTS-STARTPTS[v{k}];")
         if audio:
@@ -1179,6 +1182,6 @@ def make_reel(job: Job, order: list[int]) -> dict[str, Any]:
     maps = ["-map", "[v]"] + (["-map", "[a]", "-c:a", "aac"] if audio else [])
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", graph, *maps,
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)], check=True)
-    job.reel = {"status": "done", "order": order, "video": str(out)}
+    job.reel = {"status": "done", "order": order, "style": style, "video": str(out)}
     job.save()
     return job.reel

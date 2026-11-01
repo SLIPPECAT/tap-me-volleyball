@@ -267,12 +267,17 @@ def test_reel_joins_scenes_around_each_score(job: jobs.Job, tmp_path: Path) -> N
         "0": {"status": "done", "score_sec": 12.5, "window": [5.5, 15.5], "video": str(_scene_video(tmp_path / "a.mp4", 10, "red"))},
         "1": {"status": "done", "score_sec": 3.0, "window": [0.0, 6.0], "video": str(_scene_video(tmp_path / "b.mp4", 6, "blue"))},
     }
-    out = jobs.make_reel(job, [1, 0])
-    w, h, fps, n = __import__("tapme.render", fromlist=["probe"]).probe(Path(out["video"]))
+    probe = __import__("tapme.render", fromlist=["probe"]).probe
+    out = jobs.make_reel(job, [1, 0], "short")
+    w, h, fps, n = probe(Path(out["video"]))
     assert (w, h, round(fps)) == (90, 160, 30)
     assert abs(n / fps - 14.0) < 0.2  # 6초 + 8초
-    assert out["order"] == [1, 0]  # 사용자가 고른 순서
+    assert out["order"] == [1, 0] and out["style"] == "short"  # 사용자가 고른 순서
     assert jobs.load_job(job.id).reel["status"] == "done"
+    # 기본은 랠리 전체(11/2 사용자: 하이라이트와 같은 길이): 장면 영상을 자르지 않고 잇는다 → 6초 + 10초
+    out = jobs.make_reel(job, [1, 0])
+    w, h, fps, n = probe(Path(out["video"]))
+    assert abs(n / fps - 16.0) < 0.2 and out["style"] == "full"
 
 
 def test_reel_needs_finished_scenes(job: jobs.Job) -> None:
