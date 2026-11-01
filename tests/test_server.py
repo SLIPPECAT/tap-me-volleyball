@@ -85,6 +85,23 @@ def test_pages_are_cross_origin_isolated_for_browser_blur(client: TestClient) ->
         assert r.headers["cache-control"] == "no-cache"  # 배포 뒤 예전 화면 파일을 쓰지 않게
 
 
+def test_result_list_gets_a_small_poster_from_the_finished_video(client: TestClient, tmp_path: Path) -> None:
+    # 11/1 사용자: 완성 화면의 큰 재생 화면 대신 작은 미리보기 목록 + 누르면 전체 화면. 미리보기는 모자이크까지 된 결과 영상에서
+    import subprocess
+
+    job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
+    assert client.get(f"/jobs/{job_id}/rallies/0/poster").status_code == 404
+    out = tmp_path / job_id / "highlight.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x568:rate=10:duration=2",
+                    "-pix_fmt", "yuv420p", str(out)], check=True)
+    job = jobs.load_job(job_id)
+    job.scenes["0"] = {"index": 0, "status": "done", "video": str(out)}
+    job.save()
+    r = client.get(f"/jobs/{job_id}/rallies/0/poster")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.content[:2] == b"\xff\xd8"
+    assert (tmp_path / job_id / "highlight_poster.jpg").exists()
+
+
 def test_upload_streams_to_disk_with_safe_suffix(client: TestClient, tmp_path: Path) -> None:
     job_id = client.post("/jobs", files={"file": ("../../evil.sh", b"video")}).json()["id"]
     assert [p.name for p in (tmp_path / job_id).glob("source*")] == ["source.mp4"]

@@ -1214,6 +1214,32 @@ def video(job_id: str, index: int) -> FileResponse:
     return FileResponse(scene["video"], media_type="video/mp4")
 
 
+def _poster(video: Path) -> FileResponse:
+    """완성 화면 목록의 작은 미리보기(11/1 사용자: 재생 화면이 너무 넓다 → 목록 + 누르면 전체 화면). 모자이크까지 된
+    결과 영상의 1.5초 장면을 폭 160으로. 영상을 다시 만들면 새로 뽑는다."""
+    poster = video.with_name(video.stem + "_poster.jpg")
+    if not poster.exists() or poster.stat().st_mtime < video.stat().st_mtime:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", "1.5", "-i", str(video), "-frames:v", "1",
+                        "-vf", "scale=160:-2", "-q:v", "4", str(poster)], check=True, timeout=30)
+    return FileResponse(poster, media_type="image/jpeg", headers={"Cache-Control": "private, no-cache"})  # 다시 만들면 바뀐다(바뀌지 않았으면 304)
+
+
+@app.get("/jobs/{job_id}/rallies/{index}/poster")
+def video_poster(job_id: str, index: int) -> FileResponse:
+    scene = _job(job_id).scenes.get(str(index))
+    if not scene or "video" not in scene:
+        raise HTTPException(404, "결과 영상이 아직 없다")
+    return _poster(Path(scene["video"]))
+
+
+@app.get("/jobs/{job_id}/reel/poster")
+def reel_poster(job_id: str) -> FileResponse:
+    reel = _job(job_id).reel
+    if reel.get("status") != "done":
+        raise HTTPException(404, "모음 영상이 아직 없다")
+    return _poster(Path(reel["video"]))
+
+
 @app.post("/jobs/{job_id}/reel")
 def reel(job_id: str, req: ReelRequest, background: BackgroundTasks) -> dict[str, str]:
     job = _job(job_id)
