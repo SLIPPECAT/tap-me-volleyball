@@ -44,9 +44,13 @@ MAX_SCAN_SEC = 30 * 60
 MAX_USD_TOTAL = float(os.environ.get("TAPME_MAX_USD_TOTAL", "100"))
 # 랠리 찾기: scan(기본, 60초 조각 훑어보기) 또는 whistle(정모 휘슬에 맞춘 예전 방식, 실험 H-17~H-33 기록·비교용)
 RALLY_MODE = os.environ.get("TAPME_RALLY_MODE", "scan")
+# 장면 = 랠리 전체: 서브 SERVE_LEAD_SEC 전 ~ 득점 WINDOW_AFTER_SEC 뒤(11/2 사용자: 고정 12초는 짧았다 — 긴 랠리는 서브가
+# 잘리고 짧은 랠리는 서브 전 빈 시간이 들어갔다). 서브 시각을 모르면 득점 WINDOW_BEFORE_SEC 전부터.
+# 득점 앞은 적어도 CLIP_MIN_BEFORE_SEC, 장면은 길어야 MAX_SCENE_SEC(SAM·렌더 시간이 길이에 비례)
 WINDOW_BEFORE_SEC = 7.0  # SAM은 50프레임보다 짧아도 50으로 과금된다(비용 원장 R-10·R-17)
-# 브라우저 방식: 고른 랠리마다 기기가 원본에서 잘라 올리는 구간(장면 창보다 앞뒤 1초 넉넉히). 화면(index.html)과 같게
-SEGMENT_BEFORE_SEC, SEGMENT_AFTER_SEC = 8.0, 6.0
+SERVE_LEAD_SEC = 1.5
+MAX_SCENE_SEC = 25.0
+# 브라우저 방식: 기기가 원본에서 잘라 올리는 구간은 이 장면보다 앞뒤 1초 넉넉히(index.html sceneWindow·SEG_PAD)
 WINDOW_AFTER_SEC = 5.0  # 훑어보기 득점 시각은 2~4초 어긋날 때가 있어(성능 테스트 4/68, H-43) 득점 뒤를 넉넉히
 # 10fps: 움직이는 카메라에서 5fps는 같은 사람을 더 자주 놓쳤다(실험 H-24 B<C). 장면당 SAM 약 $0.02
 SAM_FPS = 10
@@ -472,7 +476,7 @@ def save_segment(job: Job, index: int, video: Path, audio: Path | None, first_fr
     video_start, file_start = _start_times(out)
     offset = first_frame_sec - video_start + file_start  # _cut(-ss)이 원본 시각 − offset으로 자르면 같은 프레임
     covers = (offset, offset + scan.duration_sec(out))
-    need = (max(0.0, float(r["point_sec"]) - WINDOW_BEFORE_SEC), float(r["point_sec"]) + WINDOW_AFTER_SEC)
+    need = scene_window(r, float(r["point_sec"]))
     if covers[0] > need[0] + 0.05 or covers[1] < need[1] - 0.05:
         out.unlink()
         raise ValueError(f"올린 구간({covers[0]:.1f}~{covers[1]:.1f}초)이 장면({need[0]:.1f}~{need[1]:.1f}초)을 덮지 않는다")
@@ -683,6 +687,14 @@ def player_cards(job: Job, index: int, kind: str, client: Any) -> list[list[floa
     return scene["players"][kind]
 
 
+def scene_window(r: dict[str, Any], score_sec: float) -> tuple[float, float]:
+    """장면(원본 초): 서브 조금 전부터 득점 뒤까지. 기기가 올리는 구간(index.html sceneWindow)과 같은 계산."""
+    end = score_sec + WINDOW_AFTER_SEC
+    start = score_sec - WINDOW_BEFORE_SEC if r.get("start_sec") is None else float(r["start_sec"]) - SERVE_LEAD_SEC
+    start = min(start, score_sec - CLIP_MIN_BEFORE_SEC)
+    return max(0.0, start, end - MAX_SCENE_SEC), end
+
+
 def _score_window(job: Job, index: int, client: Any) -> tuple[float, float, float, dict[str, Any]]:
     """(득점 초, 장면 시작 초, 장면 길이, 득점 답). 훑어보기가 득점 순간을 못 찾은 랠리만 Muse에 묻는다."""
     r = job.rallies[index]
@@ -695,8 +707,8 @@ def _score_window(job: Job, index: int, client: Any) -> tuple[float, float, floa
         answer, reply = score.ask_score_time(client, Path(r["clip"]))
         job.spent_usd += reply.usd
         score_sec = r["clip_start_sec"] + float(answer["score_time_sec"])
-    start = max(0.0, score_sec - WINDOW_BEFORE_SEC)
-    return score_sec, start, score_sec + WINDOW_AFTER_SEC - start, answer
+    start, end = scene_window(r, score_sec)
+    return score_sec, start, end - start, answer
 
 
 def _tap_frame_numbers(score_sec: float, start: float, n: int) -> dict[str, int]:

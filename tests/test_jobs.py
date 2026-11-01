@@ -54,7 +54,7 @@ def test_prepare_scene_window_is_in_source_time(job: jobs.Job, monkeypatch: pyte
     scene = jobs.prepare_scene(job, 0, client=None)
     # 클립은 원본 4.0초에서 시작 → 득점 12.5초 → 7초 전~5초 뒤
     assert scene["score_sec"] == 12.5
-    assert scene["window"] == [5.5, 17.5]
+    assert scene["window"] == [3.5, 17.5]  # 서브(5.0) 1.5초 전 ~ 득점(12.5) 5초 뒤 — 랠리 전체(11/2)
     assert scene["status"] == "awaiting_tap"
     # 탭할 장면 5장: 득점 순간·1.5/3/4.5초 전·구간 시작. 가짜 SAM 클립이 5프레임뿐이라 앞 셋은 마지막 프레임
     assert scene["tap_frames"] == {"score": 4, "b1": 4, "b2": 4, "b3": 4, "start": 0}
@@ -109,7 +109,7 @@ def test_tap_sends_points_from_both_scenes_and_keeps_visible_span(job: jobs.Job,
     assert len(sam) == 2 and sam[1] == "volleyball player"
     # '나'는 SAM 프레임 0·1(5.5~5.7초)에만 있다. 영상은 그 구간과 최소 득점 4초 전~4초 뒤(8.5~16.5초)를 모두 담는다
     # (득점 시각이 ±4초 어긋나도 실제 득점이 들어가게, H-43)
-    assert scene["span_frames"] == [0, 1] and scene["clip"] == [5.5, 16.5]
+    assert scene["span_frames"] == [0, 1] and scene["clip"] == [3.5, 16.5]
     assert scene["status"] == "done" and Path(scene["video"]).exists()
     assert scene["clip_is_original"] and scene["options"]["face_mosaic"] is True
 
@@ -411,7 +411,7 @@ def test_find_rallies_scans_the_video_and_prepare_uses_the_found_point(job: jobs
 
     monkeypatch.setattr(score, "ask_score_time", no_muse)
     scene = jobs.prepare_scene(saved, 0, client=None)
-    assert scene["score_sec"] == 12.5 and scene["window"] == [5.5, 17.5]
+    assert scene["score_sec"] == 12.5 and scene["window"] == [4.0, 17.5]
     assert jobs.load_job(job.id).spent_usd == pytest.approx(0.03)
 
 
@@ -755,3 +755,13 @@ def test_point_winner_is_the_team_that_serves_the_next_rally_on_our_side_per_set
     assert "0" not in jobs.point_winners(job)  # 다음 서브를 모르면 모름
     boxes = [[0, 100, 10, 300], [0, 100, 10, 500], [0, 100, 10, 420]]
     assert jobs.side_of(boxes, 1) == "near" and jobs.side_of(boxes, 0) == "far" and jobs.side_of(boxes, 5) == "unknown"
+
+
+def test_scene_is_the_whole_rally_from_the_serve_but_never_too_long() -> None:
+    # 11/2 사용자: 고정 12초(득점 7초 전~5초 뒤)는 짧았다 — 10.6초 랠리는 서브가 잘리고, 3.5초 랠리는 빈 시간이 들어갔다
+    assert jobs.scene_window({"start_sec": 52.2}, 62.8) == (50.7, 67.8)  # 서브 1.5초 전부터
+    assert jobs.scene_window({"start_sec": 125.0}, 128.5) == (123.5, 133.5)  # 짧은 랠리: 서브 전 빈 시간 없음
+    assert jobs.scene_window({"start_sec": 127.0}, 128.5) == (124.5, 133.5)  # 득점 앞은 적어도 4초
+    assert jobs.scene_window({"start_sec": 100.0}, 140.0) == (120.0, 145.0)  # 긴 랠리는 25초까지
+    assert jobs.scene_window({}, 12.5) == (5.5, 17.5)  # 서브 시각을 모르면 예전처럼 7초 전부터
+    assert jobs.scene_window({"start_sec": 0.0}, 3.0) == (0.0, 8.0)  # 영상 시작 앞으로는 가지 않는다
