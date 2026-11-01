@@ -474,11 +474,6 @@ def _start_auto(job_id: str, client: Any) -> None:
 
 
 _running_autos: set[str] = set()  # 나 찾기 중인 한 번에 맡기기(랠리 찾기·렌더 줄에 없을 때도 '처리 중'으로 센다)
-# 대기 시간 어림(H-53 실측, 서버 8코어): 하이라이트 하나 모자이크 켬 189초·끔 25초, 10분 영상 랠리 찾기 6분 9초
-RENDER_EST_SEC = {True: 190, False: 25}
-SCAN_EST_SEC = 6 * 60
-
-
 def _run_auto(job_id: str, client: Any) -> None:
     t0 = time.time()
     _running_autos.add(job_id)
@@ -715,6 +710,10 @@ def _closed_reason(code: str = "") -> str | None:
 # 스레드 8): 서버 블러 1분 조각 111초(50초 간격) → 영상 1초당 약 2.2초, 하이라이트 하나(준비+추적+렌더) 약 10분
 EST_SERVER_SEC_PER_VIDEO_SEC = float(os.environ.get("TAPME_EST_SCAN_RATE", "2.2"))
 EST_HIGHLIGHT_SEC = float(os.environ.get("TAPME_EST_HIGHLIGHT_SEC", "600"))
+# 한 번에 맡기기·대기열 어림(H-53 실측, 11/1): 렌더 하나(준비 제외)는 모자이크 켬 189초·끔 25초, 10분 영상 랠리 찾기
+# 6분 9초. 위 EST_HIGHLIGHT_SEC(하나씩 고르기에서 준비+추적+렌더 전체, 10/31)는 속도 개선 전 값이라 다시 재야 한다
+RENDER_EST_SEC = {True: 190, False: 25}
+SCAN_EST_SEC = 6 * 60
 
 
 @app.post("/speedtest")
