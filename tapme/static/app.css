@@ -203,8 +203,8 @@ video { width: 100%; background: var(--color-paper-3); }
 .auto-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-xs); border-bottom: var(--rule-hair) solid var(--color-rule-2); }
 .auto-play { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; border: 0; background: none; padding: var(--space-2xs); text-align: left; }
 .auto-play img { width: 36px; aspect-ratio: 9 / 16; object-fit: cover; flex: none; background: var(--color-paper-3); }
-.auto-play strong { font-family: var(--font-outlier); font-weight: 400; font-variant-numeric: tabular-nums; }
-.auto-play span { color: var(--color-muted); font-size: var(--text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.auto-play strong { font-family: var(--font-outlier); font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.auto-play span { color: var(--color-muted); font-size: var(--text-sm); }
 .auto-save { min-height: 36px; padding: var(--space-3xs) var(--space-sm); font-size: var(--text-sm); }
 .viewer { box-sizing: border-box; width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: var(--space-xs);
   border: 0; overflow: hidden; background: #000; color: #fff; }

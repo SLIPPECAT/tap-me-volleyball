@@ -649,8 +649,8 @@ function renderAuto(s) {
       const label = Object.assign(document.createElement("span"), { textContent: x.label });
       play.append(thumb, num, label);
       play.onclick = () => openViewer(n);
-      // 아이폰은 사진첩으로(공유 시트), 그 밖은 내려받기
-      const save = Object.assign(document.createElement("button"), { className: "auto-save", textContent: IOS ? t("saveToPhotos") : t("save") });
+      // 아이폰은 사진첩으로(공유 시트), 그 밖은 내려받기. 줄 버튼은 짧게: '사진첩에 저장'이면 영어에서 득점 표시가 잘렸다(11/2)
+      const save = Object.assign(document.createElement("button"), { className: "auto-save", textContent: t("save") });
       save.onclick = () => saveItem(x);
       row.append(play, save);
       return row;
