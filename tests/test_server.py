@@ -853,3 +853,60 @@ def test_one_code_cannot_open_endless_uploads(client: TestClient, monkeypatch: p
     code = access.new_codes(1)[0]
     ok = [client.post("/uploads", json={"size": 10, "code": code}).status_code for _ in range(3)]
     assert ok == [200, 200, 429]
+
+
+def test_card_names_are_written_on_the_photos(tmp_path: Path) -> None:
+    # H-49: 이름을 사진 앞 글로만 주면 Muse가 한 칸 밀린 이름(C1 → C2)으로 답했다. 사진 왼쪽 위에도 이름을 쓴다
+    import base64
+    import io
+
+    from PIL import Image
+
+    from tapme import auto
+
+    card = tmp_path / "c.jpg"
+    Image.new("RGB", (160, 240), (255, 255, 255)).save(card)
+    url = auto._img(card, "C1")["image_url"]
+    img = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+    assert img.getpixel((1, 1))[0] < 40 and img.getpixel((100, 100))[0] > 200  # 이름 칸은 검고 나머지는 그대로
+    assert auto._img(card)["image_url"].endswith(base64.b64encode(card.read_bytes()).decode())
+
+
+def test_candidate_photo_dims_the_neighbours_around_the_box(tmp_path: Path) -> None:
+    # H-49: 카드 여유 자리에 뒤 사람이 보여 앞사람 카드를 골랐다. 상자 밖은 어둡게
+    from PIL import Image
+
+    from tapme import auto
+
+    frame = tmp_path / "tap_score.jpg"
+    Image.new("RGB", (400, 400), (200, 200, 200)).save(frame)
+    auto._candidate(frame, [100, 100, 200, 300], "A0", "0")
+    card = Image.open(tmp_path / "cand_A0.jpg")
+    assert card.getpixel((card.width // 2, card.height // 2))[0] > 180  # 상자 안은 그대로
+    assert card.getpixel((card.width - 2, card.height // 2))[0] < 110  # 여유 자리는 어둡게
+
+
+def test_find_me_asks_each_moment_and_keeps_the_surest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # H-49: 세 순간 카드를 한 번에 물으면 한 칸 밀린 이름으로 답했다 → 순간마다 따로 묻고 가장 확신하는 답
+    from types import SimpleNamespace
+
+    from PIL import Image
+
+    from tapme import auto
+
+    (tmp_path / "scene00").mkdir()
+    sizes = {"score": 2, "b2": 3, "start": 4}  # 순간마다 후보 수를 달리해 어느 질문인지 안다
+    for kind in sizes:
+        Image.new("RGB", (400, 400), (200, 200, 200)).save(tmp_path / "scene00" / f"tap_{kind}.jpg")
+    Image.new("RGB", (160, 240)).save(tmp_path / "ref.jpg")
+    monkeypatch.setattr(jobs, "player_cards", lambda job, i, kind, c: [[10, 10, 100, 200]] * sizes[kind])
+    replies = {2: '{"index": 1, "confidence": 0.6}', 3: '{"index": -1, "confidence": 0.9}', 4: '{"index": 3, "confidence": 0.95}'}
+
+    def create(**kw):
+        n = sum(c["type"] == "input_image" for c in kw["input"][0]["content"]) - 1  # 기준 사진 빼고
+        return SimpleNamespace(output_text=replies[n], usage=SimpleNamespace(input_tokens=1000, output_tokens=100))
+
+    job = SimpleNamespace(dir=tmp_path, spent_usd=0.0, charge=lambda usd: None)
+    found = auto.find_me(job, 0, tmp_path / "ref.jpg", "10번", SimpleNamespace(responses=SimpleNamespace(create=create)))
+    assert (found["frame"], found["card"], found["confidence"]) == ("start", 3, 0.95)
+    assert found["frames"] == {"score": [1, 0.6], "b2": [-1, 0.9], "start": [3, 0.95]} and job.spent_usd > 0

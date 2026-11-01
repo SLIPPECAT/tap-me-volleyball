@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from tapme import anonymize, muse, rally, rally_filter, render, scan, score, track
 
@@ -705,7 +705,8 @@ def scene_people(job: Job, scene: dict[str, Any], client: Any) -> dict[int, list
 MOSAIC_TEAMS = ("all", "opponent", "mine")
 TEAM_QUESTION_USD = 0.03  # 선수 카드 20장 안팎 + 생각 '중간'. 넉넉히 잡고 charge, 실제 토큰으로 다시 셈
 TEAM_PROMPT = """첫 번째 사진은 배구 경기 영상에서 '나'(기준 선수)를 잘라 낸 것이다. 그 뒤 사진들은 같은 장면의 다른 사람들이고,
-각 사진 앞에 '후보 번호'가 있다. 얼굴은 모두 흐려져 있으니 유니폼 색·무늬·바지로 판단한다.
+각 사진 앞과 사진 왼쪽 위에 '후보 번호'가 있다(사진에 적힌 번호를 쓴다). 한 사진에 여러 사람이 있으면 가운데 가장 크게
+잡힌 사람이 그 후보다. 얼굴은 모두 흐려져 있으니 유니폼 색·무늬·바지로 판단한다.
 후보마다 '나'와 같은 팀 유니폼이면 same, 상대 팀 선수면 other, 심판·관중·코트 밖 사람이거나 잘 안 보이면 unsure.
 {team}
 JSON 하나로만 답한다: {{"teams": {{"0": "same" 또는 "other" 또는 "unsure", ...}}}}"""
@@ -754,6 +755,9 @@ def scene_teams(job: Job, scene: dict[str, Any], client: Any) -> dict[str, str]:
         card = img.crop((max(0, b.left - pad_w), max(0, b.top - pad_h),
                          min(img.width, b.right + pad_w), min(img.height, b.bottom + pad_h)))
         card.thumbnail((160, 240))
+        label = "ME" if oid == "me" else str(n - 1)  # 번호를 사진에도 쓴다(글로만 주면 한 칸 밀려 답했다, H-49)
+        ImageDraw.Draw(card).rectangle((0, 0, 8 + 8 * len(label), 16), fill=(0, 0, 0))
+        ImageDraw.Draw(card).text((4, 2), label, fill=(255, 255, 0))
         path = d / f"card_{n:02d}.jpg"
         card.save(path)
         content += [{"type": "input_text", "text": "나" if oid == "me" else f"후보 {n - 1}"}, _card_img(path)]
