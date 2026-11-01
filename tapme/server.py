@@ -409,7 +409,8 @@ def _make_highlight(job_id: str, index: int, *args: Any) -> None:
     scene = job.scenes.get(str(index), {})
     if job.error and scene.get("status") in ("queued", "rendering"):
         scene["status"] = "failed"
-        access.refund(job.code, "highlights")
+        if not scene.get("auto"):  # 한 번에 맡기기 장면은 횟수를 쓰지 않았다
+            access.refund(job.code, "highlights")
     job.save()
     o = scene.get("options", {})
     _log(job_id, "highlight", t0, rally=index, status=scene.get("status"), error=job.error if scene.get("status") != "done" else None,
@@ -424,7 +425,9 @@ def _make_highlight(job_id: str, index: int, *args: Any) -> None:
 # ---- 한 번에 맡기기(tapme/auto.py, 10/31 사용자) ----
 _auto_lock = threading.Lock()  # job.auto는 통째로 저장되므로 동시에 고치는 스레드끼리 덮어쓰지 않게
 MAX_RESUMES = 2  # 서버가 다시 켜질 때 끝나지 않은 한 번에 맡기기를 이어 돌리는 횟수
-AUTO_EXTRA_USD = 1.8  # 나 찾기(랠리당 질문 최대 $0.05 + 선수 찾기 3장 × 20) + 하이라이트 추적(8개)만큼 작업 상한을 늘린다
+# 나 찾기(랠리당 실측 $0.03~0.04, 미리 잡는 값 약 $0.1) + 하이라이트 추적($0.048)을 랠리 25개까지 할 만큼 작업 상한을 늘린다
+# (11/1: 찾은 랠리를 다 만든다, 10분 영상 실측 19랠리)
+AUTO_EXTRA_USD = 3.5
 
 
 def _auto_set(job_id: str, **kv: Any) -> jobs.Job:
@@ -506,7 +509,6 @@ def _auto_render(job_id: str, index: int, frame: str, card: int, a: dict[str, An
                         job.scenes[str(index)]["status"] = "failed"
                         job.error = f"처리 중 오류: {e}"
                         job.save()
-                        access.refund(job.code, "highlights")
                         return
             _run_highlight(*args)
 
@@ -543,12 +545,17 @@ def _auto_steps(job_id: str, client: Any) -> None:
         return found
 
     known = job.auto.get("found", {})
+    need = {i for i in order if str(i) not in known
+            and job.scenes.get(str(i), {}).get("status") not in ("done", "queued", "rendering")}
     pool = ThreadPoolExecutor(FIND_PARALLEL)
-    finding = {i: pool.submit(find, i) for i in order if str(i) not in known
-               and job.scenes.get(str(i), {}).get("status") not in ("done", "queued", "rendering")}
-    for i in order:
+    finding: dict[int, Any] = {}
+    for p, i in enumerate(order):
         if len(made) >= a["max"]:
             break
+        # 지금 랠리부터 FIND_PARALLEL개만 미리 묻는다. 처음에 다 맡기면 멈춘 뒤에도 나머지를 다 찾았다(H-53 C1, 19랠리)
+        for j in order[p:p + FIND_PARALLEL]:
+            if j in need and j not in finding:
+                finding[j] = pool.submit(find, j)
         job = jobs.load_job(job_id)
         status = job.scenes.get(str(i), {}).get("status")
         found = job.auto.get("found", {}).get(str(i))
@@ -570,13 +577,9 @@ def _auto_steps(job_id: str, client: Any) -> None:
             continue
         while _active(job_id) >= jobs.MAX_ACTIVE_SCENES:
             time.sleep(5)
-        try:
-            access.use(job.code, "highlights")
-        except access.AccessDenied as e:
-            _auto_set(job_id, note=str(e))
-            break
+        # 한 번에 맡기기는 코드의 하이라이트 횟수를 쓰지 않는다(11/1 사용자: 맡긴 영상이 중간에 막히지 않게). 영상 올리기는 센다
         job = jobs.load_job(job_id)
-        job.scenes[str(i)]["status"] = "queued"
+        job.scenes[str(i)].update(status="queued", auto=True)
         job.save()
         made.append(i)
         _auto_set(job_id, made=made)

@@ -588,6 +588,56 @@ def test_one_shot_asks_several_rallies_at_once_but_queues_in_order(client: TestC
     assert events[-1]["made"] == 5 and events[-1]["found"] == 5 and "sec" in events[-1]
 
 
+def test_one_shot_makes_every_found_rally_without_using_code_highlights_and_asks_only_a_few_ahead(
+        client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/1 사용자: 8개 제한을 풀어 찾은 랠리를 다 만들고, 한 번에 맡기기는 코드의 하이라이트 횟수(3개)에 막히지 않게.
+    # 나 찾기는 지금 랠리부터 FIND_PARALLEL개만 미리(H-53 C1: 처음에 19랠리를 다 맡겨 멈춘 뒤에도 다 찾았다)
+    import time as _time
+
+    from tapme import auto, push
+
+    def rallies(n):
+        def scan(job: jobs.Job, client) -> None:
+            job.rallies = [{"index": i, "start_sec": 10.0 * i, "end_sec": 10.0 * i + 8, "point_sec": 10.0 * i + 7,
+                            "is_rally": True} for i in range(n)]
+            job.status = "rallies_ready"
+            job.save()
+        return scan
+
+    asked: list[int] = []
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    monkeypatch.setattr(auto, "find_me", lambda job, i, ref, hint, c: asked.append(i) or {"frame": "score", "card": 1, "confidence": 0.9})
+    monkeypatch.setattr(jobs, "prepare_frames", lambda job, i, c: (job.scenes.__setitem__(str(i), {"index": i, "status": "frames_ready"}), job.save()))
+
+    def fake_render(job_id: str, i: int, frame: str, card: int, a: dict, c) -> None:
+        job = jobs.load_job(job_id)
+        job.scenes[str(i)]["status"] = "done"
+        job.save()
+
+    monkeypatch.setattr(server, "_auto_render", fake_render)
+    monkeypatch.setattr(jobs, "make_reel", lambda job, order: job.reel.update({"status": "done", "order": order}))
+    monkeypatch.setattr(push, "notify", lambda *a, **k: None)
+    monkeypatch.setattr(access, "REQUIRED", True)
+
+    def run(n: int, **auto_req) -> dict:
+        monkeypatch.setattr(jobs, "find_rallies", rallies(n))
+        code = access.new_codes(1)[0]
+        job_id = _send(client, code).json()["id"]
+        assert client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "team": "초록", **auto_req}).status_code == 200
+        for _ in range(100):
+            if (a := jobs.load_job(job_id).auto).get("state") == "done":
+                break
+            _time.sleep(0.05)
+        return {"auto": a, "code": access._load()[code]}
+
+    r = run(5)
+    assert r["auto"]["made"] == [0, 1, 2, 3, 4] and access.LIMITS["highlights"] < 5
+    assert r["code"]["highlights"] == 0 and r["code"]["uploads"] == 1  # 영상 올리기만 센다
+    asked.clear()
+    r = run(8, max=2)  # 다 만들면 멈춘다: 그 뒤 랠리까지 미리 다 찾지 않는다
+    assert r["auto"]["made"] == [0, 1] and len(asked) <= 2 + server.FIND_PARALLEL - 1
+
+
 def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     # 10/31 사용자: 처음에 영상·나·설정을 다 받아 맡기면 끝. 확실하면 만들고(0.7 이상), 애매하면 확인 묶음, 없으면 건너뛴다(H-46)
     import time as _time

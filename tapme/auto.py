@@ -23,8 +23,11 @@ from PIL import Image, ImageDraw
 
 from tapme import jobs, muse, track
 
-MAX_SCAN_SEC = 20 * 60  # 한 번에 맡기기는 20분까지(10/31 사용자). 하나씩 고르기는 jobs.MAX_SCAN_SEC(30분)
-MAX_HIGHLIGHTS = 8  # 자동으로 만드는 최대 개수(개당 약 5분 반, 하나씩 만든다)
+# 한 번에 맡기기는 10분까지(11/1 사용자: 20분 → 10분. 입력 용량·랠리 찾기 비용이 예상 범위에 든다, 1080p 약 450MB·약 $0.37).
+# 하나씩 고르기는 jobs.MAX_SCAN_SEC(30분)
+MAX_SCAN_SEC = 10 * 60
+# 찾은 랠리는 다 만든다(11/1 사용자: 8개 제한을 풀었다). 10분 영상이 랠리 20개 안팎이라 이 값은 안전 상한일 뿐
+MAX_HIGHLIGHTS = 40
 CONFIDENT = 0.7  # H-46: 맞힌 것은 0.65~0.95, 사람도 확신 못 한 장면에서 0.6. 이 아래는 사용자에게 확인받는다
 USD_PER_QUESTION = 0.03  # 한 순간 질문(생각 '중간'·사진 13장 안팎): 실측 $0.006~0.02, 넉넉히 잡고 charge
 
