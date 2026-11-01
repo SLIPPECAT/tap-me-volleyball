@@ -200,7 +200,7 @@ video { width: 100%; background: var(--color-paper-3); }
 /* 완성 화면: 재생 화면 하나 + 장부처럼 줄 그은 짧은 목록(시간은 mono). 6개도 한 화면 안팎 */
 .auto-head { font-size: var(--text-lg); font-weight: 600; }
 .auto-stage { display: grid; gap: var(--space-2xs); justify-items: center; }
-.auto-stage video { width: 100%; max-height: 62dvh; aspect-ratio: 9 / 16; object-fit: contain; background: var(--color-paper-3); }
+.auto-stage video { width: 100%; max-height: 50dvh; aspect-ratio: 9 / 16; object-fit: contain; background: var(--color-paper-3); }
 .auto-results { list-style: none; margin: 0; padding: 0; border-top: var(--rule-hair) solid var(--color-rule-2); }
 .auto-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-xs); border-bottom: var(--rule-hair) solid var(--color-rule-2); }
 .auto-play { display: flex; align-items: baseline; gap: var(--space-xs); min-width: 0; border: 0; background: none; padding-inline: var(--space-2xs); text-align: left; }
