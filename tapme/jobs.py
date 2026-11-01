@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -63,42 +63,68 @@ _lock = threading.Lock()
 
 
 class Turns:
-    """먼저 온 순서대로 slots개까지 동시에 돌린다. 기다리는 순서를 화면에 보여 준다(threading.Lock은 순서를 지키지 않는다)."""
+    """slots개까지 동시에 돌린다. 기다리는 순서를 화면에 보여 준다(threading.Lock은 순서를 지키지 않는다).
+    group이 없으면 먼저 온 순서대로. group(key)를 주면 묶음끼리 번갈아 — 가장 오래 차례를 못 받은 묶음이 먼저, 같으면
+    먼저 온 순서(11/1 사용자: 한 사람이 10분 영상의 랠리를 다 맡겨도 뒤에 온 사람이 오래 기다리지 않게)."""
 
-    def __init__(self, slots: int) -> None:
+    def __init__(self, slots: int, group: Callable[[str], str] | None = None) -> None:
         self.slots = slots
+        self._group = group
         self._cv = threading.Condition()
         self._waiting: list[str] = []
-        self._running = 0
+        self._running: list[str] = []
+        self._last: dict[str, int] = {}  # 묶음이 마지막으로 차례를 받은 번호
+        self._served = 0
+
+    def _order(self) -> list[str]:
+        if self._group is None:
+            return list(self._waiting)
+        last, rest, out, n = dict(self._last), list(self._waiting), [], self._served
+        while rest:
+            k = min(rest, key=lambda x: last.get(self._group(x), -1))  # min은 같으면 먼저 온 것
+            rest.remove(k)
+            out.append(k)
+            n += 1
+            last[self._group(k)] = n
+        return out
 
     @contextmanager
     def turn(self, key: str) -> Iterator[None]:
         with self._cv:
             self._waiting.append(key)
-            self._cv.wait_for(lambda: self._waiting[0] == key and self._running < self.slots)
-            self._waiting.pop(0)
-            self._running += 1
+            self._cv.wait_for(lambda: len(self._running) < self.slots and self._order()[0] == key)
+            self._waiting.remove(key)
+            self._running.append(key)
+            self._served += 1
+            if self._group is not None:
+                self._last[self._group(key)] = self._served
             self._cv.notify_all()
         try:
             yield
         finally:
             with self._cv:
-                self._running -= 1
+                self._running.remove(key)
                 self._cv.notify_all()
 
     def position(self, key: str) -> int | None:
         """기다리는 중이면 앞에서부터 몇 번째(1부터), 아니면 None."""
         with self._cv:
-            return self._waiting.index(key) + 1 if key in self._waiting else None
+            order = self._order()
+            return order.index(key) + 1 if key in order else None
 
     def waiting(self) -> int:
         with self._cv:
             return len(self._waiting)
 
+    def active(self) -> list[str]:
+        """돌고 있거나 기다리는 것."""
+        with self._cv:
+            return self._running + self._waiting
+
 
 # 렌더는 CPU를 다 써서 한 번에 하나만(동시에 돌리면 서로 느려졌다, H-42). SAM 추적·해설(네트워크)은 여러 장면이 겹쳐도 된다.
 # 일괄 만들기에서 한 장면을 렌더하는 동안 다음 장면들의 추적이 끝나 있게 한다(10/30 사용자). 여러 사용자는 온 순서대로
-RENDER_TURNS = Turns(1)
+RENDER_TURNS = Turns(1, group=lambda key: key.split("/")[0])  # key = "작업id/장면" → 작업끼리 번갈아
 # 랠리 찾기도 얼굴 흐리기가 CPU를 다 써서 사용자 여럿이 한꺼번에 올리면 모두 느려진다 → 온 순서대로 이만큼씩(10/31)
 SCAN_TURNS = Turns(int(os.environ.get("TAPME_SCAN_SLOTS", "1")))
 # 랠리 찾기 대기가 이보다 많으면 새 영상을 받지 않는다(올리기 전에 알려 2GB를 헛되이 올리지 않게)

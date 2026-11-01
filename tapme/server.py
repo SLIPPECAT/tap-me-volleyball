@@ -473,8 +473,15 @@ def _start_auto(job_id: str, client: Any) -> None:
     threading.Thread(target=_run_auto, args=(job_id, client), daemon=True).start()
 
 
+_running_autos: set[str] = set()  # 나 찾기 중인 한 번에 맡기기(랠리 찾기·렌더 줄에 없을 때도 '처리 중'으로 센다)
+# 대기 시간 어림(H-53 실측, 서버 8코어): 하이라이트 하나 모자이크 켬 189초·끔 25초, 10분 영상 랠리 찾기 6분 9초
+RENDER_EST_SEC = {True: 190, False: 25}
+SCAN_EST_SEC = 6 * 60
+
+
 def _run_auto(job_id: str, client: Any) -> None:
     t0 = time.time()
+    _running_autos.add(job_id)
     with _Working():
         try:
             _auto_steps(job_id, client)
@@ -483,6 +490,7 @@ def _run_auto(job_id: str, client: Any) -> None:
         except Exception as e:  # noqa: BLE001 - 서버가 죽지 않고 화면에 알린다
             traceback.print_exc()
             _auto_set(job_id, state="failed", error=f"처리 중 오류: {e}")
+    _running_autos.discard(job_id)
     a = jobs.load_job(job_id).auto
     _log(job_id, "auto_done", t0, state=a.get("state"), error=a.get("error"), rallies=a.get("total"),
          found=len(a.get("found", {})), made=len(a.get("made", [])), review=len(a.get("review", [])))
@@ -1031,9 +1039,20 @@ def finish_upload(upload_id: str, background: BackgroundTasks) -> dict[str, str]
     return {"id": job.id}
 
 
+@app.get("/load")
+def load() -> dict[str, Any]:
+    """올리기 전 화면(11/1 사용자: 다른 사람이 작업 중이면 들어왔을 때 알 수 있게). 지금 처리 중인 영상 수와, 지금 맡기면
+    더 걸릴 시간(어림): 앞선 랠리 찾기마다 약 6분 + 렌더 하나(렌더는 작업끼리 번갈아서 지금 도는 것만 기다린다)."""
+    scans, renders = jobs.SCAN_TURNS.active(), jobs.RENDER_TURNS.active()
+    active = set(scans) | {k.split("/")[0] for k in renders} | _running_autos
+    extra = len(scans) * SCAN_EST_SEC + (RENDER_EST_SEC[True] if renders else 0)
+    return {"active": len(active), "waiting_scans": jobs.SCAN_TURNS.waiting(), "extra_min": round(extra / 60)}
+
+
 @app.get("/jobs/{job_id}")
 def status(job_id: str) -> dict[str, Any]:
     job = _job(job_id)
+    sharing = {k.split("/")[0] for k in jobs.RENDER_TURNS.active()} - {job.id}  # 렌더를 번갈아 쓰는 다른 작업
     return {"id": job.id, "status": job.status, "error": job.error, "spent_usd": round(job.spent_usd, 4),
             "progress": job.progress, "duration_sec": job.duration_sec, "estimate_usd": job.estimate_usd,
             "unread": job.unread, "match_name": job.match_name, "scan": job.scan, "scan_range": job.scan_range,
@@ -1041,6 +1060,8 @@ def status(job_id: str) -> dict[str, Any]:
             "chunks_received": jobs.browser_chunks_received(job) if job.mode == "browser" else [],
             "queue": jobs.SCAN_TURNS.position(job.id), "left": _left(job),
             "render_turns": {k: p for k in job.scenes if (p := jobs.RENDER_TURNS.position(f"{job.id}/{k}"))},
+            # 남은 시간 어림: 남은 하이라이트 × 하나 시간 × (렌더를 번갈아 쓰는 작업 수)
+            "render_est_sec": RENDER_EST_SEC[job.auto.get("options", {}).get("face_mosaic", True)] * (len(sharing) + 1),
             "rallies": [{k: r.get(k) for k in ("index", "start_sec", "end_sec", "point_sec", "is_rally", "confidence",
                                                "reason", "uncertain")}
                         for r in job.rallies],

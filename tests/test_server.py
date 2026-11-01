@@ -102,6 +102,34 @@ def test_result_list_gets_a_small_poster_from_the_finished_video(client: TestCli
     assert (tmp_path / job_id / "highlight_poster.jpg").exists()
 
 
+def test_entry_screen_shows_other_peoples_work_and_extra_wait(client: TestClient) -> None:
+    # 11/1 사용자: 다른 사람이 작업 중이면 들어왔을 때 앞에 작업 중인 사람·대기 수·더 걸릴 시간을 보여 준다
+    import threading
+    import time as _time
+
+    assert client.get("/load").json() == {"active": 0, "waiting_scans": 0, "extra_min": 0}
+    hold, entered = threading.Event(), threading.Event()
+
+    def busy() -> None:
+        with jobs.RENDER_TURNS.turn("aaaa11112222/3"):
+            entered.set()
+            hold.wait(2)
+
+    th = threading.Thread(target=busy)
+    th.start()
+    entered.wait(1)
+    try:
+        r = client.get("/load").json()
+        assert r["active"] == 1 and r["extra_min"] == round(server.RENDER_EST_SEC[True] / 60)  # 렌더 하나만 기다린다
+        job_id = client.post("/jobs", files={"file": ("m.mp4", b"video")}).json()["id"]
+        assert client.get(f"/jobs/{job_id}").json()["render_est_sec"] == server.RENDER_EST_SEC[True] * 2  # 번갈아 쓴다
+    finally:
+        hold.set()
+        th.join(2)
+    _time.sleep(0.05)
+    assert client.get("/load").json()["active"] == 0
+
+
 def test_upload_streams_to_disk_with_safe_suffix(client: TestClient, tmp_path: Path) -> None:
     job_id = client.post("/jobs", files={"file": ("../../evil.sh", b"video")}).json()["id"]
     assert [p.name for p in (tmp_path / job_id).glob("source*")] == ["source.mp4"]

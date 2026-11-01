@@ -707,3 +707,36 @@ def test_request_log_keeps_who_when_what_but_no_names_and_drops_old_lines(tmp_pa
     r = rows[0]
     assert r["code"] == "ABCD" and r["kind"] == "배너" and r["event"] == "upload" and r["size_mb"] == 89.1
     assert "우리팀" not in json.dumps(r, ensure_ascii=False)  # 경기 이름·파일 이름은 남기지 않는다
+
+
+def test_render_turns_alternate_between_jobs() -> None:
+    # 11/1 사용자: 한 사람이 10분 영상 랠리를 다 맡겨도(장면 여러 개 예약) 뒤에 온 사람은 지금 렌더 하나만 기다린다
+    import threading
+    import time
+
+    turns = jobs.Turns(1, group=lambda k: k.split("/")[0])
+    ran: list[str] = []
+    go = threading.Event()
+
+    def work(key: str, hold: threading.Event | None = None) -> None:
+        with turns.turn(key):
+            ran.append(key)
+            if hold:
+                hold.wait(2)
+
+    first = threading.Thread(target=work, args=("A/0", go))
+    first.start()
+    time.sleep(0.05)
+    rest = []
+    for key in ("A/1", "A/2", "A/3", "B/0", "B/1"):  # A가 먼저 줄을 많이 세웠다
+        rest.append(threading.Thread(target=work, args=(key,)))
+        rest[-1].start()
+        time.sleep(0.02)
+    assert turns.position("B/0") == 1 and turns.position("A/1") == 2  # 화면에 보이는 순번도 번갈아
+    go.set()
+    for th in [first, *rest]:
+        th.join(2)
+    assert ran == ["A/0", "B/0", "A/1", "B/1", "A/2", "A/3"]
+    fifo = jobs.Turns(1)  # 묶음이 없으면 온 순서대로(랠리 찾기)
+    fifo._waiting = ["A/1", "B/0"]
+    assert fifo.position("B/0") == 2
