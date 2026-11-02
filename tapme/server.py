@@ -185,9 +185,9 @@ async def _limit_rate(request, call_next):
 async def _note_request(request, call_next):
     global _last_request
     response = await call_next(request)
-    # 없는 주소(404)는 '사용 중'으로 세지 않는다(11/2: 새벽 4시에 지워진 작업을 열어 둔 화면이 2초마다 물어 밤새
-    # 404가 11,975번 — 서버가 6시간 반 동안 꺼지지 않았다). 봇이 /test.php 같은 곳을 두드려도 마찬가지
-    if request.url.path != "/idle" and response.status_code != 404:
+    # 실패한 요청(400 이상)은 '사용 중'으로 세지 않는다(11/2: 새벽 4시에 지워진 작업을 열어 둔 화면이 2초마다 물어 밤새
+    # 404가 11,975번 — 서버가 6시간 반 동안 꺼지지 않았다). 로그인 없이 묻는 화면(401)·봇(/test.php 404)도 마찬가지
+    if request.url.path != "/idle" and response.status_code < 400:
         _last_request = time.time()
     return response
 

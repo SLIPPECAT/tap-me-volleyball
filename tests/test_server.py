@@ -392,6 +392,10 @@ def test_idle_reports_quiet_time_and_running_work(client: TestClient, monkeypatc
     # 11/2: 지워진 작업을 2초마다 묻는 열린 화면(404)이 밤새 서버를 깨워 두었다 → 없는 주소는 사용으로 치지 않는다
     assert client.get("/jobs/000000000000").status_code == 404 and client.get("/test.php").status_code == 404
     assert client.get("/idle").json()["idle_sec"] > 3600
+    monkeypatch.setattr(gate, "MEMBERS_ONLY", True)  # 입장 쿠키 없이 묻는 화면(401)도 사용으로 치지 않는다
+    assert client.get(f"/jobs/{job_id}").status_code == 401
+    assert client.get("/idle").json()["idle_sec"] > 3600
+    monkeypatch.setattr(gate, "MEMBERS_ONLY", False)
     client.get(f"/jobs/{job_id}")
     assert client.get("/idle").json()["idle_sec"] < 60
     html = client.get("/").text
