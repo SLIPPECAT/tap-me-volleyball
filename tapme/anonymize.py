@@ -83,15 +83,17 @@ def detect_faces_split(
     detector: cv2.FaceDetectorYN,
     profile: cv2.CascadeClassifier | None = None,
     profile_scale: float = PROFILE_SCALE_FACTOR,
+    upscale: float = DETECT_UPSCALE,
 ) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
-    """(YuNet 얼굴, 옆얼굴 Haar 얼굴). 옆얼굴 Haar는 유니폼 등·다리를 얼굴로 잡는 일이 있어(H-48) 결과 영상에서 따로 거른다."""
+    """(YuNet 얼굴, 옆얼굴 Haar 얼굴). 옆얼굴 Haar는 유니폼 등·다리를 얼굴로 잡는 일이 있어(H-48) 결과 영상에서 따로 거른다.
+    upscale: YuNet을 돌릴 확대 배율. 결과 영상 모자이크만 사용자가 고른다(render.FACE_SCALES), Meta 흐림본은 늘 기본값."""
     h, w = frame.shape[:2]
-    big_w, big_h = int(w * DETECT_UPSCALE), int(h * DETECT_UPSCALE)
+    big_w, big_h = int(w * upscale), int(h * upscale)
     big = frame if (big_w, big_h) == (w, h) else cv2.resize(frame, (big_w, big_h))
     detector.setInputSize((big_w, big_h))
     _, faces = detector.detect(big)
     boxes = [] if faces is None else [
-        tuple(int(v / DETECT_UPSCALE) for v in f[:4]) for f in faces
+        tuple(int(v / upscale) for v in f[:4]) for f in faces
     ]
     side: list[tuple[int, int, int, int]] = []
     if profile is not None:

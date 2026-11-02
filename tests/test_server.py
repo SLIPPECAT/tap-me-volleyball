@@ -180,8 +180,10 @@ def _awaiting_tap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> str:
 def test_highlight_sends_taps_from_any_scenes(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     job_id = _awaiting_tap(client, monkeypatch)
     got: list = []
+    scales: list = []
     def fake_make(job, i, taps, *a):
         got.append(taps)
+        scales.append(a[-1])  # 얼굴 찾기 배율(마지막 인자, 11/2)
         job.scenes[str(i)]["status"] = "done"
 
     monkeypatch.setattr(jobs, "make_highlight", fake_make)
@@ -195,6 +197,11 @@ def test_highlight_sends_taps_from_any_scenes(client: TestClient, monkeypatch: p
     # 팀별 모자이크(11/1): 정해진 값만
     assert client.post(url, json={"taps": [{"which": "b2", "x": 1, "y": 2}], "team": "검정",
                                   "mosaic_team": "everyone"}).status_code == 422
+    # 모자이크 얼굴 찾기 배율(11/2 사용자): 1·1.5·2만, 고르지 않으면 지금처럼 2배
+    assert scales == [2.0, 2.0]
+    assert client.post(url, json={"taps": [{"which": "b2", "x": 1, "y": 2}], "team": "검정", "face_scale": 3}).status_code == 422
+    assert client.post(url, json={"taps": [{"which": "b2", "x": 1, "y": 2}], "team": "검정", "face_scale": 1.5}).status_code == 200
+    assert scales[-1] == 1.5
 
 
 def test_tap_frame_kind_is_checked(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

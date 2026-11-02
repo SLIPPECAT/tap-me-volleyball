@@ -178,7 +178,7 @@ def test_profile_faces_are_searched_every_other_frame(tmp_path: Path, monkeypatc
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=0.3",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
     used: list[bool] = []
-    monkeypatch.setattr(anonymize, "detect_faces_split", lambda f, d, p=None, s=None: used.append(p is not None) or ([], []))
+    monkeypatch.setattr(anonymize, "detect_faces_split", lambda f, d, p=None, s=None, **k: used.append(p is not None) or ([], []))
     monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a, **k: [])
     render.render_video(src, tmp_path / "m.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=True)
     assert len(used) == 9 and used == [i % render.PROFILE_EVERY == 0 for i in range(9)]
@@ -192,8 +192,31 @@ def test_profile_faces_are_searched_every_other_frame(tmp_path: Path, monkeypatc
     monkeypatch.setitem(render._W, "plain", None)
     buf = np.zeros((4, 4, 3), np.uint8).tobytes()
     for side in (True, False):
-        render._worker_faces((buf, 4, 4, (0, 0, 4, 4), (4, 4), side, False))
+        render._worker_faces((buf, 4, 4, (0, 0, 4, 4), (4, 4), side, False, 2.0))
     assert used == [True, False]
+
+
+def test_face_scale_sets_the_detector_upscale_and_runs_one_detector_at_1x(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/2 사용자: 늘 2배였던 모자이크 얼굴 찾기 배율을 영상 크기에 따라 1·1.5배로도 고른다. 1배면 원래 크기 YuNet(두 번째
+    # 검출기)과 같은 일이라 한 번만 돌린다. Meta 흐림본(anonymize 기본값)은 그대로 2배
+    from tapme import anonymize
+
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=0.2",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
+    scales: list = []
+    plain: list = []
+    monkeypatch.setattr(anonymize, "detect_faces_split", lambda *a, upscale=anonymize.DETECT_UPSCALE, **k: scales.append(upscale) or ([], []))
+    monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a, **k: plain.append(1) or [])
+    for scale in render.FACE_SCALES:
+        scales.clear()
+        plain.clear()
+        render.render_video(src, tmp_path / f"{scale}.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_scale=scale)
+        assert scales == [scale, scale] and len(plain) == (0 if scale == 1.0 else 2)
+    assert render.DEFAULT_FACE_SCALE == anonymize.DETECT_UPSCALE == 2.0
+    import inspect
+
+    assert inspect.signature(render.render_video).parameters["face_scale"].default == 2.0  # 고르지 않으면 지금처럼
 
 
 def test_me_marker_glows_at_the_feet_and_points_from_above() -> None:

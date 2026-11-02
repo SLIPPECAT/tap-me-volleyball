@@ -246,6 +246,11 @@ RENDER_BOX_PAD = 0.4
 # 장당 1,592 → 1,082ms, 옆얼굴로만 덮이던 자리의 24%가 1프레임(1/30초)씩 빠지고 다음 검출·FACE_HOLD_SEC로 다시 덮인다
 PROFILE_EVERY = 2
 MY_HEAD_SHARE = 0.35  # '나'의 얼굴로 보는 곳: 내 박스 위쪽 이 비율 안
+# 결과 영상 모자이크의 얼굴 찾기 배율(11/2 사용자: 늘 2배였다 — 영상 크기에 따라 1·1.5배를 고르고 싶을 수 있다).
+# 작을수록 빠르지만 멀리 있는 작은 얼굴을 놓친다(H-41: Meta 흐림본에서 1.5배는 얼굴 약 21% 놓침). 4K는 1배가 1080p 2배와
+# 얼굴 픽셀 크기가 같다. 1배면 원래 크기 YuNet(H-29 두 번째 검출기)과 같은 일이라 한 번만 돌린다
+FACE_SCALES = (1.0, 1.5, 2.0)
+DEFAULT_FACE_SCALE = 2.0
 
 
 def faces_of_others(faces: list[tuple[int, int, int, int]], me: Box | None) -> list[tuple[int, int, int, int]]:
@@ -296,19 +301,21 @@ def _worker_init(threads: int, two_detectors: bool) -> None:
 
 
 def _worker_faces(args: tuple) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
-    buf, width, height, crop, out_size, side, two_detectors = args
+    buf, width, height, crop, out_size, side, two_detectors, scale = args
     if "detector" not in _W or (two_detectors and _W.get("plain") is None):  # 같이 쓰는 프로세스(anonymize._worker_init)
         _worker_init(WORKER_CV_THREADS, two_detectors)
     bgr = np.ascontiguousarray(np.frombuffer(buf, np.uint8).reshape(height, width, 3)[..., ::-1])
-    return _find_faces(bgr, _W["detector"], _W["profile"] if side else None, _W["plain"], crop, out_size)  # type: ignore[arg-type]
+    plain = _W["plain"] if two_detectors else None
+    return _find_faces(bgr, _W["detector"], _W["profile"] if side else None, plain, crop, out_size, scale)  # type: ignore[arg-type]
 
 
 def _find_faces(bgr: np.ndarray, detector: cv2.FaceDetectorYN, profile: cv2.CascadeClassifier | None,
                 plain: cv2.FaceDetectorYN | None, crop: tuple[int, int, int, int],
-                out_size: tuple[int, int]) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
+                out_size: tuple[int, int], scale: float = DEFAULT_FACE_SCALE,
+                ) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
     """한 프레임의 (얼굴, 옆얼굴 Haar 얼굴)(원본 좌표). 매 프레임 화면 전체에서 찾는다. 3프레임마다(실험 H-27)나
     결과 화면 안만(H-28) 찾으면 놓치는 얼굴이 늘었다. 옆얼굴은 사람 몸 위에 잡힌 것을 렌더에서 거른다(H-48)."""
-    faces, side = anonymize.detect_faces_split(bgr, detector, profile)
+    faces, side = anonymize.detect_faces_split(bgr, detector, profile, upscale=scale)
     if plain is not None:  # 두 설정은 놓치는 얼굴이 달라 합친다(H-29)
         faces = faces + anonymize.detect_faces_plain(bgr, plain)
     x0, y0, cw, ch = crop
@@ -362,10 +369,13 @@ def render_video(
     max_fps: int = 0,
     people_by_sam: dict[int, list[Box]] | None = None,
     clear_ids: set[str] | None = None,
+    face_scale: float = DEFAULT_FACE_SCALE,
 ) -> Path:
     """subtitles = [(시작초, 끝초, 글자), ...]. 장면에 맞춰 바뀌는 해설 자막(score.subtitle_cues). 없으면 자막 없음.
     face_mosaic이면 '나'를 뺀 얼굴을 모자이크한다(src는 원본 클립). 얼굴은 face_every 프레임마다 찾고 사이는 이어 쓴다.
-    clear_ids가 있으면 people_by_sam 중 그 선수들(풀어 줄 팀)의 얼굴은 가리지 않는다(off_team)."""
+    clear_ids가 있으면 people_by_sam 중 그 선수들(풀어 줄 팀)의 얼굴은 가리지 않는다(off_team).
+    face_scale: 얼굴 찾기 배율(FACE_SCALES)."""
+    two_detectors = two_detectors and face_scale != 1.0  # 1배면 두 번째(원래 크기) 검출기와 같은 일
     detector = profile = plain = None
     if face_mosaic:
         detector, profile = anonymize.load_detector(), anonymize.load_profile_detector()
@@ -405,7 +415,7 @@ def render_video(
             job = None
             if pool is not None and read_i % face_every == 0:
                 job = pool.submit(_worker_faces, (buf, width, height, crops[min(read_i, n - 1)], (out_w, out_h),
-                                                  read_i % PROFILE_EVERY == 0, two_detectors))
+                                                  read_i % PROFILE_EVERY == 0, two_detectors, face_scale))
             ahead.append((buf, job))
             read_i += 1
 
@@ -430,7 +440,7 @@ def render_video(
                     else:
                         bgr = np.ascontiguousarray(rgb[..., ::-1])  # 검출기는 BGR
                         faces, side = _find_faces(bgr, detector, profile if i % PROFILE_EVERY == 0 else None, plain,
-                                                  crops[k], (out_w, out_h))
+                                                  crops[k], (out_w, out_h), face_scale)
                     if people_by_sam is not None:  # 다른 선수까지 추적했으면 몸 위에 잡힌 옆얼굴을 거른다(H-48)
                         side = off_bodies(side, people_by_sam.get(round(i * sam_fps / fps), []))
                     faces = faces + side

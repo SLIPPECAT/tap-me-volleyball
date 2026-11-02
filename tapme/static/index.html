@@ -299,6 +299,9 @@
       </select></div>
     <div class="field"><label data-t="fps"></label>
       <select class="fps"><option value="0" selected data-t="fpsSource"></option><option value="30" data-t="fps30"></option></select></div>
+    <div class="field"><label data-t="faceScale"></label>
+      <select class="face-scale"><option value="2" selected data-t="faceScale2"></option><option value="1.5" data-t="faceScale15"></option><option value="1" data-t="faceScale1"></option></select>
+      <p class="muted face-scale-note" hidden></p></div>
   </div>
 </template>
 
@@ -332,7 +335,7 @@ const T = {
     resultTitle: "내 하이라이트", commentary: "해설: {c}", rerenderBusy: "다시 만드는 중…", share: "공유", save: "저장",
     changeOptions: "옵션 바꾸기", rerenderHint: "대부분 AI 비용 없이 다시 만들어요. 자막을 처음 켜거나 역할을 바꿀 때, 몸 실루엣을 처음 고를 때만 약 $0.01씩 들어요.", rerender: "다시 만들기",
     mosaic: "얼굴 모자이크 (내 얼굴은 그대로)", mosaicAll: "다른 회원 모두", mosaicOpponent: "상대 팀만 (우리 팀 얼굴은 그대로)", mosaicMine: "우리 팀만 (상대 팀 얼굴은 그대로)", mosaicNone: "가리지 않기", mosaicNote: "얼굴이 그대로 나오는 회원에게 저장·공유해도 되는지 먼저 물어봐 주세요. 팀을 알아보지 못한 사람은 그대로 가려요.", subsOn: "자막 넣기 (중계 해설처럼)", subLangs: "자막 언어", role: "이 득점에서 내 역할 (선택)",
-    roleNone: "고르지 않음", roleScore: "내가 직접 득점", roleAssist: "연결 (리시브·토스)", roleDefense: "수비로 살림", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대", fps: "프레임 수", fpsSource: "원본 그대로", fps30: "30fps (빨리 만들기)",
+    roleNone: "고르지 않음", roleScore: "내가 직접 득점", roleAssist: "연결 (리시브·토스)", roleDefense: "수비로 살림", privacy: "다른 회원 가리기", privFace: "얼굴만", privSilhouette: "몸 실루엣", privBackground: "나 빼고 전부", zoom: "확대", fps: "프레임 수", fpsSource: "원본 그대로", fps30: "30fps (빨리 만들기)", faceScale: "얼굴 찾기 크기 (모자이크)", faceScale2: "2배 — 작은 얼굴까지 (기본)", faceScale15: "1.5배 — 조금 빠르게", faceScale1: "1배 — 가장 빠르게 (4K 영상에 알맞아요)", faceScaleRec: "이 영상({r})에는 {s}배를 추천해요. 작을수록 빨리 만들지만 멀리 있는 작은 얼굴을 놓칠 수 있어요.",
     spent: "이 작업에 쓴 AI 비용 ${u}", reqFail: "요청 실패 ({c})",
   },
   ja: {
@@ -362,7 +365,7 @@ const T = {
     resultTitle: "自分のハイライト", commentary: "実況：{c}", rerenderBusy: "作り直しています…", share: "共有", save: "保存",
     changeOptions: "オプションを変える", rerenderHint: "ほとんどAIの費用なしで作り直します。字幕を初めて入れる・役割を変える・体のシルエットを初めて選ぶときだけ約$0.01ずつかかります。", rerender: "作り直す",
     mosaic: "顔のモザイク（自分の顔はそのまま）", mosaicAll: "ほかのメンバー全員", mosaicOpponent: "相手チームだけ（自分のチームの顔はそのまま）", mosaicMine: "自分のチームだけ（相手チームの顔はそのまま）", mosaicNone: "隠さない", mosaicNote: "顔がそのまま映るメンバーに、保存・共有してよいか先に聞いてください。チームがわからなかった人は隠したままです。", subsOn: "字幕を入れる（実況風）", subLangs: "字幕の言語", role: "この得点での自分の役割（任意）",
-    roleNone: "選ばない", roleScore: "自分で得点", roleAssist: "つなぎ（レシーブ・トス）", roleDefense: "守備でつないだ", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大", fps: "フレームレート", fpsSource: "元のまま", fps30: "30fps（早く作る）",
+    roleNone: "選ばない", roleScore: "自分で得点", roleAssist: "つなぎ（レシーブ・トス）", roleDefense: "守備でつないだ", privacy: "ほかのメンバーを隠す", privFace: "顔だけ", privSilhouette: "体のシルエット", privBackground: "自分以外すべて", zoom: "拡大", fps: "フレームレート", fpsSource: "元のまま", fps30: "30fps（早く作る）", faceScale: "顔さがしの拡大（モザイク）", faceScale2: "2倍 — 小さい顔まで（標準）", faceScale15: "1.5倍 — 少し速く", faceScale1: "1倍 — いちばん速い（4K動画向き）", faceScaleRec: "この動画（{r}）には{s}倍がおすすめです。小さいほど速く作れますが、遠くの小さな顔を見落とすことがあります。",
     spent: "この作業のAI費用 ${u}", reqFail: "リクエスト失敗 ({c})",
   },
   en: {
@@ -392,7 +395,7 @@ const T = {
     resultTitle: "Your highlight", commentary: "Commentary: {c}", rerenderBusy: "Re-rendering…", share: "Share", save: "Save",
     changeOptions: "Change options", rerenderHint: "Re-rendering is mostly free. About $0.01 only when you first turn on subtitles, change your role, or first pick body silhouettes.", rerender: "Re-render",
     mosaic: "Face pixelation (yours stays clear)", mosaicAll: "All other members", mosaicOpponent: "Opponents only (your team stays clear)", mosaicMine: "Your team only (opponents stay clear)", mosaicNone: "Don't pixelate", mosaicNote: "Ask the members whose faces show before you save or share. Anyone whose team we can't tell stays pixelated.", subsOn: "Add subtitles (like live commentary)", subLangs: "Subtitle languages", role: "My role in this point (optional)",
-    roleNone: "Don't say", roleScore: "I scored it", roleAssist: "Set it up (pass/set)", roleDefense: "Saved it on defense", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom", fps: "Frame rate", fpsSource: "Same as source", fps30: "30fps (faster)",
+    roleNone: "Don't say", roleScore: "I scored it", roleAssist: "Set it up (pass/set)", roleDefense: "Saved it on defense", privacy: "Hide other members", privFace: "Faces only", privSilhouette: "Body silhouettes", privBackground: "Everything but me", zoom: "Zoom", fps: "Frame rate", fpsSource: "Same as source", fps30: "30fps (faster)", faceScale: "Face search scale (pixelation)", faceScale2: "2× — catches small faces (default)", faceScale15: "1.5× — a bit faster", faceScale1: "1× — fastest (fits 4K video)", faceScaleRec: "For this video ({r}) we suggest {s}×. Smaller is faster but can miss small faces far away.",
     spent: "AI cost for this job ${u}", reqFail: "Request failed ({c})",
   },
 };
@@ -458,7 +461,17 @@ function readOptions(box) {
     face_mosaic: box.querySelector(".mosaic").value !== "none",
     mosaic_team: box.querySelector(".mosaic").value === "none" ? "all" : box.querySelector(".mosaic").value,
     reel: box.querySelector(".reel-style").value,
+    face_scale: parseFloat(box.querySelector(".face-scale").value),
   };
+}
+// 모자이크 얼굴 찾기 배율 추천(11/2 사용자: 늘 2배였다). 얼굴 픽셀 크기가 1080p 2배와 비슷하게 — 4K 1배 · 1440p 1.5배 · 그 밖 2배
+function faceScaleFor(w, h) { const s = Math.min(w, h); return s >= 2000 ? 1 : s >= 1400 ? 1.5 : 2; }
+function showFaceScale(box, pick) {
+  const sel = box && box.querySelector(".face-scale"), note = box && box.querySelector(".face-scale-note");
+  if (!sel || !state.faceRec) return;
+  if (pick) sel.value = String(state.faceRec.s);
+  note.textContent = t("faceScaleRec", { r: state.faceRec.r, s: state.faceRec.s });
+  note.hidden = false;
 }
 function mountOptions(boxId, o) {
   const box = $(boxId);
@@ -479,6 +492,8 @@ function mountOptions(boxId, o) {
     box.querySelector(".role").value = o.role || "";
     mosaic.value = o.face_mosaic === false ? "none" : (o.mosaic_team || "all");
   }
+  box.querySelector(".face-scale").value = String((o && o.face_scale) || (state.faceRec && state.faceRec.s) || 2);
+  showFaceScale(box, false);
   note.hidden = mosaic.value === "all";
 }
 
@@ -1200,8 +1215,14 @@ $("range-last").onclick = () => { const d = rangeVideo.duration; setRange(d - MA
 function checkLength(f) {
   state.range = null; $("range").hidden = true; $("range").classList.remove("unknown"); $("range-note").textContent = "";
   if (rangeVideo.src) URL.revokeObjectURL(rangeVideo.src);
+  state.faceRec = null;
   rangeVideo.onloadedmetadata = () => {
     if (rangeVideo.duration > MAX_SCAN) { $("range").hidden = false; setRange(0, MAX_SCAN); }
+    const w = rangeVideo.videoWidth, h = rangeVideo.videoHeight;
+    if (w && h) {  // 맡기기 전에 이 영상에 맞는 배율을 골라 두고 알려 준다(바꿀 수 있다)
+      state.faceRec = { s: faceScaleFor(w, h), r: `${w}×${h}` };
+      showFaceScale($("opts-auto"), true);
+    }
   };
   rangeVideo.onerror = () => { $("range").hidden = false; $("range").classList.add("unknown"); $("range-note").textContent = t("rangeUnknown", { m: MAX_SCAN_MIN }); };
   rangeVideo.src = URL.createObjectURL(f);

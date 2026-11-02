@@ -225,6 +225,7 @@ class RenderOptions(BaseModel):
     zoom: float = render.DEFAULT_ZOOM
     fps: int = Field(default=0, description="결과 영상 fps: 0이면 원본 그대로, 30이면 30fps까지(60fps 원본은 렌더가 약 절반)")
     reel: str = Field(default="full", pattern="^(full|short)$", description="한 번에 맡기기의 모음 영상: full 랠리 전체 · short 득점 앞뒤")
+    face_scale: float = Field(default=render.DEFAULT_FACE_SCALE, description="모자이크 얼굴 찾기 배율 1·1.5·2: 작을수록 빠르고 작은 얼굴을 놓친다")
 
     @field_validator("languages")
     @classmethod
@@ -267,6 +268,13 @@ class RenderOptions(BaseModel):
     def _fps(cls, v: int) -> int:
         if v not in (0, 30):
             raise ValueError("fps는 0(원본) 또는 30")
+        return v
+
+    @field_validator("face_scale")
+    @classmethod
+    def _face_scale(cls, v: float) -> float:
+        if v not in render.FACE_SCALES:
+            raise ValueError(f"얼굴 찾기 배율은 {render.FACE_SCALES} 중 하나")
         return v
 
 
@@ -499,7 +507,8 @@ def _auto_render(job_id: str, index: int, frame: str, card: int, a: dict[str, An
     o = a.get("options", {})
     args = (job_id, index, [(frame, card)], a["team"], o.get("languages", []), o.get("role", ""),
             o.get("privacy", render.DEFAULT_PRIVACY), o.get("zoom", render.DEFAULT_ZOOM), client,
-            o.get("face_mosaic", True), o.get("fps", 0), o.get("mosaic_team", "all"))
+            o.get("face_mosaic", True), o.get("fps", 0), o.get("mosaic_team", "all"),
+            o.get("face_scale", render.DEFAULT_FACE_SCALE))
 
     def go() -> None:
         with _Working():
@@ -1218,7 +1227,7 @@ def highlight(job_id: str, index: int, req: TapRequest, background: BackgroundTa
     scene["status"] = "queued"  # 예약됨. 여러 장면을 이어서 예약할 수 있다(일괄 만들기)
     job.save()
     background.add_task(_run_highlight, job_id, index, [t.as_tuple() for t in req.taps], req.team, req.languages, req.role,
-                        req.privacy, req.zoom, client_factory(), req.face_mosaic, req.fps, req.mosaic_team)
+                        req.privacy, req.zoom, client_factory(), req.face_mosaic, req.fps, req.mosaic_team, req.face_scale)
     return {"status": "queued"}
 
 
@@ -1233,7 +1242,7 @@ def rerender(job_id: str, index: int, req: RenderOptions, background: Background
     job.save()
     # 자막을 처음 켜거나 역할을 바꾸면 해설(Muse), '몸 실루엣'을 처음 고르면 다른 선수 추적(SAM)이 한 번 필요하다
     background.add_task(_run_rerender, job_id, index, req.languages, req.role, req.privacy, req.zoom,
-                        client_factory(), req.face_mosaic, req.fps, req.mosaic_team)
+                        client_factory(), req.face_mosaic, req.fps, req.mosaic_team, req.face_scale)
     return {"status": "rendering"}
 
 
