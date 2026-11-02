@@ -1165,3 +1165,12 @@ def test_tap_check_stops_a_too_small_or_missed_tap_before_upload(client: TestCli
     assert auto.MIN_REF_HEIGHT == 0.12
     html = client.get("/").text
     assert "checkTap(state.me)" in html and "state.me.ok === true" in html  # 확인을 통과해야 '만들어 줘'가 눌린다
+
+
+def test_refresh_keeps_the_picked_video_and_tap(client: TestClient) -> None:
+    # 11/2 사용자: 브라우저에서 새로고침하면 작업 내역이 다 날아갔다. 파일은 다시 골라야 하지만 같은 영상이면 탭이 이어지고,
+    # 골라 두거나 올리는 중에는 떠나기 전에 묻는다(아이폰 사파리는 묻지 않을 때가 많아 저장이 본체)
+    html = client.get("/").text
+    assert 'storeSet(DRAFT_KEY' in html and "restoreTap(draft.me)" in html and "draft.sig === fileSig(f)" in html
+    assert "state.uploading || (state.pending && !state.job)" in html  # 새로고침·닫기 전 확인
+    assert 'id="draft-note"' in html and "draftNote" in html
