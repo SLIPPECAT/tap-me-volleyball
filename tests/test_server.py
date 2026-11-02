@@ -389,6 +389,13 @@ def test_idle_reports_quiet_time_and_running_work(client: TestClient, monkeypatc
     assert seen == [True] and client.get("/idle").json()["busy"] is False
     monkeypatch.setattr(server, "_last_request", 0.0)
     assert client.get("/idle").json()["idle_sec"] > 3600  # /idle을 묻는 것은 요청으로 치지 않는다
+    # 11/2: 지워진 작업을 2초마다 묻는 열린 화면(404)이 밤새 서버를 깨워 두었다 → 없는 주소는 사용으로 치지 않는다
+    assert client.get("/jobs/000000000000").status_code == 404 and client.get("/test.php").status_code == 404
+    assert client.get("/idle").json()["idle_sec"] > 3600
+    client.get(f"/jobs/{job_id}")
+    assert client.get("/idle").json()["idle_sec"] < 60
+    html = client.get("/").text
+    assert "e.status === 404" in html and "clearInterval(state.poll)" in html  # 화면도 404면 묻기를 멈춘다
 
 
 def test_invite_link_gives_a_code_with_limits(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
