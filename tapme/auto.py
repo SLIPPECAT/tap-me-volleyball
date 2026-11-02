@@ -15,13 +15,16 @@ from __future__ import annotations
 import base64
 import io
 import subprocess
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
 from PIL import Image, ImageDraw
 
-from tapme import jobs, muse, track
+from tapme import anonymize, jobs, muse, track
 
 # 한 번에 맡기기는 10분까지(11/1 사용자: 20분 → 10분. 입력 용량·랠리 찾기 비용이 예상 범위에 든다, 1080p 약 450MB·약 $0.37).
 # 하나씩 고르기는 jobs.MAX_SCAN_SEC(30분)
@@ -67,6 +70,52 @@ def _candidate(frame: Path, box: list[float], name: str, label: str) -> dict[str
     return _img(path, label)
 
 
+# 탭한 '나'가 너무 작으면(멀리 있으면) 나 찾기의 기준 사진이 흐려 같은 팀 다른 선수와 헷갈린다(11/2 사용자: 탭할 때 막기).
+# 상자 높이가 화면 높이의 이만큼보다 작으면 다른 장면에서 다시 탭하게 한다. C1 경기에서 탭한 선수 약 0.16, 먼 코트 선수 약 0.09
+MIN_REF_HEIGHT = 0.12
+TAP_SLACK = 0.1  # 상자 가장자리를 조금 벗어나 탭해도 그 사람으로 본다(상자 크기 대비)
+TAP_MESSAGES = {
+    "miss": "탭한 곳에서 선수를 찾지 못했어요. 내 몸 위를 탭해 주세요",
+    "small": "탭한 장면에서 내가 너무 작게(멀리) 보여요. 내가 더 크게 보이는 장면에서 다시 탭해 주세요",
+}
+
+
+def pick_tapped(boxes: list[track.Box], x: float, y: float, frame_h: int) -> tuple[track.Box | None, str]:
+    """탭한 곳의 선수와 판정: ok · miss(탭한 곳에 선수 없음) · small(너무 작음). 여럿이면 상자 가운데가 가장 가까운 사람."""
+    def near(b: track.Box) -> bool:
+        mw, mh = (b.right - b.left) * TAP_SLACK, (b.bottom - b.top) * TAP_SLACK
+        return b.left - mw <= x <= b.right + mw and b.top - mh <= y <= b.bottom + mh
+    inside = [b for b in boxes if near(b)]
+    if not inside:
+        return None, "miss"
+    pick = min(inside, key=lambda b: (b.center[0] - x) ** 2 + (b.center[1] - y) ** 2)
+    return pick, ("small" if pick.bottom - pick.top < MIN_REF_HEIGHT * frame_h else "ok")
+
+
+def check_tap(image: bytes, x: float, y: float, client: Any) -> dict[str, Any]:
+    """올리기 전, 탭한 장면 한 장으로 '나'가 충분히 크게 보이는지(11/2 사용자). 얼굴을 흐린 뒤 SAM으로 선수를 찾는다
+    (장당 track.USD_PER_IMAGE, 서비스 전체 비용 장부에 더한다). 얼굴이 그대로인 사진은 남기지 않는다."""
+    frame = cv2.imdecode(np.frombuffer(image, np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("사진을 읽지 못했어요")
+    if jobs.total_spent() + track.USD_PER_IMAGE > jobs.MAX_USD_TOTAL:
+        raise jobs.BudgetExceeded(f"서비스 전체 비용 상한 ${jobs.MAX_USD_TOTAL:.0f}에 닿았어요")
+    d = jobs.JOBS_DIR / "_tapcheck"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{uuid.uuid4().hex}.jpg"
+    try:
+        cv2.imwrite(str(path), anonymize.pixelate_boxes(frame, anonymize.detect_faces(frame, anonymize.load_detector())),
+                    [cv2.IMWRITE_JPEG_QUALITY, 92])
+        boxes = track.detect_players(client, path)
+    finally:
+        path.unlink(missing_ok=True)
+    with jobs._lock:
+        jobs._add_spend(track.USD_PER_IMAGE)
+    pick, why = pick_tapped(boxes, x, y, frame.shape[0])
+    height = round((pick.bottom - pick.top) / frame.shape[0], 3) if pick else 0.0
+    return {"ok": why == "ok", "reason": why, "height": height}
+
+
 def make_reference(job: jobs.Job, t: float, x: float, y: float, client: Any) -> Path:
     """탭한 순간(원본 t초, 원본 화소 x·y)의 얼굴 흐림 화면에서 선수를 찾아, 탭한 곳을 가장 잘 덮는 사람의 카드를 자른다."""
     d = job.dir / "auto"
@@ -83,9 +132,11 @@ def make_reference(job: jobs.Job, t: float, x: float, y: float, client: Any) -> 
     job.spent_usd += track.USD_PER_IMAGE
     if not boxes:
         raise jobs.TapMissed("탭한 화면에서 선수를 찾지 못했어요. 내가 크게 보이는 다른 장면에서 다시 탭해 주세요")
-    inside = [b for b in boxes if b.left <= x <= b.right and b.top <= y <= b.bottom]
-    pick = min(inside or boxes, key=lambda b: (b.center[0] - x) ** 2 + (b.center[1] - y) ** 2)
     img = Image.open(frame)
+    pick, why = pick_tapped(boxes, x, y, img.height)  # 올리기 전에 화면이 확인하지만(/tap-check) 서버도 한 번 더
+    if pick is None or why != "ok":
+        frame.unlink()
+        raise jobs.TapMissed(TAP_MESSAGES[why])
     pad_w, pad_h = (pick.right - pick.left) * 0.15, (pick.bottom - pick.top) * 0.08  # 선수 카드(player_cards)와 같게
     card = img.crop((max(0, pick.left - pad_w), max(0, pick.top - pad_h),
                      min(img.width, pick.right + pad_w), min(img.height, pick.bottom + pad_h)))

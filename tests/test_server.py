@@ -1133,3 +1133,35 @@ def test_only_number_level_confidence_makes_a_highlight_by_itself() -> None:
     assert auto.decide({"card": 2, "confidence": 0.95}) == "make" and auto.decide({"card": 2, "confidence": 0.9}) == "make"
     assert auto.decide({"card": 2, "confidence": 0.8}) == "review" and auto.decide({"card": 2, "confidence": 0.75}) == "review"
     assert auto.decide({"card": -1, "confidence": 0.95}) == "review"  # 못 찾았다는 확신은 만들 근거가 아니다
+
+
+def test_tap_check_stops_a_too_small_or_missed_tap_before_upload(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/2 사용자: 탭한 '나'가 너무 작거나 멀리 있으면 하이라이트를 만들지 않게. 올리기 전에 그 장면 한 장만 확인한다
+    # (얼굴을 흐린 뒤 SAM, 장당 track.USD_PER_IMAGE를 서비스 전체 장부에 더한다). 얼굴이 그대로인 사진은 남기지 않는다
+    import cv2
+    import numpy as np
+
+    from tapme import auto, track
+
+    sent: list = []
+
+    def fake_detect(c, path):
+        sent.append(path.exists())
+        return [track.Box("0", 100, 300, 160, 500),  # 높이 200 / 1080 = 0.19 → 충분
+                track.Box("1", 900, 400, 930, 480)]  # 높이 80 / 1080 = 0.07 → 너무 작음
+    monkeypatch.setattr(track, "detect_players", fake_detect)
+    jpg = cv2.imencode(".jpg", np.zeros((1080, 1920, 3), np.uint8))[1].tobytes()
+    post = lambda x, y: client.post("/tap-check", files={"image": ("tap.jpg", jpg, "image/jpeg")}, data={"x": x, "y": y}).json()
+    before = jobs.total_spent()
+    assert post(130, 400) == {"ok": True, "reason": "ok", "height": 0.185}
+    assert post(915, 440)["reason"] == "small"
+    assert post(1500, 800) == {"ok": False, "reason": "miss", "height": 0.0}
+    assert post(165, 400)["ok"] is True  # 상자 가장자리를 조금 벗어나도 그 사람
+    assert sent == [True] * 4 and not list((jobs.JOBS_DIR / "_tapcheck").iterdir())  # 확인 뒤 사진을 지운다
+    assert jobs.total_spent() == pytest.approx(before + 4 * track.USD_PER_IMAGE)
+    assert client.post("/tap-check", files={"image": ("x.jpg", b"not an image", "image/jpeg")}, data={"x": 1, "y": 1}).status_code == 400
+    # 서버가 맡을 때도 같은 기준(화면 확인을 건너뛴 경우)
+    assert auto.pick_tapped([track.Box("1", 900, 400, 930, 480)], 915, 440, 1080)[1] == "small"
+    assert auto.MIN_REF_HEIGHT == 0.12
+    html = client.get("/").text
+    assert "checkTap(state.me)" in html and "state.me.ok === true" in html  # 확인을 통과해야 '만들어 줘'가 눌린다

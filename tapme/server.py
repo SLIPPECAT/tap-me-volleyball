@@ -660,6 +660,23 @@ def start_auto(job_id: str, req: AutoRequest) -> dict[str, str]:
     return {"status": "accepted"}
 
 
+@app.post("/tap-check")
+def tap_check(image: UploadFile, x: float = Form(..., ge=0), y: float = Form(..., ge=0)) -> dict[str, Any]:
+    """한 번에 맡기기에서 '나'를 탭하면, 올리기 전에 그 장면 한 장으로 내가 충분히 크게 보이는지 확인한다(11/2 사용자)."""
+    data = image.file.read(MAX_TAP_IMAGE_BYTES + 1)
+    if len(data) > MAX_TAP_IMAGE_BYTES:
+        raise HTTPException(413, "사진이 너무 커요")
+    try:
+        return auto.check_tap(data, x, y, client_factory())
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except jobs.BudgetExceeded as e:
+        raise HTTPException(503, str(e)) from e
+
+
+MAX_TAP_IMAGE_BYTES = 8 * 1024 * 1024  # 4K 한 장(JPEG)도 넉넉히
+
+
 @app.get("/sw.js")
 def service_worker() -> FileResponse:
     """완료 알림을 받는 서비스 워커. 화면 전체(/)를 맡아야 해 루트에서 준다."""
