@@ -1226,7 +1226,9 @@ function checkLength(f) {
     const w = rangeVideo.videoWidth, h = rangeVideo.videoHeight;
     if (w && h) {  // 맡기기 전에 이 영상에 맞는 배율을 골라 두고 알려 준다(바꿀 수 있다)
       state.faceRec = { s: faceScaleFor(w, h), r: `${w}×${h}` };
-      showFaceScale($("opts-auto"), true);
+      showFaceScale($("opts-auto"), !state.faceScaleChoice);  // 이 영상에서 직접 고른 배율이 있으면 그대로(11/2 아이폰 시험)
+      const sel = $("opts-auto").querySelector(".face-scale");
+      if (state.faceScaleChoice && sel) sel.value = String(state.faceScaleChoice);
     }
   };
   rangeVideo.onerror = () => { $("range").hidden = false; $("range").classList.add("unknown"); $("range-note").textContent = t("rangeUnknown", { m: MAX_SCAN_MIN }); };
@@ -1274,7 +1276,8 @@ const DRAFT_KEY = "tap-draft";
 const fileSig = (f) => `${f.name}|${f.size}|${f.lastModified}`;
 function loadDraft() { try { return JSON.parse(storeGet(DRAFT_KEY) || "null"); } catch { return null; } }
 function saveDraft() {
-  if (state.pending) storeSet(DRAFT_KEY, JSON.stringify({ sig: fileSig(state.pending), name: state.pending.name, me: state.me }));
+  if (state.pending) storeSet(DRAFT_KEY, JSON.stringify({ sig: fileSig(state.pending), name: state.pending.name, me: state.me,
+                                                       scale: state.faceScaleChoice || null }));
 }
 function restoreTap(me) {
   const draw = () => {
@@ -1310,7 +1313,10 @@ async function checkTap(me) {
 }
 $("me-team").addEventListener("input", () => { state.prefs.team = $("me-team").value; savePrefs(); updateStart(); });
 $("me-info").addEventListener("input", () => { state.prefs.meInfo = $("me-info").value; savePrefs(); });
-$("opts-auto").addEventListener("change", () => { state.prefs.options = readOptions($("opts-auto")); savePrefs(); });
+$("opts-auto").addEventListener("change", (e) => {
+  state.prefs.options = readOptions($("opts-auto")); savePrefs();
+  if (e.target.classList.contains("face-scale")) { state.faceScaleChoice = parseFloat(e.target.value); saveDraft(); }
+});
 
 // 고르거나 끌어다 놓으면 바로 올리지 않고, 파일을 보여 준 뒤 "시작"을 눌러야 올린다(10/30 사용자)
 function pickVideo(f) {
@@ -1322,8 +1328,9 @@ function pickVideo(f) {
   // 한 번에 맡기기: 같은 영상으로 나를 탭한다(기기 안에서만, 올리기 전)
   state.me = null; $("me-frame").hidden = true; $("me-status").textContent = "";
   meVideo.src = rangeVideo.src;
-  const draft = loadDraft();
-  if (draft && draft.sig === fileSig(f) && draft.me) restoreTap(draft.me);  // 새로고침 전에 탭한 장면
+  const draft = loadDraft(), same = draft && draft.sig === fileSig(f);
+  state.faceScaleChoice = same ? draft.scale || null : null;  // 이 영상에서 직접 고른 얼굴 찾기 배율(추천값이 덮지 않게)
+  if (same && draft.me) restoreTap(draft.me);  // 새로고침 전에 탭한 장면
   else saveDraft();
   $("draft-note").hidden = true;
   if (!$("opts-auto").children.length) mountOptions("opts-auto", state.prefs.options);

@@ -1174,3 +1174,5 @@ def test_refresh_keeps_the_picked_video_and_tap(client: TestClient) -> None:
     assert 'storeSet(DRAFT_KEY' in html and "restoreTap(draft.me)" in html and "draft.sig === fileSig(f)" in html
     assert "state.uploading || (state.pending && !state.job)" in html  # 새로고침·닫기 전 확인
     assert 'id="draft-note"' in html and "draftNote" in html
+    # 11/2 아이폰 시험: 새로고침 뒤 같은 영상을 다시 고르면 직접 고른 얼굴 찾기 배율(1배)이 추천값(2배)으로 바뀌었다
+    assert "state.faceScaleChoice = same ? draft.scale" in html and "showFaceScale($(\"opts-auto\"), !state.faceScaleChoice)" in html
