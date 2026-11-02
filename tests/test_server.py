@@ -1247,7 +1247,8 @@ def test_one_shot_makes_the_marker_video_first_then_fast_highlights(client: Test
             _time.sleep(0.05)
         return job_id
 
-    job_id = run()  # 기본: 둘 다
+    assert client.post("/jobs/x/auto", json={}).status_code in (404, 422)
+    job_id = run(outputs=["marker", "highlights"])  # 둘 다(11/2 저녁부터 화면에서는 숨김, 기본은 하이라이트만)
     a = jobs.load_job(job_id).auto
     assert a["outputs"] == ["marker", "highlights"] and a["state"] == "done"
     kinds = [s[0] for s in steps]
@@ -1278,4 +1279,6 @@ def test_upload_screen_guides_steps_outputs_and_time(client: TestClient) -> None
                 "autoTracking", "autoMarker", "autoMarkerItem", "autoHlLater"):
         assert html.count(f"{key}:") == 3, key  # 한·일·영
     assert 'id="out-marker"' in html and 'id="out-highlights"' in html and "outputs: readOutputs()" in html
+    assert "const MARKER_ENABLED = false;" in html  # 나 표시 영상은 숨김(11/2 저녁 사용자) — 기본은 하이라이트만
+    assert server.AutoRequest(t=1, x=1, y=1, team="a").outputs == ["highlights"]
     assert "/marker/video" in html and "/auto/highlights" in html

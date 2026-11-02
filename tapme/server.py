@@ -708,7 +708,9 @@ class AutoRequest(RenderOptions):
     max: int = Field(default=auto.MAX_HIGHLIGHTS, ge=1, le=auto.MAX_HIGHLIGHTS)
     # 무엇을 만들지(11/2 사용자): marker(경기 전체에 나 표시, 원본 가로) · highlights(랠리별 세로). 둘 다면 나 표시 영상을 먼저
     # 만들며 찾은 얼굴을 하이라이트가 다시 써 하이라이트가 몇 분 안에 나온다
-    outputs: list[str] = Field(default_factory=lambda: list(OUTPUTS))
+    # 11/2 저녁 사용자: 나 표시 영상은 가로 화면 전체 얼굴 찾기로 10분 경기 약 1시간 40분 → 화면에서 숨기고 기본은 하이라이트만.
+    # 코드는 남겨 둔다(빠르게 만들 방법이 생기면 다시 켠다)
+    outputs: list[str] = Field(default_factory=lambda: ["highlights"])
 
     @field_validator("outputs")
     @classmethod
