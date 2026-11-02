@@ -833,3 +833,20 @@ def test_one_rally_read_twice_by_overlapping_chunks_is_merged(job: jobs.Job) -> 
     job.scenes["1"] = {"index": 1}  # 이미 고른 장면은 그대로
     jobs._add_rallies(job, [{"start_sec": 52.0, "point_sec": 55.0, "end_sec": 56.0}])
     assert job.rallies[1]["point_sec"] == 50.0 and len(job.rallies) == 2
+
+
+def test_cached_faces_slice_the_highlight_frames_from_the_marker_video(job: jobs.Job) -> None:
+    # 11/2: 하이라이트 장면 영상의 첫 프레임 = 나 표시 영상의 (장면 시작 − 훑은 구간 시작) × fps. fps·배율이 다르거나 모자라면 새로 찾는다
+    import json
+    import subprocess
+
+    clip = job.dir / "clip.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=64x36:rate=10:duration=1",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(clip)], check=True)
+    frames = [[[[k, 0, 4, 4]], []] for k in range(100)]
+    (job.dir / jobs.FACE_CACHE).write_text(json.dumps({"fps": 10.0, "start": 2.0, "face_scale": 2.0, "frames": frames}))
+    scene = {"clip": [5.0, 6.0], "clip_video": str(clip)}
+    got = jobs.cached_faces(job, scene, 0, 2.0)
+    assert got is not None and got[0][0][0][0] == 30 and len(got) == 12  # (5 − 2) × 10
+    assert jobs.cached_faces(job, scene, 0, 1.5) is None  # 배율이 다르다
+    assert jobs.cached_faces(job, {"clip": [11.5, 12.5], "clip_video": str(clip)}, 0, 2.0) is None  # 저장한 범위(2~12초)를 넘는다

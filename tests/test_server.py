@@ -629,7 +629,7 @@ def test_one_shot_asks_several_rallies_at_once_but_queues_in_order(client: TestC
     monkeypatch.setattr(jobs, "make_reel", lambda job, order, style="full": job.reel.update({"status": "done", "order": order, "style": style}))
     monkeypatch.setattr(push, "notify", lambda *a, **k: None)
     job_id = _send(client).json()["id"]
-    assert client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "team": "초록"}).status_code == 200
+    assert client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "team": "초록", "outputs": ["highlights"]}).status_code == 200
     for _ in range(100):
         if client.get(f"/jobs/{job_id}").json()["auto"].get("state") == "done":
             break
@@ -678,7 +678,7 @@ def test_one_shot_makes_every_found_rally_without_using_code_highlights_and_asks
         monkeypatch.setattr(jobs, "find_rallies", rallies(n))
         code = access.new_codes(1)[0]
         job_id = _send(client, code).json()["id"]
-        assert client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "team": "초록", **auto_req}).status_code == 200
+        assert client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "team": "초록", "outputs": ["highlights"], **auto_req}).status_code == 200
         for _ in range(100):
             if (a := jobs.load_job(job_id).auto).get("state") == "done":
                 break
@@ -747,7 +747,7 @@ def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeyp
     monkeypatch.setattr(push, "notify", lambda job_id, kind, url, **v: sent.append((kind, v)))
 
     job_id = _send(client).json()["id"]
-    r = client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "hint": "초록 10번", "team": "초록"})
+    r = client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "hint": "초록 10번", "team": "초록", "outputs": ["highlights"]})
     assert r.status_code == 200
     for _ in range(100):
         if client.get(f"/jobs/{job_id}").json()["auto"].get("state") == "done":
@@ -1184,3 +1184,88 @@ def test_refresh_keeps_the_picked_video_and_tap(client: TestClient) -> None:
     assert 'id="draft-note"' in html and "draftNote" in html
     # 11/2 아이폰 시험: 새로고침 뒤 같은 영상을 다시 고르면 직접 고른 얼굴 찾기 배율(1배)이 추천값(2배)으로 바뀌었다
     assert "state.faceScaleChoice = same ? draft.scale" in html and "showFaceScale($(\"opts-auto\"), !state.faceScaleChoice)" in html
+
+
+def test_one_shot_makes_the_marker_video_first_then_fast_highlights(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/2 사용자: 만들 것을 고른다 — 나 표시 영상(경기 전체에 나 표시) · 하이라이트. 둘 다면(기본) 추적까지만 한 뒤 나 표시
+    # 영상을 먼저 만들고, 그때 찾은 얼굴로 하이라이트를 만든다. 각각 끝나면 알린다. 나 표시 영상만 골랐어도 나중에 하이라이트를
+    import time as _time
+
+    from tapme import auto, push
+
+    def scan(job: jobs.Job, c) -> None:
+        job.rallies = [{"index": i, "start_sec": 20.0 * i, "end_sec": 20.0 * i + 8, "point_sec": 20.0 * i + 7,
+                        "is_rally": True} for i in range(3)]
+        job.status = "rallies_ready"
+        job.save()
+    monkeypatch.setattr(jobs, "find_rallies", scan)
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    monkeypatch.setattr(auto, "find_me", lambda job, i, ref, hint, c: {"frame": "score", "card": 1, "confidence": 0.95})
+    monkeypatch.setattr(jobs, "prepare_frames", lambda job, i, c: (job.scenes.__setitem__(str(i), {"index": i, "status": "frames_ready"}), job.save()))
+    monkeypatch.setattr(jobs, "serve_side", lambda job, i, c: {"side": "near"})
+    monkeypatch.setattr(jobs, "prepare_scene", lambda job, i, c: None)
+    steps: list = []
+
+    def fake_make(job, i, taps, *args):
+        render_now = args[-1]
+        steps.append(("track" if not render_now else "highlight", i))
+        job.scenes[str(i)]["status"] = "done" if render_now else "tracked"
+        job.scenes[str(i)]["sam_clip"] = str(job.dir / "x.mp4")
+        job.save()
+    monkeypatch.setattr(jobs, "make_highlight", fake_make)
+    real_prepare_frames = jobs.prepare_frames
+
+    def frames_and_clip(job, i, c):  # 장면 준비를 건너뛰게 SAM용 클립 자리를 만들어 둔다
+        real_prepare_frames(job, i, c)
+        (job.dir / "x.mp4").touch()
+        jobs.load_job(job.id)
+        job.scenes[str(i)]["sam_clip"] = str(job.dir / "x.mp4")
+        job.save()
+    monkeypatch.setattr(jobs, "prepare_frames", frames_and_clip)
+
+    def fake_marker(job, c):
+        steps.append(("marker", None))
+        job.marker = {"status": "done", "video": str(job.dir / "marker.mp4")}
+        job.save()
+    monkeypatch.setattr(jobs, "make_marker_video", fake_marker)
+
+    def fake_rerender(job, i, *args):
+        steps.append(("highlight", i))
+        job.scenes[str(i)].update(status="done", video=str(job.dir / f"h{i}.mp4"))
+        job.save()
+    monkeypatch.setattr(jobs, "rerender", fake_rerender)
+    monkeypatch.setattr(jobs, "make_reel", lambda job, order, style="full": job.reel.update({"status": "done", "order": order}))
+    sent: list = []
+    monkeypatch.setattr(push, "notify", lambda job_id, kind, url, **k: sent.append(kind))
+
+    def run(**req) -> str:
+        job_id = _send(client).json()["id"]
+        assert client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "team": "초록", **req}).status_code == 200
+        for _ in range(200):
+            if jobs.load_job(job_id).auto.get("state") == "done":
+                break
+            _time.sleep(0.05)
+        return job_id
+
+    job_id = run()  # 기본: 둘 다
+    a = jobs.load_job(job_id).auto
+    assert a["outputs"] == ["marker", "highlights"] and a["state"] == "done"
+    kinds = [s[0] for s in steps]
+    assert kinds.count("track") == 3 and kinds.index("marker") > max(i for i, k in enumerate(kinds) if k == "track")
+    assert kinds.index("marker") < min(i for i, k in enumerate(kinds) if k == "highlight")  # 나 표시 영상 먼저
+    assert [k for k in sent if k != "rallies"] == ["marker_done", "auto_done"]  # 랠리를 다 찾은 알림은 원래대로
+    st = client.get(f"/jobs/{job_id}").json()
+    assert st["marker"] == {"status": "done"} and all(s["status"] == "done" for s in st["scenes"].values())
+
+    steps.clear(); sent.clear()
+    job_id = run(outputs=["marker"])  # 나 표시 영상만 → 하이라이트는 나중에 고르면
+    assert [s[0] for s in steps].count("highlight") == 0 and [k for k in sent if k != "rallies"] == ["marker_done"]
+    assert all(s["status"] == "tracked" for s in jobs.load_job(job_id).scenes.values())
+    assert client.post(f"/jobs/{job_id}/auto/highlights").status_code == 200
+    for _ in range(200):
+        if (j := jobs.load_job(job_id)).auto.get("state") == "done" and all(s["status"] == "done" for s in j.scenes.values()):
+            break
+        _time.sleep(0.05)
+    assert all(s["status"] == "done" for s in jobs.load_job(job_id).scenes.values()) and sent[-1] == "auto_done"
+    assert client.post(f"/jobs/{job_id}/auto/highlights").status_code == 409  # 이미 만들었다
+    assert client.post(f"/jobs/{job_id}/auto", json={"t": 1, "x": 1, "y": 1, "team": "a", "outputs": []}).status_code == 422

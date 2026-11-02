@@ -382,3 +382,22 @@ def test_profile_faces_are_searched_only_around_the_output_crop() -> None:
     render._find_faces(frame, YuNet(), Profile(), None, (0, 0, 606, 1080), (606, 1080), 2.0)
     assert seen[1] == (1080, 606 + m)
     assert anonymize.detect_faces_split(frame, YuNet(), Profile())[1][0] == (10, 20, 30, 40)  # 기본은 화면 전체(Meta 흐림본 등)
+
+
+def test_full_frame_marker_video_saves_faces_and_highlights_reuse_them(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/2 사용자: 나 표시 영상은 원본 가로 화면 그대로. 그때 프레임마다 찾은 얼굴을 저장하고, 하이라이트는 다시 찾지 않는다
+    from tapme import anonymize
+
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=0.5",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
+    calls: list = []
+    monkeypatch.setattr(anonymize, "detect_faces_split", lambda *a, **k: calls.append(1) or ([(10, 10, 20, 20)], []))
+    monkeypatch.setattr(anonymize, "detect_faces_plain", lambda *a, **k: [])
+    cache: list = []
+    out = render.render_video(src, tmp_path / "m.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, full_frame=True, face_cache_out=cache)
+    assert render.probe(out)[:2] == (320, 180)  # 자르지 않는다
+    assert len(cache) == 5 and len(calls) == 5 and cache[0][0] == [(10, 10, 20, 20)]
+    calls.clear()
+    render.render_video(src, tmp_path / "h.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_cache_in=cache)
+    assert calls == []  # 저장한 얼굴을 쓴다

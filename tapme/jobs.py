@@ -178,6 +178,8 @@ class Job:
     scan_range: list[float] = field(default_factory=list)  # 훑을 구간 [시작, 끝](원본 초). 올릴 때 받은 값을 찾기 전에 영상 길이로 맞춘다
     # 한 번에 맡기기(tapme/auto.py): 처음에 받은 나·설정과 진행 {"state", "me", "hint", "team", "options", "max", "found", ...}
     auto: dict[str, Any] = field(default_factory=dict)
+    # 나 표시 영상(11/2 사용자): 경기 전체 원본 가로 화면에 랠리 중 '나' 표시 {"status", "video", "done", "total"}
+    marker: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._seen: dict[str, Any] | None = None  # 마지막으로 읽거나 쓴 이 객체의 내용(save가 바뀐 항목만 고르는 기준)
@@ -977,19 +979,122 @@ def _render_scene(job: Job, scene: dict[str, Any], languages: list[str], privacy
     people = scene_people(job, scene, client) if face_mosaic else None
     clear = _clear_ids(job, scene, mosaic_team, client) if face_mosaic else None
     key = next((f"{job.id}/{k}" for k, v in job.scenes.items() if v is scene), f"{job.id}/?")  # 화면에 보일 대기 순서
+    cache = cached_faces(job, scene, max_fps, face_scale) if face_mosaic else None
     with RENDER_TURNS.turn(key):
-        return _render_locked(job, scene, src, by, masks, cues, zoom, privacy, face_mosaic, max_fps, people, clear, face_scale)
+        return _render_locked(job, scene, src, by, masks, cues, zoom, privacy, face_mosaic, max_fps, people, clear, face_scale,
+                              cache)
 
 
 def _render_locked(job: Job, scene: dict[str, Any], src: Path, by: Any, masks: Any, cues: Any, zoom: float, privacy: str,
                    face_mosaic: bool, max_fps: int, people: dict[int, list[track.Box]] | None = None,
-                   clear: set[str] | None = None, face_scale: float = render.DEFAULT_FACE_SCALE) -> Path:
+                   clear: set[str] | None = None, face_scale: float = render.DEFAULT_FACE_SCALE,
+                   cache: list | None = None) -> Path:
     out = render.render_video(src, Path(scene["sam_clip"]).parent / "highlight.mp4", by, masks,
                               track.TAPPED_ID, scene["sam_fps"], cues, zoom, privacy, face_mosaic,
                               on_progress=lambda d, n: job.step("render", d, n), max_fps=max_fps, people_by_sam=people,
-                              clear_ids=clear, face_scale=face_scale)
+                              clear_ids=clear, face_scale=face_scale, face_cache_in=cache)
     job.progress = {}
     return out
+
+
+# ---- 나 표시 영상(11/2 사용자): 경기 전체 원본 가로 화면에 랠리 중 '나' 표시. 그때 프레임마다 찾은 얼굴을 저장해 두면
+# 하이라이트는 얼굴을 다시 찾지 않고(렌더 시간의 대부분) 자르고 인코딩만 한다 ----
+FACE_CACHE = "faces.json"
+_face_cache_mem: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _video_fps(path: Path) -> float:
+    rate = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate",
+                                    "-of", "csv=p=0", str(path)]).decode().strip()
+    num, den = (rate.split("/") + ["1"])[:2]
+    return float(num) / float(den)
+
+
+def _render_fps(src_fps: float, max_fps: int) -> float:
+    return float(max_fps) if max_fps and src_fps > max_fps + 0.5 else src_fps
+
+
+def cached_faces(job: Job, scene: dict[str, Any], max_fps: int, face_scale: float) -> list | None:
+    """나 표시 영상이 저장한 얼굴 중 이 장면 영상의 프레임들(첫 프레임부터). 맞지 않거나(fps·배율) 모자라면 None → 새로 찾는다."""
+    path = job.dir / FACE_CACHE
+    if not path.exists() or not scene.get("clip") or not scene.get("clip_video"):
+        return None
+    mtime = path.stat().st_mtime
+    hit = _face_cache_mem.get(str(path))
+    data = hit[1] if hit and hit[0] == mtime else json.loads(path.read_text())
+    _face_cache_mem[str(path)] = (mtime, data)
+    fps = _render_fps(_video_fps(Path(scene["clip_video"])), max_fps)
+    if abs(fps - data["fps"]) > 0.01 or data.get("face_scale") != face_scale:
+        return None
+    first = round((scene["clip"][0] - data["start"]) * fps)
+    need = round((scene["clip"][1] - scene["clip"][0]) * fps) + 2
+    if first < 0 or first + need > len(data["frames"]):
+        return None
+    return data["frames"][first:first + need]
+
+
+def _marker_tracks(job: Job, start: float, client: Any, people: bool) -> tuple[dict[int, list[track.Box]], dict[int, list[track.Box]]]:
+    """추적한 장면들의 '나'(확실히 잡은 구간만)와 다른 선수 상자를 경기 전체 시각(SAM fps)으로 모은다."""
+    me_all: dict[int, list[track.Box]] = {}
+    people_all: dict[int, list[track.Box]] = {}
+    for scene in job.scenes.values():
+        if scene.get("status") not in ("tracked", "done") or not scene.get("span_frames"):
+            continue
+        sam_fps, w0 = scene["sam_fps"], scene["window"][0]
+        wire = Path(scene["sam_clip"]).parent / "me_wire.txt"
+        if not wire.exists():
+            continue
+        me = track.boxes_by_frame(track.parse_boxes(wire.read_text()))
+        base = round((w0 - start) * sam_fps)
+        s0, s1 = scene["span_frames"]
+        for k in range(s0, s1 + 1):
+            mine = [b for b in me.get(k, []) if b.object_id == track.TAPPED_ID]
+            if mine:
+                me_all.setdefault(base + k, []).extend(mine)
+        if people:
+            base_clip = round((scene["clip"][0] - start) * sam_fps)
+            for k, boxes in scene_people(job, scene, client).items():
+                people_all.setdefault(base_clip + k, []).extend(boxes)
+    return me_all, people_all
+
+
+def make_marker_video(job: Job, client: Any) -> dict[str, Any]:
+    """경기(훑은 구간) 전체를 원본 가로 화면 그대로, 랠리 중 확실히 찾은 '나'에게만 발밑·머리 위 표시. 다른 사람 얼굴은
+    선택대로 모자이크하고 그 얼굴을 저장한다(FACE_CACHE). 쉬는 시간에는 표시가 없다(잘못 가리키지 않게)."""
+    o = job.auto.get("options", {})
+    face_mosaic, max_fps = o.get("face_mosaic", True), o.get("fps", 0)
+    face_scale = o.get("face_scale", render.DEFAULT_FACE_SCALE)
+    duration = job.duration_sec or scan.duration_sec(Path(job.video))
+    start, end = (job.scan_range + [0.0, 0.0])[:2]
+    end = end or duration
+    src = Path(job.video)
+    if start > 0.05 or end < duration - 0.05:  # 훑은 구간만(자르면 시각이 그 구간 처음부터)
+        src = _cut(src, start, end - start, job.dir / "marker_src.mp4", None)
+    me_all, people_all = _marker_tracks(job, start, client, face_mosaic)
+    job.marker = {"status": "rendering", "done": 0, "total": 0}
+    job.save()
+    last = [0.0]
+
+    def progress(done: int, total: int) -> None:
+        if time.time() - last[0] > 15:
+            last[0] = time.time()
+            job.marker = {"status": "rendering", "done": done, "total": total}
+            job.save()
+
+    cache: list | None = [] if face_mosaic else None
+    out = job.dir / "marker.mp4"
+    with RENDER_TURNS.turn(f"{job.id}/marker"):
+        render.render_video(src, out, me_all, {}, track.TAPPED_ID, float(SAM_FPS), None, 1.0, render.DEFAULT_PRIVACY,
+                            face_mosaic, on_progress=progress, max_fps=max_fps, people_by_sam=people_all or None,
+                            face_scale=face_scale, full_frame=True, face_cache_out=cache)
+    if cache is not None:
+        (job.dir / FACE_CACHE).write_text(json.dumps({"fps": _render_fps(_video_fps(src), max_fps), "start": start,
+                                                      "face_scale": face_scale, "frames": cache}))
+    if src != Path(job.video):
+        src.unlink(missing_ok=True)
+    job.marker = {"status": "done", "video": str(out)}
+    job.save()
+    return job.marker
 
 
 # ---- 득점 팀(11/1 사용자, H-55): 다음 랠리에서 서브하는 쪽 + 그 세트에서 우리 팀이 있는 쪽('나'의 위치) ----
@@ -1097,9 +1202,10 @@ def assign_number(job: Job, scene: dict[str, Any]) -> int:
 def make_highlight(
     job: Job, index: int, taps: list[tuple[str, float, float]], team_label: str,
     languages: list[str], role: str, privacy: str, zoom: float, client: Any, face_mosaic: bool = True, max_fps: int = 0,
-    mosaic_team: str = "all", face_scale: float = render.DEFAULT_FACE_SCALE,
+    mosaic_team: str = "all", face_scale: float = render.DEFAULT_FACE_SCALE, render_now: bool = True,
 ) -> dict[str, Any]:
-    """taps = [(장면 종류, x, y) 또는 (장면 종류, 고른 선수 번호), ...]. 장면 종류는 TAP_KINDS, 하나 이상.
+    """render_now=False면 추적·자를 구간까지만 하고 'tracked'로 둔다(나 표시 영상을 먼저 만들고 그 얼굴 찾기를 다시 쓴다, 11/2).
+    taps = [(장면 종류, x, y) 또는 (장면 종류, 고른 선수 번호), ...]. 장면 종류는 TAP_KINDS, 하나 이상.
     languages가 비면 자막 없음(Muse 해설을 묻지 않는다). role은 score.ROLE_TEXT의 키(선택)."""
     scene = job.scenes[str(index)]
     if not taps or any(t[0] not in TAP_KINDS for t in taps):
@@ -1147,6 +1253,12 @@ def make_highlight(
     clip_video = _cut(*_source(job, index, clip_start), clip_end - clip_start, sam_clip.parent / "clip.mp4", None)
     scene.update(taps=[list(t) for t in taps], span_frames=list(span),
                  clip=[round(clip_start, 2), round(clip_end, 2)], clip_video=str(clip_video), clip_is_original=True)
+    if not render_now:
+        scene.update(status="tracked", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom,
+                                                "face_mosaic": face_mosaic, "fps": max_fps, "mosaic_team": mosaic_team,
+                                                "face_scale": face_scale})
+        job.save()
+        return scene
     out = _render_scene(job, scene, languages, privacy, zoom, face_mosaic, client, max_fps, mosaic_team, face_scale)
     scene.update(status="done", options={"languages": languages, "role": role, "privacy": privacy, "zoom": zoom,
                                          "face_mosaic": face_mosaic, "fps": max_fps, "mosaic_team": mosaic_team,

@@ -461,7 +461,7 @@ def _resume_autos() -> None:
             job = jobs.load_job(d.parent.name)
         except (KeyError, ValueError):
             continue
-        if job.auto.get("state") in ("reference", "finding", "making"):
+        if job.auto.get("state") in ("reference", "finding", "tracking", "marker", "making"):
             # 중간에 멈춘 것: 처음부터 다시 돌되 찾은 것·예약한 것은 건너뛴다. 그 작업 때문에 서버가 죽었으면(메모리 부족)
             # 이어 돌리다 또 죽기를 되풀이했다(11/1 H-53 C1) → MAX_RESUMES번까지만
             n = job.auto.get("resumes", 0) + 1
@@ -469,7 +469,7 @@ def _resume_autos() -> None:
                 _auto_set(job.id, state="failed", error="서버가 여러 번 다시 켜져 멈췄어요. 영상을 다시 맡겨 주세요")
                 continue
             _auto_set(job.id, state="waiting", resumes=n)
-        if job.auto.get("state") in ("waiting", "reference", "finding", "making"):
+        if job.auto.get("state") in ("waiting", "reference", "finding", "tracking", "marker", "making"):
             _start_auto(job.id, client_factory())
 
 
@@ -514,7 +514,7 @@ def _auto_render(job_id: str, index: int, frame: str, card: int, a: dict[str, An
     args = (job_id, index, [(frame, card)], a["team"], o.get("languages", []), o.get("role", ""),
             o.get("privacy", render.DEFAULT_PRIVACY), o.get("zoom", render.DEFAULT_ZOOM), client,
             o.get("face_mosaic", True), o.get("fps", 0), o.get("mosaic_team", "all"),
-            o.get("face_scale", render.DEFAULT_FACE_SCALE))
+            o.get("face_scale", render.DEFAULT_FACE_SCALE), "marker" not in _outputs(a))  # 나 표시 영상이면 추적까지만
 
     def go() -> None:
         with _Working():
@@ -616,9 +616,71 @@ def _auto_steps(job_id: str, client: Any) -> None:
         _auto_set(job_id, made=made)
         _auto_render(job_id, i, found.get("frame", "score"), found["card"], a, client)
     pool.shutdown(cancel_futures=True)  # 다 만들었으면 아직 시작 안 한 나 찾기는 묻지 않는다
-    _auto_set(job_id, state="making", made=made, review=review)
-    while any(jobs.load_job(job_id).scenes.get(str(i), {}).get("status") in ("queued", "rendering") for i in made):
+    outputs = _outputs(a)
+    _auto_set(job_id, state="tracking" if "marker" in outputs else "making", made=made, review=review)
+    _wait_scenes(job_id, made)
+    if "marker" in outputs:
+        _auto_set(job_id, state="marker")
+        _make_marker(job_id, client)
+        if "highlights" not in outputs:  # 하이라이트는 나중에 고르면 저장한 얼굴로 몇 분 안에(POST …/auto/highlights)
+            _auto_set(job_id, state="done")
+            return
+        _auto_set(job_id, state="making")
+        _render_tracked(job_id, made, a, client)
+    _finish_highlights(job_id, made, review, a)
+
+
+def _outputs(a: dict[str, Any]) -> list[str]:
+    return a.get("outputs") or ["highlights"]  # 11/2 전에 맡긴 작업은 하이라이트만
+
+
+def _wait_scenes(job_id: str, indices: list[int]) -> None:
+    while any(jobs.load_job(job_id).scenes.get(str(i), {}).get("status") in ("queued", "rendering") for i in indices):
         time.sleep(10)
+
+
+def _make_marker(job_id: str, client: Any) -> None:
+    """나 표시 영상(경기 전체). 끝나면 알린다. 실패해도 하이라이트는 계속 만든다(얼굴을 새로 찾아 느릴 뿐)."""
+    t0 = time.time()
+    try:
+        with _Working():
+            jobs.make_marker_video(jobs.load_job(job_id), client)
+        push.notify(job_id, "marker_done", f"/#job={job_id}")
+    except Exception as e:  # noqa: BLE001
+        traceback.print_exc()
+        job = jobs.load_job(job_id)
+        job.marker = {"status": "failed", "error": f"처리 중 오류: {e}"}
+        job.save()
+    _log(job_id, "marker", t0, status=jobs.load_job(job_id).marker.get("status"))
+
+
+def _render_tracked(job_id: str, made: list[int], a: dict[str, Any], client: Any) -> None:
+    """추적까지 해 둔 장면을 하이라이트로(나 표시 영상이 저장한 얼굴을 써 얼굴 찾기를 건너뛴다). 렌더는 RENDER_SLOTS개씩."""
+    o = a.get("options", {})
+    job = jobs.load_job(job_id)
+    todo = [i for i in made if job.scenes.get(str(i), {}).get("status") == "tracked"]
+    for i in todo:
+        job.scenes[str(i)]["status"] = "queued"
+    job.save()
+    args = (o.get("languages", []), o.get("role", ""), o.get("privacy", render.DEFAULT_PRIVACY),
+            o.get("zoom", render.DEFAULT_ZOOM), client, o.get("face_mosaic", True), o.get("fps", 0),
+            o.get("mosaic_team", "all"), o.get("face_scale", render.DEFAULT_FACE_SCALE))
+
+    def one(i: int) -> None:
+        with _Working():
+            _run_rerender(job_id, i, *args)
+            job = jobs.load_job(job_id)
+            if job.scenes.get(str(i), {}).get("status") in ("queued", "rendering"):
+                job.scenes[str(i)]["status"] = "failed"
+                job.save()
+    threads = [threading.Thread(target=one, args=(i,), daemon=True) for i in todo]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+
+def _finish_highlights(job_id: str, made: list[int], review: list[int], a: dict[str, Any]) -> None:
     job = jobs.load_job(job_id)
     done = [i for i in made if job.scenes.get(str(i), {}).get("status") == "done"]
     if len(done) >= 2:  # 득점 장면만 모은 영상도 같이(시간 순)
@@ -632,6 +694,9 @@ def _auto_steps(job_id: str, client: Any) -> None:
         push.notify(job_id, "auto_none", f"/#job={job_id}")
 
 
+OUTPUTS = ("marker", "highlights")
+
+
 class AutoRequest(RenderOptions):
     """올리기 전에 받은 나(영상 t초에서 탭한 원본 화소)·나에 대한 정보·설정."""
 
@@ -641,6 +706,17 @@ class AutoRequest(RenderOptions):
     hint: str = Field(default="", max_length=100, description="등번호·유니폼 색·신발처럼 나를 알아볼 정보")
     team: str = Field(min_length=1, max_length=20)
     max: int = Field(default=auto.MAX_HIGHLIGHTS, ge=1, le=auto.MAX_HIGHLIGHTS)
+    # 무엇을 만들지(11/2 사용자): marker(경기 전체에 나 표시, 원본 가로) · highlights(랠리별 세로). 둘 다면 나 표시 영상을 먼저
+    # 만들며 찾은 얼굴을 하이라이트가 다시 써 하이라이트가 몇 분 안에 나온다
+    outputs: list[str] = Field(default_factory=lambda: list(OUTPUTS))
+
+    @field_validator("outputs")
+    @classmethod
+    def _outputs(cls, v: list[str]) -> list[str]:
+        v = [o for o in OUTPUTS if o in v]
+        if not v:
+            raise ValueError(f"만들 것을 하나 이상 골라 주세요: {OUTPUTS}")
+        return v
 
 
 @app.post("/jobs/{job_id}/auto")
@@ -657,7 +733,8 @@ def start_auto(job_id: str, req: AutoRequest) -> dict[str, str]:
         raise HTTPException(400, f"한 번에 맡기기는 {auto.MAX_SCAN_SEC // 60}분까지예요. 구간을 골라 주세요")
     options = {k: v for k, v in req.model_dump().items() if k in RenderOptions.model_fields}
     job.auto = {"state": "waiting", "me": {"t": req.t, "x": req.x, "y": req.y}, "hint": req.hint.strip(),
-                "team": req.team.strip(), "options": options, "max": req.max, "found": {}, "made": [], "review": []}
+                "team": req.team.strip(), "options": options, "max": req.max, "found": {}, "made": [], "review": [],
+                "outputs": req.outputs}
     job.save()
     _start_auto(job_id, client_factory())  # 랠리를 이미 다 찾았으면 바로, 아니면 찾기가 끝날 때(_run_scan)
     return {"status": "accepted"}
@@ -1114,6 +1191,7 @@ def status(job_id: str) -> dict[str, Any]:
             "scenes": {k: {f: v for f, v in s.items() if f not in _SERVER_PATHS}
                        for k, s in job.scenes.items()},
             "reel": {k: v for k, v in job.reel.items() if k != "video"},
+            "marker": {k: v for k, v in job.marker.items() if k != "video"},
             "auto": {k: v for k, v in job.auto.items() if k != "me"},
             "winners": jobs.point_winners(job) if job.auto else {}}
 
@@ -1329,6 +1407,43 @@ def reel(job_id: str, req: ReelRequest, background: BackgroundTasks) -> dict[str
     job.save()
     background.add_task(_run, job_id, jobs.make_reel, req.order, req.style)
     return {"status": "rendering"}
+
+
+@app.get("/jobs/{job_id}/marker/video")
+def marker_video(job_id: str) -> FileResponse:
+    """나 표시 영상(경기 전체, 원본 가로)."""
+    marker = _job(job_id).marker
+    if marker.get("status") != "done":
+        raise HTTPException(404, "나 표시 영상이 아직 없다")
+    return FileResponse(marker["video"], media_type="video/mp4")
+
+
+@app.get("/jobs/{job_id}/marker/poster")
+def marker_poster(job_id: str) -> FileResponse:
+    marker = _job(job_id).marker
+    if marker.get("status") != "done":
+        raise HTTPException(404, "나 표시 영상이 아직 없다")
+    return _poster(Path(marker["video"]))
+
+
+@app.post("/jobs/{job_id}/auto/highlights")
+def auto_highlights_later(job_id: str) -> dict[str, str]:
+    """나 표시 영상만 맡겼다가 하이라이트도 원할 때(11/2 사용자). 추적과 얼굴 찾기는 끝나 있어 몇 분 안에 끝난다."""
+    job = _job(job_id)
+    a = job.auto
+    if not a or a.get("state") != "done" or "highlights" in _outputs(a):
+        raise HTTPException(409, "하이라이트를 더 만들 수 없는 상태예요")
+    made = [i for i in a.get("made", []) if job.scenes.get(str(i), {}).get("status") == "tracked"]
+    if not made:
+        raise HTTPException(409, "하이라이트로 만들 장면이 없어요")
+    _auto_set(job_id, state="making", outputs=[*_outputs(a), "highlights"])
+
+    def go() -> None:
+        with _Working():
+            _render_tracked(job_id, made, a, client_factory())
+            _finish_highlights(job_id, made, a.get("review", []), a)
+    threading.Thread(target=go, daemon=True).start()
+    return {"status": "accepted"}
 
 
 @app.get("/jobs/{job_id}/reel/video")

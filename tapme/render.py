@@ -377,11 +377,16 @@ def render_video(
     people_by_sam: dict[int, list[Box]] | None = None,
     clear_ids: set[str] | None = None,
     face_scale: float = DEFAULT_FACE_SCALE,
+    full_frame: bool = False,
+    face_cache_out: list | None = None,
+    face_cache_in: list | None = None,
 ) -> Path:
     """subtitles = [(시작초, 끝초, 글자), ...]. 장면에 맞춰 바뀌는 해설 자막(score.subtitle_cues). 없으면 자막 없음.
     face_mosaic이면 '나'를 뺀 얼굴을 모자이크한다(src는 원본 클립). 얼굴은 face_every 프레임마다 찾고 사이는 이어 쓴다.
     clear_ids가 있으면 people_by_sam 중 그 선수들(풀어 줄 팀)의 얼굴은 가리지 않는다(off_team).
-    face_scale: 얼굴 찾기 배율(FACE_SCALES)."""
+    face_scale: 얼굴 찾기 배율(FACE_SCALES).
+    full_frame: 자르지 않고 원본 가로 화면 그대로(나 표시 영상, 11/2 사용자). face_cache_out이 있으면 프레임마다 찾은
+    (얼굴, 옆얼굴)을 담고, face_cache_in이 있으면 얼굴을 다시 찾지 않고 그것을 쓴다(나 표시 영상에서 찾은 것을 하이라이트가 다시 씀)."""
     two_detectors = two_detectors and face_scale != 1.0  # 1배면 두 번째(원래 크기) 검출기와 같은 일
     detector = profile = plain = None
     if face_mosaic:
@@ -394,10 +399,13 @@ def render_video(
         n, fps = int(n * max_fps / fps) + 1, float(max_fps)
         vf = ["-vf", f"fps={max_fps}"]
     out_h = height // 2 * 2
-    out_w = min(width, int(out_h * 9 / 16)) // 2 * 2
+    out_w = (width // 2 * 2) if full_frame else min(width, int(out_h * 9 / 16)) // 2 * 2
     boxes = interpolate(by_sam, sam_fps, fps, n)
-    centers = [next((b.center for b in f if b.object_id == me), None) for f in boxes]
-    crops = zoom_crops(centers, width, height, zoom, smooth=max(1, round(fps / 2)))
+    if full_frame:
+        crops = [(0, 0, out_w, out_h)] * n
+    else:
+        centers = [next((b.center for b in f if b.object_id == me), None) for f in boxes]
+        crops = zoom_crops(centers, width, height, zoom, smooth=max(1, round(fps / 2)))
 
     out.parent.mkdir(parents=True, exist_ok=True)
     dec = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-i", str(src), *vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
@@ -411,7 +419,7 @@ def render_video(
     assert dec.stdout and enc.stdin
     size = width * height * 3
     # 얼굴 찾기 프로세스는 흐리기와 같이 쓴다(anonymize.acquire_pool, 11/1 메모리). 일꾼 쪽 검출기는 처음 쓸 때 올린다
-    pool = anonymize.acquire_pool() if face_mosaic and RENDER_WORKERS > 1 else None
+    pool = anonymize.acquire_pool() if face_mosaic and RENDER_WORKERS > 1 and face_cache_in is None else None
     # 앞으로 읽어 둔 프레임과 그 얼굴 찾기(여러 프로세스면 미리 맡겨 둔다). 프레임 순서대로 꺼낸다
     ahead: deque[tuple[bytes, Future | None]] = deque()
     depth, read_i = (RENDER_WORKERS * 2 if pool else 1), 0
@@ -442,12 +450,17 @@ def render_video(
             if face_mosaic:
                 rgb = np.asarray(frame)
                 if i % face_every == 0:
-                    if job is not None:
+                    if face_cache_in is not None:
+                        faces, side = face_cache_in[i] if i < len(face_cache_in) else ([], [])
+                        faces, side = [tuple(f) for f in faces], [tuple(f) for f in side]
+                    elif job is not None:
                         faces, side = job.result()
                     else:
                         bgr = np.ascontiguousarray(rgb[..., ::-1])  # 검출기는 BGR
                         faces, side = _find_faces(bgr, detector, profile if i % PROFILE_EVERY == 0 else None, plain,
                                                   crops[k], (out_w, out_h), face_scale)
+                    if face_cache_out is not None:
+                        face_cache_out.append((faces, side))
                     if people_by_sam is not None:  # 다른 선수까지 추적했으면 몸 위에 잡힌 옆얼굴을 거른다(H-48)
                         side = off_bodies(side, people_by_sam.get(round(i * sam_fps / fps), []))
                     faces = faces + side
