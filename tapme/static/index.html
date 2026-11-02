@@ -420,7 +420,7 @@ const T = {
 const $ = (id) => document.getElementById(id);
 const KINDS = ["score", "b1", "b2", "b3", "start"];
 const KIND_LABEL = { score: "mScore", b1: "mB1", b2: "mB2", b3: "mB3", start: "mStart" };
-const state = { job: null, rally: null, taps: {}, tappers: {}, moment: "score", poll: null, last: null, lang: "ko", pending: null, batchMode: false, picked: new Set(), batch: [], active: 0 };
+const state = { job: null, rally: null, taps: {}, tappers: {}, moment: "score", poll: null, last: null, lang: "ko", pending: null, batchMode: false, picked: new Set(), batch: [], active: 0, previews: {} };
 const anyTap = () => Object.values(state.taps).some(Boolean);
 const BASE_TITLE = document.title;
 // 기다리는 동안 정한 옵션(팀 이름·자막·가리기…). 이 폰에만 저장, 탭 화면에 미리 채운다
@@ -441,6 +441,8 @@ function applyLang() {
   if (state.mode === "auto") $("start-upload").textContent = t("startAuto");  // data-t가 하나씩 고르기 문구로 되돌린다
   renderRange();
   showBench();
+  // 탭 화면 장면 이름표(득점 순간·1.5초 전…)는 다시 그리지 않고 그 자리에서 바꾼다(탭한 것은 그대로, 이슈 #1)
+  document.querySelectorAll("#moments button").forEach((b) => { const l = b.querySelector("span"); if (l) l.textContent = t(KIND_LABEL[b.dataset.kind]); });
   $("rally-list").dataset.key = "";  // 판정 이유를 새 언어로 다시 그린다
   if (state.last) render(state.last);
 }
@@ -830,7 +832,10 @@ function renderRallies(s) {
       } else v.src = `/jobs/${state.job}/rallies/${r.index}/preview`;
       v.controls = true; v.autoplay = true; v.playsInline = true;
       thumb.replaceWith(v);
+      state.previews[`${state.job}/${r.index}`] = v;
     };
+    // 목록을 다시 그려도(언어 바꾸기 등) 보던 미리보기는 그대로 이어 붙인다(이슈 #1)
+    const open = state.previews[`${state.job}/${r.index}`];
     const info = document.createElement("div");
     const row = document.createElement("div"); row.className = "row";
     const time = document.createElement("strong"); time.textContent = `${fmt(r.start_sec)} ~ ${fmt(r.end_sec)}`;
@@ -861,7 +866,11 @@ function renderRallies(s) {
     } else {
       info.append(row, reason, pick);
     }
-    card.append(thumb, info);
+    if (open) {  // 떼었다 붙이면 멈추므로, 보던 중이었으면 이어서 재생
+      const playing = !open.paused;
+      card.append(open, info);
+      if (playing) open.play().catch(() => {});
+    } else card.append(thumb, info);
     return card;
   }));
 }
@@ -1040,7 +1049,10 @@ function makeTapper(boxId, which, players) {
     wrap.style.width = `${zoom * 100}%`;
     zoomBox.scrollLeft = cx * wrap.offsetWidth - zoomBox.clientWidth / 2;
     zoomBox.scrollTop = cy * wrap.offsetHeight - zoomBox.clientHeight / 2;
+    // 확대 안 했을 때 사진 위를 쓸면 사진 칸이 아니라 페이지가 내려가게(이슈 #1)
+    zoomBox.style.overflow = zoom > 1 ? "auto" : "hidden";
   };
+  zoomBox.style.overflow = "hidden";
   box.querySelector(".zin").onclick = () => setZoom(zoom + 1);
   box.querySelector(".zout").onclick = () => setZoom(zoom - 1);
   img.alt = t("tapTitle");
