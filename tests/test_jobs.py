@@ -490,11 +490,12 @@ def test_scan_and_scene_steps_saving_at_once_keep_each_others_changes(job: jobs.
 
 def test_rallies_found_later_never_renumber_a_picked_rally(job: jobs.Job, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(jobs, "make_preview", lambda j, i: None)
-    job.rallies = [{"index": 0, "start_sec": 5.0, "end_sec": 13.5, "point_sec": 12.5, "confidence": 0.6}]
+    # 랠리 사이는 실제 경기처럼 띄운다(득점 뒤 5초 안에 시작하면 한 랠리로 합친다, 11/2)
+    job.rallies = [{"index": 0, "start_sec": 15.0, "end_sec": 23.5, "point_sec": 22.5, "confidence": 0.6}]
     job.scenes = {"0": {"index": 0, "status": "awaiting_tap"}}
     jobs._add_rallies(job, [{"start_sec": 1.0, "end_sec": 3.0, "point_sec": 2.0, "confidence": 0.9},
-                            {"start_sec": 6.0, "end_sec": 13.0, "point_sec": 12.0, "confidence": 0.95}])
-    assert [(r["index"], r["point_sec"]) for r in job.rallies] == [(0, 12.5), (1, 2.0)]  # 고른 랠리는 그대로, 새것은 뒤에
+                            {"start_sec": 16.0, "end_sec": 23.0, "point_sec": 22.0, "confidence": 0.95}])
+    assert [(r["index"], r["point_sec"]) for r in job.rallies] == [(0, 22.5), (1, 2.0)]  # 고른 랠리는 그대로, 새것은 뒤에
 
 
 def test_readers_never_see_a_half_written_job_file(job: jobs.Job) -> None:
@@ -812,6 +813,23 @@ def test_scene_is_the_whole_rally_from_the_serve_but_never_too_long() -> None:
     assert jobs.scene_window({"start_sec": 52.2}, 62.8) == (50.7, 67.8)  # 서브 1.5초 전부터
     assert jobs.scene_window({"start_sec": 125.0}, 128.5) == (123.5, 133.5)  # 짧은 랠리: 서브 전 빈 시간 없음
     assert jobs.scene_window({"start_sec": 127.0}, 128.5) == (124.5, 133.5)  # 득점 앞은 적어도 4초
-    assert jobs.scene_window({"start_sec": 100.0}, 140.0) == (120.0, 145.0)  # 긴 랠리는 25초까지
+    assert jobs.scene_window({"start_sec": 100.0}, 140.0) == (98.5, 145.0)  # 긴 랠리도 끝까지(11/2 사용자, 60초까지)
+    assert jobs.scene_window({"start_sec": 50.0}, 140.0) == (85.0, 145.0)  # 60초를 넘으면 득점 쪽 60초
     assert jobs.scene_window({}, 12.5) == (5.5, 17.5)  # 서브 시각을 모르면 예전처럼 7초 전부터
     assert jobs.scene_window({"start_sec": 0.0}, 3.0) == (0.0, 8.0)  # 영상 시작 앞으로는 가지 않는다
+
+
+def test_one_rally_read_twice_by_overlapping_chunks_is_merged(job: jobs.Job) -> None:
+    # 11/2 사용자: 하이라이트에 같은 장면이 겹쳐 들어감 — 겹친 두 조각이 한 랠리를 26.0~27.5초와 30.0~33.0초로 읽었다.
+    # 득점 뒤 5초 안에 시작하는 랠리는 같은 랠리: 서브는 이른 쪽, 득점은 늦은 쪽. 다음 랠리(11초 뒤 서브)는 따로
+    job.mode = "browser"  # 미리보기를 만들지 않게
+    job.rallies = []
+    jobs._add_rallies(job, [{"start_sec": 26.0, "point_sec": 27.5, "end_sec": 28.5}])
+    jobs._add_rallies(job, [{"start_sec": 30.0, "point_sec": 33.0, "end_sec": 34.0},
+                            {"start_sec": 44.0, "point_sec": 50.0, "end_sec": 51.0}])
+    assert [(r["index"], r["start_sec"], r["point_sec"], r["end_sec"]) for r in job.rallies] == [(0, 26.0, 33.0, 34.0), (1, 44.0, 50.0, 51.0)]
+    jobs._add_rallies(job, [{"start_sec": 25.5, "point_sec": 32.5, "end_sec": 33.5}])  # 같은 득점(2초 안): 새 답으로
+    assert job.rallies[0]["start_sec"] == 25.5 and len(job.rallies) == 2
+    job.scenes["1"] = {"index": 1}  # 이미 고른 장면은 그대로
+    jobs._add_rallies(job, [{"start_sec": 52.0, "point_sec": 55.0, "end_sec": 56.0}])
+    assert job.rallies[1]["point_sec"] == 50.0 and len(job.rallies) == 2

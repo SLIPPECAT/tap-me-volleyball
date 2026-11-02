@@ -875,7 +875,7 @@ $("batch-start").onclick = async () => {
 };
 // 장면 준비. 브라우저 방식은 먼저 그 랠리 구간을 기기 원본에서 잘라 올린다(다시 압축하지 않음, 원본 화질·소리 그대로)
 // 장면 = 랠리 전체(서브 조금 전 ~ 득점 뒤). 서버 jobs.scene_window와 같은 계산, 앞뒤로 SEG_PAD 넉넉히
-const SERVE_LEAD = 1.5, WIN_BEFORE = 7, WIN_AFTER = 5, CLIP_MIN_BEFORE = 4, MAX_SCENE = 25, SEG_PAD = 1;
+const SERVE_LEAD = 1.5, WIN_BEFORE = 7, WIN_AFTER = 5, CLIP_MIN_BEFORE = 4, MAX_SCENE = 60, SEG_PAD = 1;
 function sceneWindow(r) {
   const end = r.point_sec + WIN_AFTER;
   let start = r.start_sec == null ? r.point_sec - WIN_BEFORE : r.start_sec - SERVE_LEAD;

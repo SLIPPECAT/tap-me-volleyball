@@ -49,7 +49,7 @@ RALLY_MODE = os.environ.get("TAPME_RALLY_MODE", "scan")
 # 득점 앞은 적어도 CLIP_MIN_BEFORE_SEC, 장면은 길어야 MAX_SCENE_SEC(SAM·렌더 시간이 길이에 비례)
 WINDOW_BEFORE_SEC = 7.0  # SAM은 50프레임보다 짧아도 50으로 과금된다(비용 원장 R-10·R-17)
 SERVE_LEAD_SEC = 1.5
-MAX_SCENE_SEC = 25.0
+MAX_SCENE_SEC = 60.0  # 11/2 사용자: 긴 랠리도 자르지 않고 나를 따라 끝까지(25 → 60초). 60초 장면 SAM 약 $0.12
 # 브라우저 방식: 기기가 원본에서 잘라 올리는 구간은 이 장면보다 앞뒤 1초 넉넉히(index.html sceneWindow·SEG_PAD)
 WINDOW_AFTER_SEC = 5.0  # 훑어보기 득점 시각은 2~4초 어긋날 때가 있어(성능 테스트 4/68, H-43) 득점 뒤를 넉넉히
 # 10fps: 움직이는 카메라에서 5fps는 같은 사람을 더 자주 놓쳤다(실험 H-24 B<C). 장면당 SAM 약 $0.02
@@ -553,18 +553,33 @@ def find_rallies(job: Job, client: Any) -> None:
     job.save()
 
 
+def _same_rally(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """같은 득점(2초 안)이거나, 한쪽이 다른 쪽 득점 뒤 SAME_RALLY_GAP_SEC 안에 시작하면(겹친 조각이 한 랠리를 둘로 읽음) 같은 랠리."""
+    if abs(a["point_sec"] - b["point_sec"]) <= scan.SAME_POINT_SEC:
+        return True
+    first, second = (a, b) if a["point_sec"] <= b["point_sec"] else (b, a)
+    start = second.get("start_sec")
+    return start is not None and start - first["point_sec"] < scan.SAME_RALLY_GAP_SEC
+
+
 def _add_rallies(job: Job, found: list[dict[str, Any]]) -> None:
     """찾은 랠리를 목록에 붙인다. 번호(index)는 바꾸지 않는다 — 찾는 도중에 사용자가 고른 장면이 번호로 묶여 있다.
-    같은 득점(2초 안)은 새 답으로 고치되, 이미 고른 장면은 그대로 둔다."""
+    같은 랠리(_same_rally)는 하나로 합치되(서브는 이른 쪽, 득점은 늦은 쪽), 이미 고른 장면은 그대로 둔다."""
     for r in found:
-        j = next((k for k, e in enumerate(job.rallies)
-                  if abs(e["point_sec"] - r["point_sec"]) <= scan.SAME_POINT_SEC), None)
+        j = next((k for k, e in enumerate(job.rallies) if _same_rally(e, r)), None)
         if j is None:
             job.rallies.append({**r, "index": len(job.rallies)})
             if job.mode == "server":  # 브라우저 방식은 원본이 기기에 있어 미리보기도 기기에서 만든다
                 make_preview(job, len(job.rallies) - 1)
         elif str(j) not in job.scenes:
-            job.rallies[j] = {**r, "index": j}
+            e = job.rallies[j]
+            if abs(e["point_sec"] - r["point_sec"]) <= scan.SAME_POINT_SEC:
+                job.rallies[j] = {**r, "index": j}  # 같은 득점: 새 답으로
+            else:  # 한 랠리를 둘로 읽음: 합친다
+                late = r if r["point_sec"] > e["point_sec"] else e
+                starts = [x["start_sec"] for x in (e, r) if x.get("start_sec") is not None]
+                job.rallies[j] = {**late, "index": j, "start_sec": min(starts) if starts else late.get("start_sec"),
+                                  "end_sec": max(e.get("end_sec") or 0, r.get("end_sec") or 0) or late.get("end_sec")}
 
 
 def _rallies_by_whistle(job: Job, client: Any) -> list[dict[str, Any]]:
