@@ -815,7 +815,7 @@ def test_one_shot_starts_when_settings_arrive_during_the_scan_and_resumes_after_
     # 서버가 다시 켜진 경우: 랠리 0은 찾고 만든 뒤, 1은 찾기만 하고 멈췄다
     job = jobs.load_job(job_id)
     job.auto = {**job.auto, "state": "finding", "made": [0], "found": {"0": {"card": 0, "confidence": 0.9},
-                                                                      "1": {"card": 2, "confidence": 0.8}}}
+                                                                      "1": {"card": 2, "confidence": 0.9}}}
     job.scenes["1"]["status"] = "frames_ready"
     job.save()
     asked.clear(); rendered.clear()
@@ -1122,3 +1122,14 @@ def test_find_me_asks_each_moment_and_keeps_the_surest(tmp_path: Path, monkeypat
     found = auto.find_me(job, 0, tmp_path / "ref.jpg", "10번", SimpleNamespace(responses=SimpleNamespace(create=create)))
     assert (found["frame"], found["card"], found["confidence"]) == ("start", 3, 0.95)
     assert found["frames"] == {"score": [1, 0.6], "b2": [-1, 0.9], "start": [3, 0.95]} and job.spent_usd > 0
+
+
+def test_only_number_level_confidence_makes_a_highlight_by_itself() -> None:
+    # 11/2 사용자 확인(H-63): 확신 0.75·0.75·0.80으로 자동으로 만든 3개가 모두 같은 팀 다른 선수였다.
+    # 등번호를 직접 본 답은 0.9~0.95 → 0.9 아래는 '나 맞나요?'로 사용자에게 묻는다
+    from tapme import auto
+
+    assert auto.CONFIDENT == 0.9
+    assert auto.decide({"card": 2, "confidence": 0.95}) == "make" and auto.decide({"card": 2, "confidence": 0.9}) == "make"
+    assert auto.decide({"card": 2, "confidence": 0.8}) == "review" and auto.decide({"card": 2, "confidence": 0.75}) == "review"
+    assert auto.decide({"card": -1, "confidence": 0.95}) == "review"  # 못 찾았다는 확신은 만들 근거가 아니다
