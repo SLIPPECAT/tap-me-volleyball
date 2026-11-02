@@ -149,3 +149,120 @@ def test_joined_rally_never_exceeds_the_longest_candidate() -> None:
                       "input_tokens": 1, "output_tokens": 1, "clip": "x"}
     merged = rally_filter.merge_rallies([r(0.0, 20.0), r(21.0, 35.0), r(36.0, 50.0)])
     assert [(m["start_sec"], m["end_sec"]) for m in merged] == [(0.0, 35.0), (36.0, 50.0)]
+
+
+def test_blurred_clip_returns_the_blurred_cut_and_removes_the_raw(tmp_path: Path, monkeypatch) -> None:
+    def fake_cut(video, s, e, out):
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_bytes(b"raw")
+        return out
+
+    def fake_blur(raw, dst):
+        dst.write_bytes(b"blurred")
+
+    monkeypatch.setattr(rally_filter, "cut_clip", fake_cut)
+    monkeypatch.setattr(rally_filter.anonymize, "anonymize_video", fake_blur)
+    out = tmp_path / "work" / "cand00_blur.mp4"
+    assert rally_filter.blurred_clip(tmp_path / "m.mp4", 1.0, 4.0, out) == out
+    assert out.read_bytes() == b"blurred"
+    assert not (tmp_path / "work" / "cand00_blur_raw.mp4").exists()
+
+
+def _ask_replies(monkeypatch, texts: list[str]) -> list[str]:
+    from tapme import muse
+
+    prompts: list[str] = []
+
+    def fake_ask(client, clip, prompt):
+        prompts.append(prompt)
+        return muse.MuseReply(text=texts[len(prompts) - 1], input_tokens=10, output_tokens=5, usd=0.01, seconds=0.1)
+
+    monkeypatch.setattr(muse, "ask_about_video", fake_ask)
+    return prompts
+
+
+def test_confident_first_answer_is_asked_once(tmp_path: Path, monkeypatch) -> None:
+    prompts = _ask_replies(monkeypatch, ['{"is_rally": true, "confidence": 0.95, "reason": "serve and attack"}'])
+    blurred = tmp_path / "cand00_blur.mp4"
+    blurred.write_bytes(b"x")
+    r = rally_filter._ask(None, rally.RallyCandidate(1.0, 4.0), blurred)
+    assert prompts == [rally_filter.RALLY_CHECK_PROMPT]
+    assert (r["is_rally"], r["attempts"], r["uncertain"]) == (True, 1, False)
+    assert (r["clip"], r["clip_start_sec"]) == (str(blurred), 0.0)
+    assert (r["input_tokens"], r["output_tokens"], r["usd"]) == (10, 5, 0.01)
+
+
+def test_two_unsure_answers_mark_the_candidate_uncertain(tmp_path: Path, monkeypatch) -> None:
+    # 확신이 없거나(키 빠짐) 낮으면 두 번 묻고, 그래도 낮으면 불확실로 둬 사용자가 판단하게 한다
+    prompts = _ask_replies(monkeypatch, ['{"is_rally": true}', '{"is_rally": true, "confidence": 0.3}'])
+    r = rally_filter._ask(None, rally.RallyCandidate(5.0, 9.0), tmp_path / "c.mp4")
+    assert len(prompts) == 2
+    assert (r["is_rally"], r["attempts"], r["uncertain"], r["confidence"]) == (True, 2, True, 0.3)
+    assert (r["input_tokens"], r["output_tokens"], r["usd"]) == (20, 10, 0.02)
+    assert r["clip_start_sec"] == 4.0
+
+
+def test_an_unreadable_answer_is_asked_again_instead_of_stopping_the_check(tmp_path: Path, monkeypatch) -> None:
+    # 11/3 Muse Code 검토: JSON이 없는 답 하나에 ValueError가 나 후보 확인 전체가 멈췄다
+    prompts = _ask_replies(monkeypatch, ["", '{"is_rally": false, "confidence": 0.9}'])
+    r = rally_filter._ask(None, rally.RallyCandidate(5.0, 9.0), tmp_path / "c.mp4")
+    assert len(prompts) == 2 and (r["is_rally"], r["uncertain"]) == (False, False)
+    prompts = _ask_replies(monkeypatch, ["잘린 답 {", "잘린 답 {"])
+    r = rally_filter._ask(None, rally.RallyCandidate(5.0, 9.0), tmp_path / "c.mp4")
+    assert len(prompts) == 2 and r["uncertain"] is True
+
+
+def test_merged_rally_keeps_the_lower_confidence_and_marks_uncertainty() -> None:
+    r = lambda s, e, c, u: {"start_sec": s, "end_sec": e, "is_rally": True, "confidence": c, "uncertain": u,
+                            "usd": 0.006, "input_tokens": 10, "output_tokens": 5, "clip": "x"}
+    (m,) = rally_filter.merge_rallies([r(0.0, 9.0, 0.9, False), r(10.0, 18.0, 0.6, True)])
+    assert (m["confidence"], m["uncertain"]) == (0.6, True)  # 둘 중 낮은 확신·어느 한쪽의 불확실
+    assert (m["input_tokens"], m["output_tokens"]) == (20, 10) and m["usd"] == 0.012
+
+
+def test_no_candidates_needs_no_clips(tmp_path: Path) -> None:
+    progress: list = []
+    assert rally_filter.check_candidates(None, tmp_path / "v.mp4", [], tmp_path, lambda d, n: progress.append((d, n))) == []
+    assert progress == []
+
+
+def _main_argv(monkeypatch, tmp_path: Path, yes: bool) -> None:
+    import sys
+
+    from tapme import muse, rally
+
+    argv = ["rally_filter", "match.mp4", "--work", str(tmp_path / "work")]
+    if yes:
+        argv.append("--yes")
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(rally, "load_audio", lambda video: SimpleNamespace(size=rally.SAMPLE_RATE * 30))
+    monkeypatch.setattr(rally, "find_whistles", lambda audio: ["w"])
+    monkeypatch.setattr(rally, "segments", lambda w, d: [rally.RallyCandidate(1.0, 4.0)])
+    monkeypatch.setattr(muse, "estimate_usd", lambda sec: 0.5)
+
+
+def test_main_reports_the_estimate_without_calling_the_api(tmp_path: Path, monkeypatch, capsys) -> None:
+    _main_argv(monkeypatch, tmp_path, yes=False)
+
+    def must_not_run(*a, **k):
+        raise AssertionError("API를 부르면 안 된다")
+
+    monkeypatch.setattr(rally_filter, "check_candidates", must_not_run)
+    rally_filter.main()
+    out = capsys.readouterr().out
+    assert "후보 1개" in out and "예상 $0.500" in out and "--yes 없이 실행해 API는 부르지 않았다" in out
+
+
+def test_main_with_yes_checks_and_saves_the_results(tmp_path: Path, monkeypatch, capsys) -> None:
+    import json
+
+    from tapme import muse
+
+    _main_argv(monkeypatch, tmp_path, yes=True)
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(muse, "client_from_env", lambda: object())
+    saved = [{"start_sec": 1.0, "end_sec": 4.0, "is_rally": True, "usd": 0.01}]
+    monkeypatch.setattr(rally_filter, "check_candidates", lambda *a, **k: saved)
+    rally_filter.main()
+    assert json.loads((tmp_path / "work" / "rally_check.json").read_text()) == saved
+    assert "합계 $0.0100" in capsys.readouterr().out

@@ -69,3 +69,86 @@ def test_commentary_follows_who_won_the_point() -> None:
     opp = score.commentary_prompt("검정", 6.0, "score", 10.0, "opponent")
     assert "won by the opponents" in opp and "won the point themselves" not in opp  # '내가 득점'은 빼고
     assert "never say which team won" in score.commentary_prompt("검정", 6.0, "assist", 10.0, None)
+
+
+def test_commentary_keeps_the_role_only_when_it_fits_the_winner() -> None:
+    # '내가 득점'은 우리 팀이 이겼을 때만 맞는 말. 어시스트·수비는 진 랠리에서도 그대로
+    assert "won the point themselves" in score.commentary_prompt("검정", 6.0, "score", 10.0, "mine")
+    assert "won the point themselves" not in score.commentary_prompt("검정", 6.0, "score", 10.0, None)
+    opp_assist = score.commentary_prompt("검정", 6.0, "assist", 10.0, "opponent")
+    assert score.ROLE_TEXT["assist"] in opp_assist and "fought for the rally" in opp_assist
+    assert score.ROLE_TEXT["defense"] in score.commentary_prompt("검정", 6.0, "defense", 10.0, "opponent")
+    assert "Do not describe the highlighted player's role" in score.commentary_prompt("검정", 6.0, "", 10.0, "opponent")
+    # 클립 길이와 득점 시각을 알려 장면에 맞춰 해설하게 한다
+    p = score.commentary_prompt("검정", 6.0, "assist", 10.0)
+    assert "10-second clip" in p and "timed near 6.0s" in p
+
+
+def test_cues_sort_clamp_and_round_to_the_rendered_clip() -> None:
+    # 순서를 섞어 줘도 시각 순으로, 소수는 둘째 자리로, 클립 밖에 시작하는 줄은 버린다
+    lines = [
+        {"t": 9.0, "ko": "뒤", "ja": "後", "en": "late"},
+        {"t": 1.126, "ko": "앞", "ja": "前", "en": "early"},
+    ]
+    assert score.subtitle_cues(lines, ["ko"], offset=0.0, duration=7.0) == [(1.13, 7.0, "앞")]
+    # 클립 시작(창 2초)보다 이른 줄은 0초부터 보인다
+    line = {"t": 0.5, "ko": "시작 전", "en": "pre"}
+    assert score.subtitle_cues([line], ["ko", "en"], offset=2.0, duration=7.0) == [(0.0, 7.0, "시작 전\npre")]
+
+
+def test_cues_skip_lines_without_text_or_time() -> None:
+    # 고른 언어의 글자가 없는 줄·다음 줄과 같은 시각의 줄은 자막에 없다
+    lines = [
+        {"t": 1.0, "ko": "", "en": ""},
+        {"t": 2.0, "ko": "둘째", "en": ""},
+        {"t": 2.0, "ko": "셋째", "en": "third"},
+    ]
+    assert score.subtitle_cues(lines, ["ko", "en"], offset=0.0, duration=9.0) == [(2.0, 9.0, "셋째\nthird")]
+    # 없는 언어 글자는 건너뛰고 있는 것만 고른 순서로
+    assert score.subtitle_cues([{"t": 1.0, "en": "only"}], ["ko", "en"], offset=0.0, duration=9.0) == [(1.0, 9.0, "only")]
+
+
+def test_ask_serve_side_reports_which_side_serves(tmp_path: Path) -> None:
+    clip = tmp_path / "s.mp4"
+    clip.write_bytes(b"x")
+    sent: dict = {}
+    answer, reply = score.ask_serve_side(_client('{"server_side": "far", "confidence": 0.9}', sent), clip)
+    assert (answer["server_side"], answer["confidence"]) == ("far", 0.9)
+    assert sent["input"][0]["content"][0]["text"] == score.SERVE_SIDE_PROMPT
+    assert reply.input_tokens == 1  # 낸 돈은 reply로 센다
+
+
+def test_ask_serve_side_treats_an_empty_answer_as_unsure(tmp_path: Path) -> None:
+    # 빈 답이 온 적이 있다(H-54). 서브 쪽을 모르면 득점 팀도 모른다
+    clip = tmp_path / "s.mp4"
+    clip.write_bytes(b"x")
+    answer, _ = score.ask_serve_side(_client("", {}), clip)
+    assert answer == {"server_side": "unsure", "confidence": 0.0}
+
+
+def test_ask_score_time_without_json_is_an_error(tmp_path: Path) -> None:
+    # 득점 시각은 다시 물으면 흔들려(H-43) 모르면 실패로. 서브 쪽·해설과 달리 대신할 값이 없다
+    clip = tmp_path / "r.mp4"
+    clip.write_bytes(b"x")
+    with pytest.raises(ValueError):
+        score.ask_score_time(_client("no json here", {}), clip)
+
+
+def test_ask_commentary_returns_timed_lines(tmp_path: Path) -> None:
+    clip = tmp_path / "c.mp4"
+    clip.write_bytes(b"x")
+    sent: dict = {}
+    lines, _ = score.ask_commentary(
+        _client('{"lines": [{"t": 1.0, "ko": "서브"}, {"ko": "시각 없음"}, {"t": 6.0, "ko": "득점"}]}', sent),
+        clip, "검정", 6.0, "assist", 10.0)
+    assert lines == [{"t": 1.0, "ko": "서브"}, {"t": 6.0, "ko": "득점"}]  # 시각 없는 줄은 버린다
+    assert sent["input"][0]["content"][0]["text"] == score.commentary_prompt("검정", 6.0, "assist", 10.0)
+
+
+def test_ask_commentary_distinguishes_no_lines_from_unreadable(tmp_path: Path) -> None:
+    clip = tmp_path / "c.mp4"
+    clip.write_bytes(b"x")
+    lines, _ = score.ask_commentary(_client('{"lines": []}', {}), clip, "검정", 6.0, "", 10.0)
+    assert lines == []  # 줄이 없으면 빈 목록(다시 묻지 않는다)
+    lines, reply = score.ask_commentary(_client("truncated {\"lines\": [", {}), clip, "검정", 6.0, "", 10.0)
+    assert lines is None and reply.input_tokens == 1  # 읽을 수 없으면 None(낸 돈은 센다)

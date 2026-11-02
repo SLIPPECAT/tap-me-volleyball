@@ -160,17 +160,21 @@ def blur_boxes(
         x1, y1 = min(w, x + bw + int(bw * pad)), min(h, y + bh + int(bh * pad))
         if x1 <= x0 or y1 <= y0:
             continue
-        rw, rh = x1 - x0, y1 - y0
+        rw = x1 - x0
+        # 타원은 화면 밖까지 넓힌 칸 기준으로 그리고 화면 안만 쓴다. 잘린 칸에 맞춰 그리면 가장자리 얼굴의 모서리가
+        # 거의 안 흐려졌다(11/3 Muse Code 검토)
+        ux0, uy0 = x - int(bw * pad), y - int(bh * pad)
+        uw, uh = bw + 2 * int(bw * pad), bh + 2 * int(bh * pad)
         # 세기는 사용자가 고른 시안 4번(커널 = 칸 폭의 1/3, OpenCV 기본 sigma)과 같게. 작은 얼굴만 BLUR_MIN_SIGMA까지 올린다
         k0 = max(9, (rw // 3) | 1)
         sigma = max(BLUR_MIN_SIGMA, 0.3 * ((k0 - 1) * 0.5 - 1) + 0.8)
         k = max(k0, int(sigma * 3) * 2 + 1)
         roi = out[y0:y1, x0:x1]
         blurred = cv2.GaussianBlur(roi, (k, k), sigma, borderType=cv2.BORDER_REFLECT)
-        mask = np.zeros((rh, rw), np.float32)
-        cv2.ellipse(mask, (rw // 2, rh // 2), (max(1, rw // 2), max(1, rh // 2)), 0, 0, 360, 1.0, -1)
-        f = max(3, (min(rw, rh) // 6) | 1)  # 가장자리 섞는 폭
-        mask = cv2.GaussianBlur(mask, (f, f), 0)[..., None]
+        mask = np.zeros((uh, uw), np.float32)
+        cv2.ellipse(mask, (uw // 2, uh // 2), (max(1, uw // 2), max(1, uh // 2)), 0, 0, 360, 1.0, -1)
+        f = max(3, (min(uw, uh) // 6) | 1)  # 가장자리 섞는 폭
+        mask = cv2.GaussianBlur(mask, (f, f), 0)[y0 - uy0:y1 - uy0, x0 - ux0:x1 - ux0, None]
         out[y0:y1, x0:x1] = (roi * (1 - mask) + blurred * mask).astype(frame.dtype)
     return out
 

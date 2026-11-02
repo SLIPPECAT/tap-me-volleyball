@@ -163,3 +163,15 @@ def test_blur_has_a_soft_round_edge_not_a_hard_square() -> None:
     corner = np.abs(out[112:118, 112:118].astype(int) - frame[112:118, 112:118].astype(int)).mean()
     center = np.abs(out[195:205, 195:205].astype(int) - frame[195:205, 195:205].astype(int)).mean()
     assert corner < center / 4, (corner, center)
+
+
+def test_a_face_at_the_frame_edge_is_blurred_to_its_corners() -> None:
+    # 11/3 Muse Code 검토: 화면 가장자리에 걸친 얼굴은 잘린 칸에 맞춘 타원이라 얼굴 모서리가 거의 안 흐려졌다
+    rng = np.random.default_rng(0)
+    frame = rng.integers(0, 255, (240, 320, 3), dtype=np.uint8)
+    out = anonymize.blur_boxes(frame, [(0, 100, 30, 30)], pad=0.4)
+    corner = (slice(100, 104), slice(0, 4))  # 얼굴 상자 왼쪽 위 모서리
+    interior = anonymize.blur_boxes(frame, [(150, 100, 30, 30)], pad=0.4)
+    edge_change = np.abs(out[corner].astype(int) - frame[corner].astype(int)).mean()
+    inner_change = np.abs(interior[100:104, 150:154].astype(int) - frame[100:104, 150:154].astype(int)).mean()
+    assert edge_change > 0.5 * inner_change

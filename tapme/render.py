@@ -230,6 +230,8 @@ def _draw_head_marker(img: Image.Image, me: Box, head: tuple[int, int, int, int]
     w = me.right - me.left
     cx = (me.left + me.right) / 2 if head is None else head[0] + head[2] / 2
     s = max(14.0, w * 0.32)
+    if head is not None:  # 앞사람과 겹쳐 상자가 커지면 삼각형도 커졌다(11/3 Muse Code 검토) — 얼굴 크기로 상한
+        s = max(14.0, min(s, head[2] * 1.2))
     top = me.top if head is None else head[1] - head[3] * 0.35
     tip = top - s * 0.45
     tri = [(cx - s / 2, tip - s * 0.7), (cx + s / 2, tip - s * 0.7), (cx, tip)]
@@ -466,6 +468,15 @@ def pick_my_face(faces: list[tuple[int, int, int, int]], me: Box | None,
     return face, (face or pred)
 
 
+def restore_rect(out: np.ndarray, src: np.ndarray, rect: tuple[int, int, int, int]) -> None:
+    """rect 자리를 src(흐리기 전)로 되돌린다. 화면 밖으로 걸친 부분은 잘라 낸다 — 왼쪽·위로 넘친 자리를 0에 붙이면
+    엉뚱한 칸(옆 사람 흐림)을 되돌렸다(11/3 Muse Code 검토)."""
+    x, y, w, h = (int(v) for v in rect)
+    x0, y0, x1, y1 = max(0, x), max(0, y), min(out.shape[1], x + w), min(out.shape[0], y + h)
+    if x1 > x0 and y1 > y0:
+        out[y0:y1, x0:x1] = src[y0:y1, x0:x1]
+
+
 def off_my_body(side: list[tuple[int, int, int, int]], me: Box | None,
                 front: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
     """탭한 '나'의 얼굴(정면 검출기로 이번 프레임에 찾은 것)보다 아래, 내 몸 상자 안에 잡힌 옆얼굴 Haar 상자를 뺀다.
@@ -620,8 +631,7 @@ def render_video(
                 # 드러날 수 있는 다른 얼굴 4,143개 중 2 → 7, 사용자 우선순위 품질 > 초상권). 옛 자리를 그대로 쓰면 18개가 드러났고,
                 # 되돌린 자리를 다시 흐리면 내 얼굴에 흐림이 도로 붙었다(869프레임)
                 if my_face is not None and i % face_every == 0:
-                    x, y, w, h = (max(0, int(v)) for v in my_face)
-                    out_rgb[y:y + h, x:x + w] = rgb[y:y + h, x:x + w]
+                    restore_rect(out_rgb, rgb, my_face)
                 frame = Image.fromarray(out_rgb)
             img = compose(frame, boxes[k],
                           masks_by_sam.get(round(i * sam_fps / fps), {}), me, crops[k], (out_w, out_h),

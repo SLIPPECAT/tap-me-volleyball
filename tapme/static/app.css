@@ -196,6 +196,8 @@ video { width: 100%; background: var(--color-paper-3); }
 .me-box video, .me-frame canvas { width: 100%; max-height: 60vh; object-fit: contain; background: var(--color-paper-3); }
 .me-frame { position: relative; }
 .me-frame canvas { display: block; height: auto; cursor: crosshair; }
+/* 확대하면 캔버스가 칸보다 커진다 — 높이 제한을 풀어야 비율이 안 깨지고 탭 위치 계산이 맞는다(칸이 70dvh로 자른다) */
+#me-wrap canvas { max-height: none; }
 .auto-box { display: grid; gap: var(--space-xs); margin-block: var(--space-sm); }
 /* 완성 화면: 모두 저장 + 작은 미리보기 목록(줄마다 9:16 사진·번호·득점 시각·저장). 누르면 전체 화면(.viewer) */
 .auto-head { font-size: var(--text-lg); font-weight: 600; }

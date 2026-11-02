@@ -499,3 +499,32 @@ def test_a_far_face_at_the_top_of_my_grown_box_is_not_taken_as_mine() -> None:
     found, keep = render.pick_my_face([neighbour], grown, last, 12, 15)
     assert found is None                           # 옆 사람 얼굴로 옮겨 붙지 않는다
     assert render.faces_of_others([neighbour], grown, found) == [neighbour]
+
+
+def test_restoring_my_face_clips_at_the_frame_edge() -> None:
+    # 11/3 Muse Code 검토: 화면 왼쪽·위로 넘친 내 얼굴 자리를 0에 붙여 되돌리면 옆 사람 흐림까지 풀렸다
+    src = np.full((60, 80, 3), 200, np.uint8)
+    out = np.zeros_like(src)
+    render.restore_rect(out, src, (-10, 5, 30, 20))   # 화면 안은 x 0~19만
+    assert out[5:25, 0:20].min() == 200 and out[5:25, 20:].max() == 0
+    out = np.zeros_like(src)
+    render.restore_rect(out, src, (-100, -100, 30, 30))  # 완전히 화면 밖이면 아무것도 되돌리지 않는다
+    assert out.max() == 0
+    out = np.zeros_like(src)
+    render.restore_rect(out, src, (70, 50, 30, 30))   # 오른쪽·아래로 넘쳐도 화면 안만
+    assert out[50:, 70:].min() == 200 and out[:50].max() == 0
+
+
+def _marker_width(head: tuple[int, int, int, int] | None, me: Box) -> int:
+    img = Image.new("RGB", (400, 400), (0, 0, 0))
+    render._draw_head_marker(img, me, head)
+    yellow = np.argwhere((np.asarray(img)[..., 0] > 200) & (np.asarray(img)[..., 2] < 80))
+    return int(yellow[:, 1].max() - yellow[:, 1].min())
+
+
+def test_head_marker_keeps_its_size_when_my_box_grows() -> None:
+    # 11/3 Muse Code 검토: 앞사람과 겹쳐 내 상자가 넓어지면 머리 위 삼각형도 2.6배 커졌다 → 얼굴 크기로 상한
+    face = (130, 210, 30, 40)
+    normal = _marker_width(face, Box("me", 100, 200, 200, 500))
+    grown = _marker_width(face, Box("me", 100, 150, 360, 500))
+    assert abs(grown - normal) <= 6

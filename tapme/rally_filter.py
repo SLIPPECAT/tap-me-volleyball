@@ -92,7 +92,10 @@ def _ask(client: Any, c: rally.RallyCandidate, blurred: Path) -> dict[str, Any]:
     replies, answer = [], {}
     for _ in range(MAX_ATTEMPTS):
         replies.append(muse.ask_about_video(client, blurred, RALLY_CHECK_PROMPT))
-        answer = muse.parse_json_reply(replies[-1].text)
+        try:
+            answer = muse.parse_json_reply(replies[-1].text)
+        except ValueError:  # 빈 답·잘린 JSON 하나로 후보 확인 전체가 멈췄다(11/3 Muse Code 검토) → 확신 없음으로 다시 묻기
+            answer = {}
         if float(answer.get("confidence") or 0) >= MIN_CONFIDENCE:
             break
     return {
