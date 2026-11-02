@@ -224,12 +224,14 @@ def _draw_ground_marker(img: Image.Image, me: Box) -> None:
     d.ellipse((cx - rx * 0.62, me.bottom - ry * 0.62, cx + rx * 0.62, me.bottom + ry * 0.62), outline=RING_COLOR + (200,), width=t)
 
 
-def _draw_head_marker(img: Image.Image, me: Box) -> None:
-    """머리 위 노란 삼각형(그림자 포함)."""
+def _draw_head_marker(img: Image.Image, me: Box, head: tuple[int, int, int, int] | None = None) -> None:
+    """머리 위 노란 삼각형(그림자 포함). 내 얼굴(head)을 알면 그 위에 — 앞사람과 겹쳐 내 상자가 커지면 상자 꼭대기가
+    다른 사람(심판) 머리 위로 올라갔다(11/3 사용자)."""
     w = me.right - me.left
-    cx = (me.left + me.right) / 2
+    cx = (me.left + me.right) / 2 if head is None else head[0] + head[2] / 2
     s = max(14.0, w * 0.32)
-    tip = me.top - s * 0.45
+    top = me.top if head is None else head[1] - head[3] * 0.35
+    tip = top - s * 0.45
     tri = [(cx - s / 2, tip - s * 0.7), (cx + s / 2, tip - s * 0.7), (cx, tip)]
     _soft(img, (cx - s / 2, tip - s * 0.7, cx + s / 2 + 2, tip + 3),
           lambda d, dx, dy: d.polygon([(x + dx + 2, y + dy + 3) for x, y in tri], fill=(0, 0, 0, 120)), 3)
@@ -245,6 +247,7 @@ def compose(
     out_size: tuple[int, int],
     subtitle: str = "",
     privacy: str = DEFAULT_PRIVACY,
+    head: tuple[int, int, int, int] | None = None,
 ) -> Image.Image:
     if privacy not in PRIVACY_MODES:
         raise ValueError(f"가리기 방식은 {PRIVACY_MODES} 중 하나: {privacy}")
@@ -268,7 +271,7 @@ def compose(
         if body is not None:
             # 발밑 표시가 발을 덮지 않고 바닥에 깔린 것처럼: '나'의 몸(SAM 마스크)을 표시 위에 다시 올린다(10/30 사용자)
             _paste_region(work, body, my_box, rec)
-        _draw_head_marker(work, my_box)
+        _draw_head_marker(work, my_box, head)
     x0, y0, cw, ch = crop
     out = work.crop((x0, y0, x0 + cw, y0 + ch)).resize(out_size, Image.Resampling.LANCZOS)
     if subtitle:
@@ -294,15 +297,48 @@ PROFILE_MARGIN = 0.15
 DEFAULT_FACE_SCALE = 2.0
 
 
-def faces_of_others(faces: list[tuple[int, int, int, int]], me: Box | None) -> list[tuple[int, int, int, int]]:
-    """얼굴 박스 (x, y, w, h) 중 '나'의 머리 쪽(내 박스 위쪽)에 있는 얼굴 하나를 뺀 나머지.
-    몸 박스 전체로 빼면 내 앞뒤로 겹친 다른 사람 얼굴까지 드러났다(H-40)."""
+def my_face_box(faces: list[tuple[int, int, int, int]], me: Box | None) -> tuple[int, int, int, int] | None:
+    """얼굴 박스 중 '나'의 얼굴: 내 박스 위쪽(MY_HEAD_SHARE) 안에서 내 머리 꼭대기 가운데에 가장 가까운 것."""
     if me is None:
-        return list(faces)
+        return None
     head_bottom = me.top + (me.bottom - me.top) * MY_HEAD_SHARE
     top_center = ((me.left + me.right) / 2, me.top)
     heads = [f for f in faces if me.left <= f[0] + f[2] / 2 <= me.right and me.top <= f[1] + f[3] / 2 <= head_bottom]
-    mine = min(heads, key=lambda f: abs(f[0] + f[2] / 2 - top_center[0]) + abs(f[1] - top_center[1]), default=None)
+    return min(heads, key=lambda f: abs(f[0] + f[2] / 2 - top_center[0]) + abs(f[1] - top_center[1]), default=None)
+
+
+# 선수 몸 높이에 비해 이만큼보다 큰 '얼굴'은 얼굴이 아니다(11/3 사용자: 흐림이 가끔 엄청 커진다, H-73). 머리는 몸의 1/7 안팎.
+# 카메라 가까운 사람은 몸도 커서 진짜 큰 얼굴은 남는다(10/31 '내 머리 3배' 기준은 그런 얼굴까지 버려 되돌렸다)
+MAX_FACE_TO_BODY = 0.35
+
+
+# 큰 상자라도 선수 머리 자리(몸 위쪽 이 비율)에 있으면 진짜 얼굴일 수 있어 남긴다(H-73: 크기만 보고 버리면 머리 자리의
+# 진짜 얼굴까지 빠져 놓친 얼굴이 0 → 18로 늘었다). 몸통·다리에 잡힌 큰 '얼굴'만 버린다
+HEAD_ZONE = 0.25
+
+
+def drop_oversized(faces: list[tuple[int, int, int, int]], people: list[Box]) -> list[tuple[int, int, int, int]]:
+    """얼굴 가운데가 어떤 선수 상자 안의 몸통·다리(머리 자리 아래)에 있고, 그 얼굴 높이가 (그 자리 선수 중 가장 큰) 몸 높이의
+    MAX_FACE_TO_BODY를 넘으면 뺀다. 선수 상자 밖(관중 등)이나 머리 자리의 얼굴은 그대로 둔다."""
+    def too_big(f: tuple[int, int, int, int]) -> bool:
+        cx, cy = f[0] + f[2] / 2, f[1] + f[3] / 2
+        bodies = [p for p in people if p.left <= cx <= p.right and p.top <= cy <= p.bottom]
+        if not bodies:
+            return False
+        tall = max(bodies, key=lambda p: p.bottom - p.top)
+        height = tall.bottom - tall.top
+        return f[3] > MAX_FACE_TO_BODY * height and cy > tall.top + HEAD_ZONE * height
+    return [f for f in faces if not too_big(f)]
+
+
+_PICK = object()
+
+
+def faces_of_others(faces: list[tuple[int, int, int, int]], me: Box | None,
+                    face: tuple[int, int, int, int] | None | object = _PICK) -> list[tuple[int, int, int, int]]:
+    """얼굴 박스 (x, y, w, h) 중 '나'의 머리 쪽(내 박스 위쪽)에 있는 얼굴 하나를 뺀 나머지.
+    몸 박스 전체로 빼면 내 앞뒤로 겹친 다른 사람 얼굴까지 드러났다(H-40). face를 주면 그것을 내 얼굴로 본다(이어 추적)."""
+    mine = my_face_box(faces, me) if face is _PICK else face
     if mine is None:
         return list(faces)
     # 검출기 2~3개가 같은 내 얼굴을 각자 찾아 박스가 여럿이다. 하나만 빼면 나머지가 내 얼굴을 가렸다(10/30)
@@ -382,7 +418,64 @@ def off_bodies(side: list[tuple[int, int, int, int]], people: list[Box]) -> list
     def on_body(b: tuple[int, int, int, int]) -> bool:
         cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
         return any(p.left <= cx <= p.right and p.top + BODY_FROM * (p.bottom - p.top) < cy <= p.bottom for p in people)
-    return [b for b in side if not on_body(b)]
+    # 어느 선수에게도 붙지 않았는데 그 화면에서 가장 큰 선수 키의 MAX_FACE_TO_BODY보다 큰 옆얼굴은 선수 사이 빈자리를 잘못 잡은 것
+    # (11/3 사용자 화면: 두 선수 몸을 통째로 덮는 큰 사각형, H-73). 관중석 진짜 얼굴은 작아서 남는다
+    tallest = max((p.bottom - p.top for p in people), default=0)
+
+    def stray(b: tuple[int, int, int, int]) -> bool:
+        cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
+        alone = not any(p.left <= cx <= p.right and p.top <= cy <= p.bottom for p in people)
+        return alone and tallest > 0 and b[3] > MAX_FACE_TO_BODY * tallest
+    return [b for b in side if not on_body(b) and not stray(b)]
+
+
+MY_FACE_FOLLOW_SEC = 0.5  # 내 얼굴을 잠깐 놓쳤을 때 마지막 자리를 몸 따라 옮겨 지키는 시간(H-73)
+
+
+def follow_face(face: tuple[int, int, int, int], then: Box, now: Box) -> tuple[int, int, int, int]:
+    """그때 내 몸(then) 안의 얼굴 자리를 지금 내 몸(now)으로 옮긴다: 발밑(상자 아래 가운데)이 움직인 만큼, 크기는 그대로.
+    상자 위쪽·너비로 맞추면 앞사람과 겹쳐 상자가 위로 커질 때 얼굴 자리도 다른 사람 쪽으로 딸려 갔다(H-73). 0.5초 안이라 크기 변화는 작다."""
+    dx = (now.left + now.right) / 2 - (then.left + then.right) / 2
+    dy = now.bottom - then.bottom
+    x, y, w, h = face
+    return (int(x + dx), int(y + dy), w, h)
+
+
+MY_FACE_JUMP = 1.2  # 따라오던 내 얼굴(몸 따라 옮긴 자리)에서 얼굴 크기의 이 배보다 멀면 내 얼굴이 아니다
+
+
+def pick_my_face(faces: list[tuple[int, int, int, int]], me: Box | None,
+                 last: tuple[tuple[int, int, int, int], Box, int] | None, i: int, follow: int
+                 ) -> tuple[tuple[int, int, int, int] | None, tuple[int, int, int, int] | None]:
+    """(이번 프레임에 찾은 내 얼굴, 지킬 자리). 최근(follow 프레임 안)에 찾은 내 얼굴이 있으면 그 자리를 몸 따라 옮긴 곳에
+    가장 가까운 얼굴만 내 얼굴로 본다 — 앞사람과 겹쳐 내 상자가 커지면 상자 위쪽의 다른 사람(심판) 얼굴이 내 얼굴로 골라졌다
+    (11/3 사용자, H-73). 없으면 원래 규칙(내 상자 위쪽). 못 찾았으면 옮긴 자리를 지킨다."""
+    if me is None:
+        return None, None
+    if last is None or i - last[2] > follow:
+        face = my_face_box(faces, me)
+        return face, face
+    pred = follow_face(last[0], last[1], me)
+    px, py = pred[0] + pred[2] / 2, pred[1] + pred[3] / 2
+    reach = MY_FACE_JUMP * max(pred[2], pred[3], 1)
+    # 내 상자 안이어야 한다 — 없으면 옆 사람 얼굴로 옮겨 붙어 그 얼굴을 계속 안 가렸다(놓친 얼굴 8 → 155). 머리 자리로
+    # 좁히지 않는다: 상자가 위로 커지면 내 진짜 얼굴이 머리 자리 아래로 내려간다
+    near = [f for f in faces if abs(f[0] + f[2] / 2 - px) <= reach and abs(f[1] + f[3] / 2 - py) <= reach
+            and me.left <= f[0] + f[2] / 2 <= me.right and me.top <= f[1] + f[3] / 2 <= me.bottom]
+    face = min(near, key=lambda f: abs(f[0] + f[2] / 2 - px) + abs(f[1] + f[3] / 2 - py), default=None)
+    return face, (face or pred)
+
+
+def off_my_body(side: list[tuple[int, int, int, int]], me: Box | None,
+                front: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
+    """탭한 '나'의 얼굴(정면 검출기로 이번 프레임에 찾은 것)보다 아래, 내 몸 상자 안에 잡힌 옆얼굴 Haar 상자를 뺀다.
+    옆얼굴 검출기가 가슴팍을 얼굴로 잡아 내 몸에 흐림이 생겼다(11/3 사용자, 몸 위 33% 지점이라 BODY_FROM 0.35에 안 걸림).
+    다른 선수는 팔을 들면 머리가 내려와 이 기준을 쓰지 않는다(off_bodies). 내 얼굴을 못 찾은 프레임은 그대로 둔다."""
+    face = my_face_box(front, me)
+    if me is None or face is None:
+        return side
+    below = face[1] + face[3]
+    return [b for b in side if not (me.left <= b[0] + b[2] / 2 <= me.right and below < b[1] + b[3] / 2 <= me.bottom)]
 
 
 def off_team(faces: list[tuple[int, int, int, int]], people: list[Box],
@@ -479,6 +572,9 @@ def render_video(
         i = 0
         faces: list[tuple[int, int, int, int]] = []
         recent: deque[list[tuple[int, int, int, int]]] = deque(maxlen=max(1, round(FACE_HOLD_SEC * fps)))
+        my_face: tuple[int, int, int, int] | None = None
+        last_face: tuple[tuple[int, int, int, int], Box, int] | None = None  # 마지막으로 찾은 내 얼굴, 그때 내 몸, 프레임
+        follow = max(1, round(MY_FACE_FOLLOW_SEC * fps))
         fill()
         while ahead:
             buf, job = ahead.popleft()
@@ -503,18 +599,33 @@ def render_video(
                         face_cache_out.append((faces, side))
                     if people_by_sam is not None:  # 다른 선수까지 추적했으면 몸 위에 잡힌 옆얼굴을 거른다(H-48)
                         side = off_bodies(side, people_by_sam.get(round(i * sam_fps / fps), []))
+                    if keep_my_face:  # 내 얼굴보다 아래 내 몸에 잡힌 옆얼굴은 버린다(11/3 사용자: 내 가슴에 흐림, H-73)
+                        side = off_my_body(side, next((b for b in boxes[k] if b.object_id == me), None), faces)
                     faces = faces + side
                     if clear_ids and people_by_sam is not None:
                         faces = off_team(faces, people_by_sam.get(round(i * sam_fps / fps), []), clear_ids)
+                    if people_by_sam is not None:  # 몸에 비해 너무 큰 '얼굴'은 버린다(H-73)
+                        faces = drop_oversized(faces, people_by_sam.get(round(i * sam_fps / fps), []))
                     mine = next((b for b in boxes[k] if b.object_id == me), None)
+                    found, my_face = pick_my_face(faces, mine, last_face, i, follow) if keep_my_face else (None, None)
+                    if found is not None and mine is not None:
+                        last_face = (found, mine, i)
                     # 내 얼굴은 찾은 그 프레임에서 뺀다. 모아 둔 뒤에 빼면 0.2초 전 내 얼굴 자리가 남아 탭한 나에게
                     # 모자이크가 붙었다(10/30 사용자). keep_my_face=False는 품질 확인용(qa.py) — '나'까지 가린다
-                    recent.append(faces_of_others(faces, mine if keep_my_face else None))
+                    recent.append(faces_of_others(faces, mine, found) if keep_my_face else faces_of_others(faces, None))
                 held = [f for fs in recent for f in fs]  # 검출기가 잠깐 놓쳐도 방금 찾은 다른 사람 얼굴은 가린다
-                frame = Image.fromarray(anonymize.blur_boxes(rgb, held, pad=RENDER_BOX_PAD))
+                out_rgb = anonymize.blur_boxes(rgb, held, pad=RENDER_BOX_PAD)
+                # 옆 사람 흐림(사방 40% 넓힘)이 내 얼굴로 넘어오지 않게 내 얼굴 자리만 원래 화면으로 되돌린다(11/3 사용자, H-73:
+                # 넘어온 흐림 1,227 → 0프레임). 이번 프레임에 못 찾았으면 0.5초까지 마지막 내 얼굴을 몸 따라 옮긴 자리(걸침 221 → 0,
+                # 드러날 수 있는 다른 얼굴 4,143개 중 2 → 7, 사용자 우선순위 품질 > 초상권). 옛 자리를 그대로 쓰면 18개가 드러났고,
+                # 되돌린 자리를 다시 흐리면 내 얼굴에 흐림이 도로 붙었다(869프레임)
+                if my_face is not None and i % face_every == 0:
+                    x, y, w, h = (max(0, int(v)) for v in my_face)
+                    out_rgb[y:y + h, x:x + w] = rgb[y:y + h, x:x + w]
+                frame = Image.fromarray(out_rgb)
             img = compose(frame, boxes[k],
                           masks_by_sam.get(round(i * sam_fps / fps), {}), me, crops[k], (out_w, out_h),
-                          text, privacy)
+                          text, privacy, head=my_face if face_mosaic and keep_my_face else None)
             try:
                 enc.stdin.write(img.tobytes())
             except BrokenPipeError:

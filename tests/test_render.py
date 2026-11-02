@@ -4,10 +4,11 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from PIL import Image
 
-from tapme import render, track
+from tapme import anonymize, render, track
 from tapme.track import Box
 
 
@@ -411,3 +412,90 @@ def test_render_finishes_when_the_sound_is_a_little_shorter_than_the_picture(tmp
                     "-c:a", "aac", str(src)], check=True)
     out = render.render_video(src, tmp_path / "m.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=False, full_frame=True)
     assert out.exists() and render.probe(out)[3] >= 4  # 소리 길이까지는 나온다
+
+
+def test_oversized_faces_on_a_player_are_dropped_but_big_real_faces_stay() -> None:
+    # H-73(11/3 사용자: 흐림이 가끔 엄청 커진다): 몸 높이의 35%를 넘는 '얼굴'은 버린다. 가까운 사람은 몸도 커서 남는다
+    far_player = Box("p1", 100, 100, 260, 400)   # 몸 높이 300
+    near_player = Box("p2", 400, 50, 700, 1050)  # 몸 높이 1000(카메라 가까이)
+    torso_blob = (110, 200, 120, 140)   # 키 140 > 300×0.35 → 버림
+    real_far = (120, 105, 30, 40)       # 키 40 → 남김
+    real_near = (500, 60, 120, 150)     # 키 150 < 1000×0.35 → 남김
+    spectator = (900, 10, 300, 300)     # 선수 상자 밖 → 그대로
+    big_head = (150, 60, 120, 140)      # 키 140으로 크지만 가운데(y 130)가 머리 자리(위 1/4, 175까지) → 진짜 얼굴일 수 있어 남김
+    kept = render.drop_oversized([torso_blob, real_far, real_near, spectator, big_head], [far_player, near_player])
+    assert kept == [real_far, real_near, spectator, big_head]
+
+
+def test_neighbour_blur_does_not_spill_onto_my_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # H-73(11/3 사용자: 옆 사람 모자이크가 내 얼굴로 넘어온다): 다른 사람을 흐린 뒤 내 얼굴 자리만 원래 화면으로
+    src = tmp_path / "src.mp4"
+    rng = np.random.default_rng(0)
+    frames = rng.integers(0, 256, (6, 240, 320, 3), dtype=np.uint8)
+    p = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "320x240", "-r", "5",
+                          "-i", "-", "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv444p", str(src)], stdin=subprocess.PIPE)
+    p.communicate(frames.tobytes())
+    mine, other = (150, 40, 30, 30), (178, 40, 30, 30)  # 붙어 있는 두 얼굴: 옆 얼굴을 40% 넓히면 내 얼굴을 덮는다
+    monkeypatch.setattr(render, "_find_faces", lambda *a, **k: ([mine, other], []))
+    monkeypatch.setattr(anonymize, "load_detector", lambda *a, **k: object())
+    monkeypatch.setattr(anonymize, "load_profile_detector", lambda *a, **k: object())
+    monkeypatch.setattr(anonymize, "load_plain_detector", lambda *a, **k: object())
+    me_box = {f: [Box(track.TAPPED_ID, 140, 35, 190, 200)] for f in range(6)}
+    out = tmp_path / "o.mp4"
+    render.render_video(src, out, me_box, {}, track.TAPPED_ID, sam_fps=5, zoom=1.0, face_mosaic=True, full_frame=True)
+    plain = tmp_path / "p.mp4"
+    render.render_video(src, plain, me_box, {}, track.TAPPED_ID, sam_fps=5, zoom=1.0, face_mosaic=False, full_frame=True)
+    a, b = (np.frombuffer(subprocess.check_output(["ffmpeg", "-loglevel", "error", "-i", str(v), "-f", "rawvideo",
+                                                   "-pix_fmt", "rgb24", "-"]), np.uint8).reshape(-1, 240, 320, 3) for v in (out, plain))
+    x, y, w, h = mine
+    ox, oy, ow, oh = other
+    mine_diff = np.abs(a[2, y:y + h, x + 4:x + w - 4].astype(int) - b[2, y:y + h, x + 4:x + w - 4].astype(int)).mean()
+    other_diff = np.abs(a[2, oy:oy + oh, ox + 6:ox + ow].astype(int) - b[2, oy:oy + oh, ox + 6:ox + ow].astype(int)).mean()
+    # 옆 얼굴은 흐려지고(크게 바뀜), 내 얼굴은 압축 잡음 정도만(흐림이 넘어오면 옆 얼굴만큼 바뀐다)
+    assert other_diff > 20 and mine_diff < other_diff / 4, (mine_diff, other_diff)
+
+
+
+def test_a_big_side_face_between_players_is_dropped_but_small_crowd_faces_stay() -> None:
+    # H-73(11/3 사용자 화면): 옆얼굴 검출기가 두 선수 사이 빈자리를 큰 얼굴로 잡아 두 선수 몸을 덮었다
+    left, right = Box("a", 100, 300, 200, 700), Box("b", 260, 300, 360, 700)  # 키 400, 사이 틈 200~260
+    between = (180, 380, 100, 160)   # 가운데(230, 460)가 틈, 키 160 > 400×0.35 → 버림
+    crowd = (500, 50, 30, 30)        # 선수 밖 작은 관중 얼굴 → 남김
+    assert render.off_bodies([between, crowd], [left, right]) == [crowd]
+
+
+def test_side_face_on_my_chest_below_my_face_is_dropped() -> None:
+    # 11/3 사용자: 옆얼굴 검출기가 내 가슴팍(몸 위 33%)을 얼굴로 잡아 내 몸에 흐림이 생겼다
+    me = Box(track.TAPPED_ID, 700, 500, 800, 800)       # 키 300
+    my_face = (735, 520, 25, 35)                         # 정면 검출기가 찾은 내 얼굴(아래 끝 555)
+    chest = (730, 580, 43, 43)                           # 가운데 y 601: 내 얼굴 아래, 내 몸 안 → 버림
+    my_profile = (725, 515, 45, 45)                      # 내 얼굴 옆얼굴(가운데 537): 내 얼굴 높이 → 남김(내 얼굴로 빠진다)
+    neighbour = (820, 580, 30, 30)                       # 내 몸 밖 → 남김
+    assert render.off_my_body([chest, my_profile, neighbour], me, [my_face]) == [my_profile, neighbour]
+    assert render.off_my_body([chest], me, []) == [chest]  # 내 얼굴을 못 찾았으면 그대로
+
+
+def test_my_face_spot_follows_my_body_when_the_detector_misses_it() -> None:
+    # H-73(11/3 사용자: 내 얼굴에 흐림이 살짝 걸친다): 잠깐 놓치면 마지막 내 얼굴 자리를 내 몸이 움직인 만큼 옮겨 지킨다
+    then, now = Box("me", 100, 200, 200, 500), Box("me", 160, 190, 260, 490)  # 오른쪽으로 60, 위로 10
+    assert render.follow_face((130, 210, 30, 40), then, now) == (190, 200, 30, 40)
+    grown_up = Box("me", 100, 50, 200, 500)  # 앞사람과 겹쳐 상자 위쪽만 커짐 → 발밑이 그대로면 얼굴 자리도 그대로
+    assert render.follow_face((130, 210, 30, 40), then, grown_up) == (130, 210, 30, 40)
+
+
+def test_a_far_face_at_the_top_of_my_grown_box_is_not_taken_as_mine() -> None:
+    # 11/3 사용자: 앞사람과 겹쳐 내 상자가 위로 커지자 상자 위쪽의 심판 얼굴이 내 얼굴로 골라져 드러났다(삼각형도 심판 위로)
+    then = Box("me", 100, 300, 200, 600)
+    my_face = (130, 310, 30, 40)
+    last = (my_face, then, 10)
+    grown = Box("me", 100, 150, 260, 600)           # 같은 프레임대, 위·오른쪽으로 커진 상자
+    referee, mine_now = (215, 160, 30, 40), (132, 312, 30, 40)
+    found, keep = render.pick_my_face([referee, mine_now], grown, last, 12, 15)
+    assert found == mine_now and keep == mine_now  # 따라오던 자리 근처의 내 얼굴을 고른다
+    found, keep = render.pick_my_face([referee], grown, last, 12, 15)
+    assert found is None and keep is not None      # 심판 얼굴은 내 얼굴이 아니다 → 지킬 자리는 몸 따라 옮긴 곳
+    assert render.faces_of_others([referee], grown, found) == [referee]  # 심판 얼굴은 흐린다
+    neighbour = (60, 312, 30, 40)                  # 내 얼굴 자리 바로 옆이지만 내 상자 밖 — 옆 사람
+    found, keep = render.pick_my_face([neighbour], grown, last, 12, 15)
+    assert found is None                           # 옆 사람 얼굴로 옮겨 붙지 않는다
+    assert render.faces_of_others([neighbour], grown, found) == [neighbour]

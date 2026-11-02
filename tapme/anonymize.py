@@ -149,7 +149,10 @@ def blur_boxes(
     frame: np.ndarray, boxes: list[tuple[int, int, int, int]], pad: float = BOX_PAD
 ) -> np.ndarray:
     """결과 영상용: 네모 블록 대신 부드럽게 흐린다(11/2 사용자 — 블록 모자이크는 깨져 보인다, 시안 4번 선택).
-    흐림 크기는 가리는 폭의 1/3(최소 9px). Meta로 보내는 사본·사진은 그대로 pixelate_boxes(더 세게)."""
+    11/3 사용자: 멀리 있는 작은 얼굴(심판)이 살짝 드러났고 큰 흐림은 네모 덩어리로 보였다 →
+    - 흐림 세기는 시안 4번 그대로(커널 = 칸 폭의 1/3), 작은 얼굴만 최소 BLUR_MIN_SIGMA까지 올려 칸 전체가 뭉개지게
+    - 네모 대신 칸에 꼭 맞는 타원으로, 가장자리는 부드럽게 섞는다. 넓히기 전 얼굴 상자는 타원 안쪽에 다 든다
+    Meta로 보내는 사본·사진은 그대로 pixelate_boxes(더 세게)."""
     out = frame.copy()
     h, w = frame.shape[:2]
     for x, y, bw, bh in boxes:
@@ -157,9 +160,22 @@ def blur_boxes(
         x1, y1 = min(w, x + bw + int(bw * pad)), min(h, y + bh + int(bh * pad))
         if x1 <= x0 or y1 <= y0:
             continue
-        k = max(9, ((x1 - x0) // 3) | 1)
-        out[y0:y1, x0:x1] = cv2.GaussianBlur(out[y0:y1, x0:x1], (k, k), 0)
+        rw, rh = x1 - x0, y1 - y0
+        # 세기는 사용자가 고른 시안 4번(커널 = 칸 폭의 1/3, OpenCV 기본 sigma)과 같게. 작은 얼굴만 BLUR_MIN_SIGMA까지 올린다
+        k0 = max(9, (rw // 3) | 1)
+        sigma = max(BLUR_MIN_SIGMA, 0.3 * ((k0 - 1) * 0.5 - 1) + 0.8)
+        k = max(k0, int(sigma * 3) * 2 + 1)
+        roi = out[y0:y1, x0:x1]
+        blurred = cv2.GaussianBlur(roi, (k, k), sigma, borderType=cv2.BORDER_REFLECT)
+        mask = np.zeros((rh, rw), np.float32)
+        cv2.ellipse(mask, (rw // 2, rh // 2), (max(1, rw // 2), max(1, rh // 2)), 0, 0, 360, 1.0, -1)
+        f = max(3, (min(rw, rh) // 6) | 1)  # 가장자리 섞는 폭
+        mask = cv2.GaussianBlur(mask, (f, f), 0)[..., None]
+        out[y0:y1, x0:x1] = (roi * (1 - mask) + blurred * mask).astype(frame.dtype)
     return out
+
+
+BLUR_MIN_SIGMA = 4.0  # 작은 얼굴도 알아볼 수 없게(예전 9px 커널 ≈ sigma 1.7은 심판 얼굴이 살짝 드러났다)
 
 # 얼굴 찾기를 여러 프로세스로(10/31): 클라우드 vCPU는 OpenCV 스레드를 늘려도 잘 안 빨라진다(렌더에서 8프로세스 × 1스레드가
 # 한 프로세스보다 36% 빨랐다). 프레임 순서대로 받아 결과는 같다. 이 맥은 1(지금 그대로, M4는 나누면 오히려 느렸다)

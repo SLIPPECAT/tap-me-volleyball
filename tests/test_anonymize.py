@@ -142,3 +142,24 @@ def test_blur_hides_detail_only_inside_box_without_blocks() -> None:
     inner = out[y : y + h, x : x + w].astype(float)
     assert inner.std() < frame[y : y + h, x : x + w].astype(float).std() / 4
     assert len({tuple(p) for p in out[y : y + h, x : x + w].reshape(-1, 3)}) > 100
+
+
+def test_small_far_faces_are_blurred_hard_enough() -> None:
+    # 11/3 사용자: 멀리 있는 심판 얼굴(13×17px 안팎)이 살짝 드러났다 — 작은 얼굴 칸은 한 덩어리로 뭉개야 한다
+    rng = np.random.default_rng(1)
+    frame = rng.integers(0, 256, (240, 320, 3), dtype=np.uint8)
+    box = (150, 100, 13, 17)
+    out = anonymize.blur_boxes(frame, [box], pad=0.4)
+    x, y, w, h = box
+    face = out[y : y + h, x : x + w].astype(float)
+    assert face.std() < frame[y : y + h, x : x + w].astype(float).std() / 6  # 예전(9px 커널)은 약 1/3에 그쳤다
+
+
+def test_blur_has_a_soft_round_edge_not_a_hard_square() -> None:
+    # 11/3 사용자: 큰 흐림이 네모 덩어리로 보였다 → 칸 귀퉁이는 거의 원래대로, 가운데는 흐림
+    rng = np.random.default_rng(2)
+    frame = rng.integers(0, 256, (400, 400, 3), dtype=np.uint8)
+    out = anonymize.blur_boxes(frame, [(150, 150, 100, 100)], pad=0.4)  # 칸 110~290
+    corner = np.abs(out[112:118, 112:118].astype(int) - frame[112:118, 112:118].astype(int)).mean()
+    center = np.abs(out[195:205, 195:205].astype(int) - frame[195:205, 195:205].astype(int)).mean()
+    assert corner < center / 4, (corner, center)
