@@ -746,8 +746,10 @@ EST_SERVER_SEC_PER_VIDEO_SEC = float(os.environ.get("TAPME_EST_SCAN_RATE", "2.2"
 EST_HIGHLIGHT_SEC = float(os.environ.get("TAPME_EST_HIGHLIGHT_SEC", "600"))
 # 한 번에 맡기기·대기열 어림(H-53 실측, 11/1): 렌더 하나(준비 제외)는 모자이크 켬 189초·끔 25초, 10분 영상 랠리 찾기
 # 6분 9초. 위 EST_HIGHLIGHT_SEC(하나씩 고르기에서 준비+추적+렌더 전체, 10/31)는 속도 개선 전 값이라 다시 재야 한다
-RENDER_EST_SEC = {True: 190, False: 25}
-SCAN_EST_SEC = 6 * 60
+# 11/2 운영 설정(N2 32코어·48GB, 렌더 2개 동시, H-58·H-62)으로 다시 잼: 하이라이트가 나오는 간격 모자이크 켬 약 66초,
+# 10분 영상 랠리 찾기 4분 3초. 예전 190초로 어림하니 아이폰 시험에서 '약 13분 남음'이 실제 2분이었다
+RENDER_EST_SEC = {True: 70, False: 15}
+SCAN_EST_SEC = 4 * 60
 
 
 @app.post("/speedtest")
