@@ -406,6 +406,8 @@ def test_idle_reports_quiet_time_and_running_work(client: TestClient, monkeypatc
     assert client.get("/idle").json()["idle_sec"] < 60
     html = client.get("/").text
     assert "e.status === 404" in html and "clearInterval(state.poll)" in html  # 화면도 404면 묻기를 멈춘다
+    # 서버가 쉬는 중이면 코드 확인이 실패해 '만들어 줘' 버튼이 이유 없이 꺼져 있었다(11/2) → 깨우고 다시 확인
+    assert 'highlight.baegugu.com/wake' in html and "serverWaking" in html and "setTimeout(checkAccess, 5000)" in html
 
 
 def test_invite_link_gives_a_code_with_limits(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
