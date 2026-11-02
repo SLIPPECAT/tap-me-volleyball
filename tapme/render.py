@@ -475,7 +475,12 @@ def render_video(
             img = compose(frame, boxes[k],
                           masks_by_sam.get(round(i * sam_fps / fps), {}), me, crops[k], (out_w, out_h),
                           text, privacy)
-            enc.stdin.write(img.tobytes())
+            try:
+                enc.stdin.write(img.tobytes())
+            except BrokenPipeError:
+                # 소리가 화면보다 조금 짧으면(-shortest) 인코더가 먼저 끝난다: 원본 경기 영상은 소리 120.0초·화면 120.07초였다
+                # (11/2 나 표시 영상). 정상으로 끝났으면 남은 몇 프레임만 버리고, 아니면 아래에서 실패로 알린다
+                break
             i += 1
             if on_progress and i % 30 == 0:
                 on_progress(i, n)
@@ -487,8 +492,12 @@ def render_video(
                     job.cancel()
             anonymize.release_pool()
         dec.stdout.close()
+        dec.kill()
         dec.wait()
-        enc.stdin.close()
+        try:
+            enc.stdin.close()
+        except BrokenPipeError:
+            pass
         if enc.wait() != 0:
             raise RuntimeError("ffmpeg 인코딩 실패")
     return out

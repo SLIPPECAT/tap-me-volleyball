@@ -401,3 +401,13 @@ def test_full_frame_marker_video_saves_faces_and_highlights_reuse_them(tmp_path:
     calls.clear()
     render.render_video(src, tmp_path / "h.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_cache_in=cache)
     assert calls == []  # 저장한 얼굴을 쓴다
+
+
+def test_render_finishes_when_the_sound_is_a_little_shorter_than_the_picture(tmp_path: Path) -> None:
+    # 11/2 나 표시 영상: 원본 경기 영상 소리 120.0초·화면 120.07초 → 인코더(-shortest)가 먼저 끝나 BrokenPipe로 실패했다
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=1",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", str(src)], check=True)
+    out = render.render_video(src, tmp_path / "m.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=False, full_frame=True)
+    assert out.exists() and render.probe(out)[3] >= 4  # 소리 길이까지는 나온다
