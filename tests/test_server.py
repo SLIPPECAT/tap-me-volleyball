@@ -1269,3 +1269,13 @@ def test_one_shot_makes_the_marker_video_first_then_fast_highlights(client: Test
     assert all(s["status"] == "done" for s in jobs.load_job(job_id).scenes.values()) and sent[-1] == "auto_done"
     assert client.post(f"/jobs/{job_id}/auto/highlights").status_code == 409  # 이미 만들었다
     assert client.post(f"/jobs/{job_id}/auto", json={"t": 1, "x": 1, "y": 1, "team": "a", "outputs": []}).status_code == 422
+
+
+def test_upload_screen_guides_steps_outputs_and_time(client: TestClient) -> None:
+    # 11/2 사용자: 만들 것을 옵션으로, 단계적으로 안내, 오래 걸릴 수 있다는 걸 충분히 알게(예상 시간·알림·새벽 정리)
+    html = client.get("/").text
+    for key in ("stepOutputs", "stepVideo", "stepOpts", "stepStart", "estLine", "estNote", "needOutput",
+                "autoTracking", "autoMarker", "autoMarkerItem", "autoHlLater"):
+        assert html.count(f"{key}:") == 3, key  # 한·일·영
+    assert 'id="out-marker"' in html and 'id="out-highlights"' in html and "outputs: readOutputs()" in html
+    assert "/marker/video" in html and "/auto/highlights" in html

@@ -218,3 +218,14 @@ video { width: 100%; background: var(--color-paper-3); }
 #auto-more { justify-self: start; font-size: var(--text-sm); }
 .button-like { display: grid; place-items: center; min-height: 40px; border: var(--rule-hair) solid var(--color-rule); color: var(--color-ink); text-decoration: none; font-size: var(--text-sm); }
 #auto-review { display: grid; gap: var(--space-2xs); }
+
+/* 한 번에 맡기기 단계 안내(11/2 사용자): 1. 무엇을 만들까요 → 2. 영상 → 3. 나 → 4. 설정 → 5. 맡기기 */
+.step-title { margin: var(--space-sm) 0 var(--space-3xs); }
+.outputs { display: grid; gap: var(--space-xs); margin-block: var(--space-sm); }
+.out-opt { display: flex; gap: var(--space-xs); align-items: flex-start; cursor: pointer; padding: var(--space-sm) var(--space-md);
+  border: var(--rule-hair) solid var(--color-rule); }
+.out-opt input { margin-top: 0.25em; }
+.out-opt span { display: grid; gap: var(--space-3xs); }
+.out-opt small { color: var(--color-muted); }
+.auto-est { display: grid; gap: var(--space-3xs); margin-block: var(--space-sm); padding: var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule); }
