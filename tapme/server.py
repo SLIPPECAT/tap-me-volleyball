@@ -1217,7 +1217,9 @@ def status(job_id: str) -> dict[str, Any]:
             "unread": job.unread, "match_name": job.match_name, "scan": job.scan, "scan_range": job.scan_range,
             "mode": job.mode, "segments": sorted(job.segments), "source_size": job.source_size,
             "chunks_received": jobs.browser_chunks_received(job) if job.mode == "browser" else [],
-            "queue": jobs.SCAN_TURNS.position(job.id), "left": _left(job),
+            "queue": (q := jobs.SCAN_TURNS.position(job.id)), "left": _left(job),
+            # 랠리 찾기 차례까지 어림(11/2 사용자: 앞에 기다리는 사람이 있으면 얼마나 기다리는지)
+            "queue_wait_sec": round(q * SCAN_EST_SEC / max(1, jobs.SCAN_TURNS.slots)) if q else 0,
             "render_turns": {k: p for k in job.scenes if (p := jobs.RENDER_TURNS.position(f"{job.id}/{k}"))},
             # 남은 시간 어림: 남은 하이라이트 × 하나 시간 × (렌더를 번갈아 쓰는 작업 수)
             "render_est_sec": RENDER_EST_SEC[job.auto.get("options", {}).get("face_mosaic", True)] * (len(sharing) + 1),

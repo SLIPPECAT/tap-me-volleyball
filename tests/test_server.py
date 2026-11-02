@@ -1318,3 +1318,13 @@ def test_next_ten_minutes_waits_for_the_current_part_and_stops_at_the_end(client
     assert client.post(f"/jobs/{last.id}/auto/next").status_code == 409
     short = _finished_auto_job([0.0, 600.0], 600.0)
     assert client.post(f"/jobs/{short.id}/auto/next").status_code == 409
+
+
+def test_status_tells_how_long_until_rally_finding_starts(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/2 사용자: 앞에 기다리는 사람이 있으면 기다린다는 것과 어림 시간을 보여 준다
+    job = jobs.create_job("m.mp4", b"video", "Match", 0.0, 0.0, "")
+    monkeypatch.setattr(jobs.SCAN_TURNS, "position", lambda key: 2 if key == job.id else None)
+    body = client.get(f"/jobs/{job.id}").json()
+    assert body["queue"] == 2 and body["queue_wait_sec"] == 2 * server.SCAN_EST_SEC
+    monkeypatch.setattr(jobs.SCAN_TURNS, "position", lambda key: None)
+    assert client.get(f"/jobs/{job.id}").json()["queue_wait_sec"] == 0
