@@ -850,3 +850,27 @@ def test_cached_faces_slice_the_highlight_frames_from_the_marker_video(job: jobs
     assert got is not None and got[0][0][0][0] == 30 and len(got) == 12  # (5 − 2) × 10
     assert jobs.cached_faces(job, scene, 0, 1.5) is None  # 배율이 다르다
     assert jobs.cached_faces(job, {"clip": [11.5, 12.5], "clip_video": str(clip)}, 0, 2.0) is None  # 저장한 범위(2~12초)를 넘는다
+
+
+def test_next_scan_range_moves_on_by_the_given_length_until_the_end() -> None:
+    # 긴 경기를 10분씩 이어 맡기기(11/2 사용자): 앞 구간 끝에서 시작, 영상 끝에서 멈추고, 30초도 안 남으면 없다
+    job = jobs.Job(id="j", video="", scan_range=[0.0, 600.0], duration_sec=1500.0)
+    assert jobs.next_scan_range(job, 600) == [600.0, 1200.0]
+    job.scan_range = [600.0, 1200.0]
+    assert jobs.next_scan_range(job, 600) == [1200.0, 1500.0]
+    job.scan_range = [1200.0, 1500.0]
+    assert jobs.next_scan_range(job, 600) is None
+    job.scan_range, job.duration_sec = [0.0, 600.0], 620.0
+    assert jobs.next_scan_range(job, 600) is None
+
+
+def test_continue_job_reuses_the_same_video_file_and_reference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(jobs, "JOBS_DIR", tmp_path)
+    prev = jobs.create_job("m.mp4", b"video", "Match", 0.0, 600.0, "CODE")
+    (prev.dir / "auto").mkdir()
+    (prev.dir / "auto" / "ref.jpg").write_bytes(b"ref")
+    job = jobs.continue_job(prev, 600.0, 1200.0)
+    assert job.id != prev.id and job.code == "CODE" and job.match_name == "Match" and job.scan_range == [600.0, 1200.0]
+    assert Path(job.video).stat().st_ino == Path(prev.video).stat().st_ino  # 하드 링크: 다시 받지도, 복사하지도 않는다
+    assert (job.dir / "auto" / "ref.jpg").read_bytes() == b"ref"
+    assert jobs.load_job(job.id).video == job.video

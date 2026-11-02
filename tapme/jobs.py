@@ -517,6 +517,36 @@ def scan_range(duration: float, start: float, end: float) -> list[float]:
     return [round(start, 2), round(min(end, start + MAX_SCAN_SEC), 2)]
 
 
+MIN_NEXT_SEC = 30.0  # 남은 길이가 이보다 짧으면 이어 맡길 구간이 없다고 본다
+
+
+def next_scan_range(job: Job, length: float) -> list[float] | None:
+    """같은 영상의 다음 구간(앞 구간 끝 ~ length초 뒤, 영상 끝까지). 남은 길이가 MIN_NEXT_SEC보다 짧으면 None."""
+    end = (list(job.scan_range) + [0.0, 0.0])[1]
+    if not end or not job.duration_sec or job.duration_sec - end < MIN_NEXT_SEC:
+        return None
+    return [round(end, 2), round(min(job.duration_sec, end + length), 2)]
+
+
+def continue_job(prev: Job, start: float, end: float) -> Job:
+    """앞 작업과 같은 영상의 다른 구간을 새 작업으로(11/2 사용자: 긴 경기를 10분씩 이어 맡기기). 원본은 다시 받지 않고
+    같은 파일을 하드 링크로 쓴다(디스크 그대로, 새벽 정리 때 둘 다 지워진다). 나를 찾을 기준 사진도 앞 작업 것을 쓴다."""
+    job = Job(id=uuid.uuid4().hex[:12], video="", match_name=prev.match_name, scan_range=[start, end], code=prev.code)
+    job.dir.mkdir(parents=True, exist_ok=True)
+    src = job.dir / Path(prev.video).name
+    try:
+        os.link(prev.video, src)
+    except OSError:
+        shutil.copy2(prev.video, src)
+    job.video = str(src)
+    ref = prev.dir / "auto" / "ref.jpg"
+    if ref.exists():
+        (job.dir / "auto").mkdir(exist_ok=True)
+        shutil.copy2(ref, job.dir / "auto" / "ref.jpg")
+    job.save()
+    return job
+
+
 def find_rallies(job: Job, client: Any) -> None:
     job.status = "finding_rallies"
     job.duration_sec = round(scan.duration_sec(Path(job.video)), 2)

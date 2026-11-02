@@ -742,6 +742,40 @@ def start_auto(job_id: str, req: AutoRequest) -> dict[str, str]:
     return {"status": "accepted"}
 
 
+@app.post("/jobs/{job_id}/auto/next")
+def auto_next(job_id: str, background: BackgroundTasks) -> dict[str, Any]:
+    """같은 영상의 다음 10분을 이어 맡긴다(11/2 사용자: 긴 경기는 10분씩). 원본을 다시 올리지 않고, 나·정보·설정·기준 사진은
+    앞 작업 그대로. 올리기 1번으로 센다(코드당 횟수·하루 한도·비용 한도는 새로 올릴 때와 같다). 두 번 눌러도 하나만 만든다."""
+    with _auto_lock:
+        prev = _job(job_id)
+        if prev.mode != "server" or not prev.auto:
+            raise HTTPException(409, "한 번에 맡긴 작업만 이어 맡길 수 있어요")
+        if prev.auto.get("next"):
+            return {"id": prev.auto["next"], "range": prev.auto.get("next_range")}
+        if prev.auto.get("state") not in ("done", "failed"):
+            raise HTTPException(409, "지금 구간이 끝나면 이어 맡길 수 있어요")
+        rng = jobs.next_scan_range(prev, auto.MAX_SCAN_SEC)
+        if rng is None:
+            raise HTTPException(409, "이 영상은 이어 맡길 구간이 더 없어요")
+        if reason := _closed_reason(prev.code):
+            raise HTTPException(503, reason)
+        try:
+            access.use(prev.code, "uploads")
+        except access.AccessDenied as e:
+            raise HTTPException(403, str(e)) from e
+        job = jobs.continue_job(prev, *rng)
+        job.auto = {"state": "waiting", **{k: prev.auto[k] for k in ("me", "hint", "team", "options", "max", "outputs")
+                                           if k in prev.auto},
+                    "found": {}, "made": [], "review": [], "prev": prev.id}
+        job.save()
+        prev = jobs.load_job(job_id)
+        prev.auto = {**prev.auto, "next": job.id, "next_range": rng}
+        prev.save()
+    jobs.count_upload()
+    background.add_task(_run_scan, job.id, client_factory())
+    return {"id": job.id, "range": rng}
+
+
 @app.post("/tap-check")
 def tap_check(image: UploadFile, x: float = Form(..., ge=0), y: float = Form(..., ge=0)) -> dict[str, Any]:
     """한 번에 맡기기에서 '나'를 탭하면, 올리기 전에 그 장면 한 장으로 내가 충분히 크게 보이는지 확인한다(11/2 사용자)."""

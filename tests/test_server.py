@@ -1282,3 +1282,39 @@ def test_upload_screen_guides_steps_outputs_and_time(client: TestClient) -> None
     assert "const MARKER_ENABLED = false;" in html  # 나 표시 영상은 숨김(11/2 저녁 사용자) — 기본은 하이라이트만
     assert server.AutoRequest(t=1, x=1, y=1, team="a").outputs == ["highlights"]
     assert "/marker/video" in html and "/auto/highlights" in html
+
+
+def _finished_auto_job(scan_range: list[float], duration: float, state: str = "done") -> jobs.Job:
+    job = jobs.create_job("m.mp4", b"video", "Match", *scan_range, "")
+    job.status, job.duration_sec, job.scan_range = "rallies_ready", duration, scan_range
+    job.auto = {"state": state, "me": {"t": 33.5, "x": 1300, "y": 640}, "hint": "green #6", "team": "Green",
+                "options": {"zoom": 1.0}, "max": 40, "outputs": ["highlights"], "found": {"0": {}}, "made": [0], "review": []}
+    job.save()
+    return job
+
+
+def test_next_ten_minutes_reuse_the_video_and_settings_once(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[str] = []
+    monkeypatch.setattr(server, "_start_auto", lambda job_id, c: started.append(job_id))
+    prev = _finished_auto_job([0.0, 600.0], 1500.0)
+    r = client.post(f"/jobs/{prev.id}/auto/next")
+    assert r.status_code == 200, r.text
+    new_id = r.json()["id"]
+    assert r.json()["range"] == [600.0, 1200.0]
+    job = jobs.load_job(new_id)
+    assert job.scan_range == [600.0, 1200.0] and job.status == "rallies_ready"  # 랠리 찾기를 돌렸다(가짜)
+    assert job.auto["me"] == prev.auto["me"] and job.auto["hint"] == "green #6" and job.auto["prev"] == prev.id
+    assert job.auto["made"] == [] and started == [new_id]  # 찾기가 끝나면 한 번에 맡기기를 잇는다
+    assert Path(job.video).stat().st_ino == Path(prev.video).stat().st_ino
+    again = client.post(f"/jobs/{prev.id}/auto/next")  # 두 번 눌러도 하나만
+    assert again.json()["id"] == new_id
+    assert len([d for d in jobs.JOBS_DIR.iterdir() if (d / "job.json").exists()]) == 2
+
+
+def test_next_ten_minutes_waits_for_the_current_part_and_stops_at_the_end(client: TestClient) -> None:
+    running = _finished_auto_job([0.0, 600.0], 1500.0, state="making")
+    assert client.post(f"/jobs/{running.id}/auto/next").status_code == 409
+    last = _finished_auto_job([1200.0, 1500.0], 1500.0)
+    assert client.post(f"/jobs/{last.id}/auto/next").status_code == 409
+    short = _finished_auto_job([0.0, 600.0], 600.0)
+    assert client.post(f"/jobs/{short.id}/auto/next").status_code == 409
