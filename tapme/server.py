@@ -558,11 +558,14 @@ def _auto_steps(job_id: str, client: Any) -> None:
             jobs.prepare_frames(job, i, client)
         found = auto.find_me(job, i, ref, a.get("hint", ""), client)
         # 득점 팀용(H-55): 그 랠리에서 '나'가 있는 쪽(고른 선수 상자) + 서브 쪽(Muse). 실패해도 나 찾기는 그대로
+        # 장면에만 쓰면 먼저 읽어 둔 장면을 저장하는 다른 스레드(렌더 등)가 덮어 대부분 사라졌다(11/2 아이폰 시험: 6개 모두,
+        # 10분 경기 19개 중 2·3개만 남음) → 잠금 안에서 통째로 쓰는 나 찾기 기록(auto.found)에도 남긴다
         scene = job.scenes[str(i)]
         if found.get("card", -1) >= 0:
             scene["me_side"] = jobs.side_of(scene.get("players", {}).get(found.get("frame", ""), []), found["card"])
+            found = {**found, "me_side": scene["me_side"]}
         try:
-            jobs.serve_side(job, i, client)
+            found = {**found, "serve": jobs.serve_side(job, i, client)}
         except Exception:  # noqa: BLE001
             traceback.print_exc()
         with _auto_lock:

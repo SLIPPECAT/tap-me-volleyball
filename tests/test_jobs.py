@@ -801,6 +801,10 @@ def test_point_winner_is_the_team_that_serves_the_next_rally_on_our_side_per_set
     assert "0" not in jobs.point_winners(job)  # 다음 서브를 모르면 모름
     boxes = [[0, 100, 10, 300], [0, 100, 10, 500], [0, 100, 10, 420]]
     assert jobs.side_of(boxes, 1) == "near" and jobs.side_of(boxes, 0) == "far" and jobs.side_of(boxes, 5) == "unknown"
+    # 11/2 아이폰 시험: 장면에 쓴 값은 먼저 읽어 둔 장면을 저장하는 다른 스레드가 덮어 사라졌다 → 나 찾기 기록(auto.found)에서도 읽는다
+    job.scenes = {str(i): {"index": i} for i in range(len(starts))}
+    job.auto = {"found": {str(i): {"card": 1, "me_side": me[i], "serve": {"side": serve[i]}} for i in range(len(starts))}}
+    assert jobs.point_winners(job) == {"0": "mine", "1": "mine", "2": "opponent", "4": "mine", "5": "opponent"}
 
 
 def test_scene_is_the_whole_rally_from_the_serve_but_never_too_long() -> None:

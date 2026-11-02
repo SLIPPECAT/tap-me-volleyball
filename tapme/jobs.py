@@ -1028,14 +1028,18 @@ def point_winners(job: Job) -> dict[str, str]:
             sets.append([])
         sets[-1].append(r)
     out: dict[str, str] = {}
+    found = (job.auto or {}).get("found", {})  # 한 번에 맡기기는 나 찾기 기록에도 남긴다(장면 값이 덮여 사라졌다, 11/2)
+
+    def pick(i: int, key: str) -> Any:
+        return job.scenes.get(str(i), {}).get(key) or found.get(str(i), {}).get(key)
     for part in sets:
-        sides = [job.scenes.get(str(r["index"]), {}).get("me_side") for r in part]
+        sides = [pick(r["index"], "me_side") for r in part]
         near, far = sides.count("near"), sides.count("far")
         if near == far:
             continue
         ours = "near" if near > far else "far"
         for r, nxt in pairwise(part):
-            served = job.scenes.get(str(nxt["index"]), {}).get("serve", {}).get("side")
+            served = (pick(nxt["index"], "serve") or {}).get("side")
             if served in ("near", "far"):
                 out[str(r["index"])] = "mine" if served == ours else "opponent"
     return out

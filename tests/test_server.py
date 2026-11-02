@@ -700,6 +700,14 @@ def test_one_shot_makes_every_found_rally_without_using_code_highlights_and_asks
     assert jobs.load_job(r["id"]).reel == {"status": "done", "order": [0, 1, 2, 3, 4], "style": "full"}  # 모음 기본은 랠리 전체
     assert sorted(served) == [0, 1, 2, 3, 4]  # 득점 팀용 서브 쪽도 랠리마다(H-55)
     assert client.get(f"/jobs/{r['id']}").json()["winners"] == {"0": "mine", "1": "opponent", "2": "mine", "3": "opponent"}
+    # 장면 값이 다른 스레드에 덮여도(11/2 아이폰 시험) 나 찾기 기록에 남은 값으로 같은 답
+    found = jobs.load_job(r["id"]).auto["found"]
+    assert all(f["me_side"] == "near" and f["serve"]["side"] in ("near", "far") for f in found.values())
+    wiped = jobs.load_job(r["id"])
+    for sc in wiped.scenes.values():
+        sc.pop("me_side", None)
+        sc.pop("serve", None)
+    assert jobs.point_winners(wiped) == {"0": "mine", "1": "opponent", "2": "mine", "3": "opponent"}
     assert r["code"]["highlights"] == 0 and r["code"]["uploads"] == 1  # 영상 올리기만 센다
     asked.clear()
     r = run(8, max=2)  # 다 만들면 멈춘다: 그 뒤 랠리까지 미리 다 찾지 않는다
