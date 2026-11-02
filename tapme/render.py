@@ -250,6 +250,9 @@ MY_HEAD_SHARE = 0.35  # '나'의 얼굴로 보는 곳: 내 박스 위쪽 이 비
 # 작을수록 빠르지만 멀리 있는 작은 얼굴을 놓친다(H-41: Meta 흐림본에서 1.5배는 얼굴 약 21% 놓침). 4K는 1배가 1080p 2배와
 # 얼굴 픽셀 크기가 같다. 1배면 원래 크기 YuNet(H-29 두 번째 검출기)과 같은 일이라 한 번만 돌린다
 FACE_SCALES = (1.0, 1.5, 2.0)
+# 옆얼굴 Haar는 결과 화면(자른 곳) + 이만큼(프레임 높이 대비) 둘레에서만(H-58, 11/2): 화면 전체 4.9초 → 2.0초/장,
+# 결과 화면 안 얼굴 덮음 99.9 → 99.8%. 결과에 안 보이는 곳의 옆얼굴은 찾을 필요가 없다. YuNet은 늘 화면 전체(H-28)
+PROFILE_MARGIN = 0.15
 DEFAULT_FACE_SCALE = 2.0
 
 
@@ -313,12 +316,16 @@ def _find_faces(bgr: np.ndarray, detector: cv2.FaceDetectorYN, profile: cv2.Casc
                 plain: cv2.FaceDetectorYN | None, crop: tuple[int, int, int, int],
                 out_size: tuple[int, int], scale: float = DEFAULT_FACE_SCALE,
                 ) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
-    """한 프레임의 (얼굴, 옆얼굴 Haar 얼굴)(원본 좌표). 매 프레임 화면 전체에서 찾는다. 3프레임마다(실험 H-27)나
-    결과 화면 안만(H-28) 찾으면 놓치는 얼굴이 늘었다. 옆얼굴은 사람 몸 위에 잡힌 것을 렌더에서 거른다(H-48)."""
-    faces, side = anonymize.detect_faces_split(bgr, detector, profile, upscale=scale)
+    """한 프레임의 (얼굴, 옆얼굴 Haar 얼굴)(원본 좌표). YuNet은 매 프레임 화면 전체에서 찾는다. 3프레임마다(실험 H-27)나
+    결과 화면 안만(H-28) 찾으면 놓치는 얼굴이 늘었다. 옆얼굴 Haar는 결과 화면 + PROFILE_MARGIN 둘레에서만(H-58),
+    사람 몸 위에 잡힌 것은 렌더에서 거른다(H-48)."""
+    h, w = bgr.shape[:2]
+    x0, y0, cw, ch = crop
+    m = round(PROFILE_MARGIN * h)
+    region = (max(0, x0 - m), max(0, y0 - m), min(w, x0 + cw + m), min(h, y0 + ch + m))
+    faces, side = anonymize.detect_faces_split(bgr, detector, profile, upscale=scale, profile_region=region)
     if plain is not None:  # 두 설정은 놓치는 얼굴이 달라 합친다(H-29)
         faces = faces + anonymize.detect_faces_plain(bgr, plain)
-    x0, y0, cw, ch = crop
     out_w, out_h = out_size
     if cw < out_w:  # 확대하면 원본에서 작아 못 찾던 얼굴이 결과 화면에서는 커져 보인다(H-40)
         sx = out_w / cw

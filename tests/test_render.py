@@ -348,3 +348,37 @@ def test_render_and_blur_share_one_face_pool_that_closes_when_idle(tmp_path: Pat
     anonymize.release_pool()
     time.sleep(1.0)
     assert anonymize._pool is None  # 아무도 안 쓰면 닫힌다
+
+
+def test_profile_faces_are_searched_only_around_the_output_crop() -> None:
+    # H-58(11/2): 옆얼굴 Haar는 결과 화면 + 높이의 15% 둘레에서만(화면 전체 4.9초 → 2.0초/장, 덮음 99.9 → 99.8%).
+    # 좌표는 원본 기준으로 돌려준다(뒤집은 쪽 포함). YuNet은 화면 전체
+    import numpy as np
+
+    from tapme import anonymize
+
+    seen: list = []
+
+    class Profile:
+        def detectMultiScale(self, img, scaleFactor, minNeighbors):
+            seen.append(img.shape)
+            return [(10, 20, 30, 40)]
+
+    class YuNet:
+        def setInputSize(self, size):
+            seen.append(("yunet", size))
+
+        def detect(self, img):
+            return None, None
+
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    _, side = render._find_faces(frame, YuNet(), Profile(), None, (657, 0, 606, 1080), (606, 1080), 2.0)
+    m = round(render.PROFILE_MARGIN * 1080)
+    assert seen[0] == ("yunet", (3840, 2160))  # 정면은 화면 전체(2배)
+    assert seen[1:] == [(1080, 606 + 2 * m), (1080, 606 + 2 * m)]  # 옆얼굴은 결과 화면 둘레만, 좌우 두 번
+    x0 = 657 - m
+    assert side == [(x0 + 10, 20, 30, 40), (x0 + (606 + 2 * m) - 10 - 30, 20, 30, 40)]
+    seen.clear()  # 화면 끝에 붙은 결과 화면은 화면 밖으로 넓히지 않는다
+    render._find_faces(frame, YuNet(), Profile(), None, (0, 0, 606, 1080), (606, 1080), 2.0)
+    assert seen[1] == (1080, 606 + m)
+    assert anonymize.detect_faces_split(frame, YuNet(), Profile())[1][0] == (10, 20, 30, 40)  # 기본은 화면 전체(Meta 흐림본 등)

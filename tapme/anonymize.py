@@ -84,9 +84,11 @@ def detect_faces_split(
     profile: cv2.CascadeClassifier | None = None,
     profile_scale: float = PROFILE_SCALE_FACTOR,
     upscale: float = DETECT_UPSCALE,
+    profile_region: tuple[int, int, int, int] | None = None,
 ) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
     """(YuNet 얼굴, 옆얼굴 Haar 얼굴). 옆얼굴 Haar는 유니폼 등·다리를 얼굴로 잡는 일이 있어(H-48) 결과 영상에서 따로 거른다.
-    upscale: YuNet을 돌릴 확대 배율. 결과 영상 모자이크만 사용자가 고른다(render.FACE_SCALES), Meta 흐림본은 늘 기본값."""
+    upscale: YuNet을 돌릴 확대 배율. 결과 영상 모자이크만 사용자가 고른다(render.FACE_SCALES), Meta 흐림본은 늘 기본값.
+    profile_region: (x0, y0, x1, y1)이면 옆얼굴 Haar는 그 안에서만 찾는다(결과 화면 근처, H-58). YuNet은 늘 화면 전체."""
     h, w = frame.shape[:2]
     big_w, big_h = int(w * upscale), int(h * upscale)
     big = frame if (big_w, big_h) == (w, h) else cv2.resize(frame, (big_w, big_h))
@@ -97,12 +99,14 @@ def detect_faces_split(
     ]
     side: list[tuple[int, int, int, int]] = []
     if profile is not None:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        x0, y0, x1, y1 = profile_region or (0, 0, w, h)
+        gray = cv2.cvtColor(frame[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+        rw = x1 - x0
         for flipped in (False, True):
             img = cv2.flip(gray, 1) if flipped else gray
             for x, y, bw, bh in profile.detectMultiScale(img, scaleFactor=profile_scale, minNeighbors=PROFILE_MIN_NEIGHBORS):
-                x = w - int(x) - int(bw) if flipped else int(x)
-                side.append((x, int(y), int(bw), int(bh)))
+                x = rw - int(x) - int(bw) if flipped else int(x)
+                side.append((x + x0, int(y) + y0, int(bw), int(bh)))
     return boxes, side
 
 
