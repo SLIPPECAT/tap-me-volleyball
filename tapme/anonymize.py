@@ -144,6 +144,23 @@ def pixelate_boxes(
     return out
 
 
+
+def blur_boxes(
+    frame: np.ndarray, boxes: list[tuple[int, int, int, int]], pad: float = BOX_PAD
+) -> np.ndarray:
+    """결과 영상용: 네모 블록 대신 부드럽게 흐린다(11/2 사용자 — 블록 모자이크는 깨져 보인다, 시안 4번 선택).
+    흐림 크기는 가리는 폭의 1/3(최소 9px). Meta로 보내는 사본·사진은 그대로 pixelate_boxes(더 세게)."""
+    out = frame.copy()
+    h, w = frame.shape[:2]
+    for x, y, bw, bh in boxes:
+        x0, y0 = max(0, x - int(bw * pad)), max(0, y - int(bh * pad))
+        x1, y1 = min(w, x + bw + int(bw * pad)), min(h, y + bh + int(bh * pad))
+        if x1 <= x0 or y1 <= y0:
+            continue
+        k = max(9, ((x1 - x0) // 3) | 1)
+        out[y0:y1, x0:x1] = cv2.GaussianBlur(out[y0:y1, x0:x1], (k, k), 0)
+    return out
+
 # 얼굴 찾기를 여러 프로세스로(10/31): 클라우드 vCPU는 OpenCV 스레드를 늘려도 잘 안 빨라진다(렌더에서 8프로세스 × 1스레드가
 # 한 프로세스보다 36% 빨랐다). 프레임 순서대로 받아 결과는 같다. 이 맥은 1(지금 그대로, M4는 나누면 오히려 느렸다)
 BLUR_WORKERS = int(os.environ.get("TAPME_BLUR_WORKERS", "1"))

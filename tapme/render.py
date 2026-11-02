@@ -312,7 +312,7 @@ def faces_of_others(faces: list[tuple[int, int, int, int]], me: Box | None) -> l
 
 
 def mosaic_faces_except_me(frame: np.ndarray, faces: list[tuple[int, int, int, int]], me: Box | None) -> np.ndarray:
-    return anonymize.pixelate_boxes(frame, faces_of_others(faces, me), pad=RENDER_BOX_PAD)
+    return anonymize.blur_boxes(frame, faces_of_others(faces, me), pad=RENDER_BOX_PAD)
 
 
 def probe(video: Path) -> tuple[int, int, float, int]:
@@ -511,7 +511,7 @@ def render_video(
                     # 모자이크가 붙었다(10/30 사용자). keep_my_face=False는 품질 확인용(qa.py) — '나'까지 가린다
                     recent.append(faces_of_others(faces, mine if keep_my_face else None))
                 held = [f for fs in recent for f in fs]  # 검출기가 잠깐 놓쳐도 방금 찾은 다른 사람 얼굴은 가린다
-                frame = Image.fromarray(anonymize.pixelate_boxes(rgb, held, pad=RENDER_BOX_PAD))
+                frame = Image.fromarray(anonymize.blur_boxes(rgb, held, pad=RENDER_BOX_PAD))
             img = compose(frame, boxes[k],
                           masks_by_sam.get(round(i * sam_fps / fps), {}), me, crops[k], (out_w, out_h),
                           text, privacy)

@@ -128,3 +128,17 @@ def test_parallel_blur_matches_single_process(tmp_path, monkeypatch) -> None:
     stats = anonymize.anonymize_video(src, two)
     anonymize._pool.shutdown()
     assert stats["frames"] == 20 and frames(one) == frames(two)
+
+
+def test_blur_hides_detail_only_inside_box_without_blocks() -> None:
+    # 결과 영상 모자이크(11/2 흐림): 안쪽 잔무늬는 지우고, 바깥은 그대로, 네모 블록(같은 색 조각)은 없다
+    rng = np.random.default_rng(0)
+    frame = rng.integers(0, 256, (240, 320, 3), dtype=np.uint8)
+    box = (100, 80, 60, 60)
+    out = anonymize.blur_boxes(frame, [box])
+    x, y, w, h = box
+    pad = int(w * anonymize.BOX_PAD)
+    assert np.array_equal(out[: y - pad], frame[: y - pad])
+    inner = out[y : y + h, x : x + w].astype(float)
+    assert inner.std() < frame[y : y + h, x : x + w].astype(float).std() / 4
+    assert len({tuple(p) for p in out[y : y + h, x : x + w].reshape(-1, 3)}) > 100
