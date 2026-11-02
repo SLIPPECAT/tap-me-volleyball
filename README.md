@@ -75,3 +75,7 @@ The YuNet model file goes in `tapme/models/` (see `tapme/anonymize.py`).
 ## How it was built
 
 All product code in this repository was written during the hackathon (Oct 26 – Nov 4, 2026), with Claude Code as a coding assistant. Experiments, measurements and decisions are recorded in a separate experiment repository.
+
+## License
+
+© 2026 Baegugu. All rights reserved. This repository is shared publicly for hackathon judging; no open-source license is granted. Third-party components keep their own licenses (see above).
