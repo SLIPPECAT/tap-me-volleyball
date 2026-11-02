@@ -25,7 +25,7 @@ Everything goes through the **Meta Model API**. Only face-blurred clips and stil
 | Who won the point | **Muse Spark** | Asks which side serves the next rally (the rally winner serves next) and combines it with the side the user is on in that set |
 | Commentary subtitles (optional) | **Muse Spark** | Writes 2–4 timed lines of broadcast-style commentary in ko/ja/en that match which team won the point |
 
-Measured on the production server (GCP n2-highcpu-16) with a 10-minute 1080p match (19 rallies): rally finding 6 min, first highlight 12 min, then one highlight every ~3 min. In four end-to-end runs the right player was picked in 23 of 24 rallies (in one of them the track drifted to another player halfway), and the scoring team was right in 14 of 16 rallies.
+Measured on the production server (GCP N2, 32 vCPU / 48 GB) with a 10-minute 1080p match (20 rallies): rally finding 4 min, first highlight 9 min, all 19 highlights plus the combined reel in 30 min. Most of that time is face detection on every output frame, which we keep on every frame so no face slips through the pixelation. In four end-to-end runs the right player was picked in 23 of 24 rallies (in one of them the track drifted to another player halfway), and the scoring team was right in 14 of 16 rallies.
 
 ## Privacy by design
 
