@@ -673,7 +673,7 @@ function renderAuto(s) {
   $("auto-more").onclick = () => { state.autoMore = !state.autoMore; render(s); };
   renderAutoNext(s, a, running);
   const sum = [];
-  if (!running && done.length && s.took_sec) sum.push(t("autoTook", { m: fmtLeft(s.took_sec) }));
+  if (!running && done.length && s.took_sec) sum.push(t("autoTook", { m: t("min", { n: Math.max(1, Math.round(s.took_sec / 60)) }) }));  // 걸린 시간은 반올림(남은 시간 어림만 올림)
   if (!running && done.length) sum.push(t(IOS ? "autoHowIos" : "autoHow"));
   if (!running && done.length && s.delete_at) { const d = new Date(s.delete_at * 1000);
     sum.push(t("autoDeleteAt", { c: `${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString(state.lang, { hour: "numeric", minute: "2-digit" })}` })); }
