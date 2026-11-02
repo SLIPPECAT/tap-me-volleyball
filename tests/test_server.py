@@ -1143,6 +1143,49 @@ def test_only_number_level_confidence_makes_a_highlight_by_itself() -> None:
     assert auto.decide({"card": -1, "confidence": 0.95}) == "review"  # 못 찾았다는 확신은 만들 근거가 아니다
 
 
+def test_far_side_rallies_are_neither_made_nor_asked(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/2 사용자: 내가 코트 건너편(멀리)이면 작고 헷갈려 판단도 안 된다 → 확신이 높아도 만들지 않고, 묻지도 않는다
+    import time as _time
+
+    from tapme import auto
+
+    assert auto.decide({"card": 1, "confidence": 0.95, "me_side": "far"}) == "far"
+    assert auto.decide({"card": 1, "confidence": 0.95, "me_side": "near"}) == "make"
+
+    def three_rallies(job: jobs.Job, client) -> None:
+        job.rallies = [{"index": i, "start_sec": 10.0 * i, "end_sec": 10.0 * i + 8, "point_sec": 10.0 * i + 7, "is_rally": True}
+                       for i in range(3)]
+        job.status = "rallies_ready"
+        job.save()
+
+    monkeypatch.setattr(jobs, "find_rallies", three_rallies)
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    # 카드 0은 발이 아래(카메라 쪽), 카드 1은 위(건너편), 카드 2는 가운데
+    boxes = [[0, 600, 50, 900], [0, 100, 30, 300], [0, 400, 40, 600]]
+    monkeypatch.setattr(jobs, "prepare_frames", lambda job, i, c: job.scenes.__setitem__(
+        str(i), {"index": i, "status": "frames_ready", "players": {"score": boxes}}))
+    answers = {0: {"frame": "score", "card": 0, "confidence": 0.95}, 1: {"frame": "score", "card": 1, "confidence": 0.95},
+               2: {"frame": "score", "card": 1, "confidence": 0.6}}
+    monkeypatch.setattr(auto, "find_me", lambda job, i, ref, hint, c: answers[i])
+    monkeypatch.setattr(jobs, "serve_side", lambda job, i, c: {"side": "near", "confidence": 0.9})
+
+    def fake_render(job_id: str, i: int, frame: str, card: int, a: dict, c) -> None:
+        job = jobs.load_job(job_id)
+        job.scenes[str(i)]["status"] = "done"
+        job.save()
+
+    monkeypatch.setattr(server, "_auto_render", fake_render)
+    monkeypatch.setattr(jobs, "make_reel", lambda job, order, style="full": job.reel.update({"status": "done", "order": order}))
+    job_id = _send(client).json()["id"]
+    assert client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 1, "y": 1, "team": "초록", "outputs": ["highlights"]}).status_code == 200
+    for _ in range(100):
+        if client.get(f"/jobs/{job_id}").json()["auto"].get("state") == "done":
+            break
+        _time.sleep(0.05)
+    a = client.get(f"/jobs/{job_id}").json()["auto"]
+    assert a["made"] == [0] and a["review"] == [] and a["far"] == [1, 2]
+
+
 def test_tap_check_stops_a_too_small_or_missed_tap_before_upload(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     # 11/2 사용자: 탭한 '나'가 너무 작거나 멀리 있으면 하이라이트를 만들지 않게. 올리기 전에 그 장면 한 장만 확인한다
     # (얼굴을 흐린 뒤 SAM, 장당 track.USD_PER_IMAGE를 서비스 전체 장부에 더한다). 얼굴이 그대로인 사진은 남기지 않는다

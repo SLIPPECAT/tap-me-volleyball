@@ -188,5 +188,9 @@ def find_me(job: jobs.Job, index: int, ref: Path, hint: str, client: Any) -> dic
 
 
 def decide(found: dict[str, Any]) -> str:
-    """make(자동으로 만들기) · review(나 맞나요? — 사용자가 한 번 확인). 나는 모든 랠리에 있어 건너뛰지 않는다(11/1 사용자)."""
+    """make(자동으로 만들기) · review(나 맞나요? — 사용자가 한 번 확인) · far(만들지도 묻지도 않음).
+    나는 모든 랠리에 있어 건너뛰지 않는다(11/1 사용자). 다만 내가 코트 건너편(카메라에서 먼 쪽)이면 작고 헷갈려
+    사람도 판단하기 어렵다 → 만들지 않는다(11/2 사용자, 최종 확인의 0.75~0.85 오답이 모두 먼 쪽). 랠리 목록에서 직접 고를 수는 있다."""
+    if found["card"] >= 0 and found.get("me_side") == "far":
+        return "far"
     return "make" if found["card"] >= 0 and found["confidence"] >= CONFIDENT else "review"

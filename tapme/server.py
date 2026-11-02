@@ -549,6 +549,7 @@ def _auto_steps(job_id: str, client: Any) -> None:
     order = [r["index"] for r in sorted(job.rallies, key=lambda r: r["start_sec"]) if r.get("is_rally")]
     made: list[int] = []
     review: list[int] = []
+    far: list[int] = []  # 코트 건너편이라 만들지 않은 랠리(11/2 사용자) — 화면에 수만 알린다
     _auto_set(job_id, state="finding", total=len(order), done=0)
 
     def find(i: int) -> dict[str, Any]:
@@ -604,6 +605,9 @@ def _auto_steps(job_id: str, client: Any) -> None:
         if decision == "review":
             review.append(i)
             _auto_set(job_id, review=review)
+        elif decision == "far":
+            far.append(i)
+            _auto_set(job_id, far=far)
         if decision != "make":
             continue
         while _active(job_id) >= jobs.MAX_ACTIVE_SCENES:
