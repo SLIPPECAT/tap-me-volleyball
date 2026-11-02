@@ -755,6 +755,39 @@ def test_render_turns_alternate_between_jobs() -> None:
     assert fifo.position("B/0") == 2
 
 
+def test_render_slots_let_several_renders_run_together_on_big_machines(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/2 H-57: 코어가 많은 기종에서는 렌더를 동시에 여러 개(TAPME_RENDER_SLOTS). 기본은 지금처럼 하나씩
+    import importlib
+    import threading
+    import time
+
+    assert jobs.RENDER_SLOTS == 1 and jobs.RENDER_TURNS.slots == 1
+    turns = jobs.Turns(2, group=lambda k: k.split("/")[0])
+    running, peak, lock = [0], [0], threading.Lock()
+
+    def work(key: str) -> None:
+        with turns.turn(key):
+            with lock:
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
+            time.sleep(0.1)
+            with lock:
+                running[0] -= 1
+
+    threads = [threading.Thread(target=work, args=(f"A/{i}",)) for i in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join(3)
+    assert peak[0] == 2
+    monkeypatch.setenv("TAPME_RENDER_SLOTS", "3")
+    try:
+        assert importlib.reload(jobs).RENDER_TURNS.slots == 3
+    finally:
+        monkeypatch.delenv("TAPME_RENDER_SLOTS")
+        importlib.reload(jobs)
+
+
 def test_point_winner_is_the_team_that_serves_the_next_rally_on_our_side_per_set() -> None:
     # 11/1 H-55: 배구는 이긴 팀이 다음 서브. 우리 팀 쪽은 세트마다 '나'의 쪽 다수결(하나 틀려도), 세트 사이(90초 넘게 빔)는 모름
     job = jobs.Job(id="w0000000000a", video="")

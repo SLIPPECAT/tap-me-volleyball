@@ -131,7 +131,10 @@ class Turns:
 
 # 렌더는 CPU를 다 써서 한 번에 하나만(동시에 돌리면 서로 느려졌다, H-42). SAM 추적·해설(네트워크)은 여러 장면이 겹쳐도 된다.
 # 일괄 만들기에서 한 장면을 렌더하는 동안 다음 장면들의 추적이 끝나 있게 한다(10/30 사용자). 여러 사용자는 온 순서대로
-RENDER_TURNS = Turns(1, group=lambda key: key.split("/")[0])  # key = "작업id/장면" → 작업끼리 번갈아
+# 렌더를 동시에 몇 개(11/2, H-57): 코어가 많은 기종에서는 한 렌더의 본 프로세스(합성·모자이크·인코딩)가 먼저 막혀
+# 여러 개를 함께 돌린다. 얼굴 찾기 프로세스는 함께 쓴다(anonymize.acquire_pool). 지금 16코어는 1
+RENDER_SLOTS = int(os.environ.get("TAPME_RENDER_SLOTS", "1"))
+RENDER_TURNS = Turns(RENDER_SLOTS, group=lambda key: key.split("/")[0])  # key = "작업id/장면" → 작업끼리 번갈아
 # 랠리 찾기도 얼굴 흐리기가 CPU를 다 써서 사용자 여럿이 한꺼번에 올리면 모두 느려진다 → 온 순서대로 이만큼씩(10/31)
 SCAN_TURNS = Turns(int(os.environ.get("TAPME_SCAN_SLOTS", "1")))
 # 랠리 찾기 대기가 이보다 많으면 새 영상을 받지 않는다(올리기 전에 알려 2GB를 헛되이 올리지 않게)
