@@ -393,8 +393,14 @@ def test_idle_reports_quiet_time_and_running_work(client: TestClient, monkeypatc
     assert client.get("/jobs/000000000000").status_code == 404 and client.get("/test.php").status_code == 404
     assert client.get("/idle").json()["idle_sec"] > 3600
     monkeypatch.setattr(gate, "MEMBERS_ONLY", True)  # 입장 쿠키 없이 묻는 화면(401)도 사용으로 치지 않는다
+    monkeypatch.setattr(gate, "SECRET", "test-secret")
     assert client.get(f"/jobs/{job_id}").status_code == 401
+    assert client.get("/robots.txt").status_code == 200  # 봇이 열린 주소만 두드려도 깨어 있었다(11/2)
     assert client.get("/idle").json()["idle_sec"] > 3600
+    client.cookies.set(gate.COOKIE, gate.make("member"))  # 입장한 회원의 요청은 센다
+    assert client.get("/").status_code == 200
+    assert client.get("/idle").json()["idle_sec"] < 60
+    client.cookies.clear()
     monkeypatch.setattr(gate, "MEMBERS_ONLY", False)
     client.get(f"/jobs/{job_id}")
     assert client.get("/idle").json()["idle_sec"] < 60

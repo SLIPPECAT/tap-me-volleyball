@@ -186,8 +186,11 @@ async def _note_request(request, call_next):
     global _last_request
     response = await call_next(request)
     # 실패한 요청(400 이상)은 '사용 중'으로 세지 않는다(11/2: 새벽 4시에 지워진 작업을 열어 둔 화면이 2초마다 물어 밤새
-    # 404가 11,975번 — 서버가 6시간 반 동안 꺼지지 않았다). 로그인 없이 묻는 화면(401)·봇(/test.php 404)도 마찬가지
-    if request.url.path != "/idle" and response.status_code < 400:
+    # 404가 11,975번 — 서버가 6시간 반 동안 꺼지지 않았다). 로그인 없이 묻는 화면(401)·봇(/test.php 404)도 마찬가지.
+    # 회원 전용이면 입장 쿠키가 있는 요청과 입장하는 요청만 센다 — 봇이 robots.txt(200)만 두드려도 깨어 있었다(11/2)
+    member = (not gate.MEMBERS_ONLY or request.url.path in ("/access/claim", "/access/enter")
+              or gate.session(request.cookies.get(gate.COOKIE)) is not None)
+    if request.url.path != "/idle" and response.status_code < 400 and member:
         _last_request = time.time()
     return response
 
