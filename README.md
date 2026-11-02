@@ -4,6 +4,8 @@ Tap yourself once in a phone-recorded amateur volleyball match, and get vertical
 
 Built for the [Meta AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon) (Oct 26 – Nov 4, 2026) as a feature for Baegugu, a Korean amateur volleyball community. It runs as a mobile web app for Baegugu members; judges get access through the link in the submission form.
 
+**Demo video (1:50):** https://www.youtube.com/watch?v=2Sbqm1EUjTg
+
 ## What the user does
 
 1. Open the app from the Baegugu banner and pick a match video. "Do it all for me" works 10 minutes at a time; for a longer match the user picks where to start, then taps "do the next 10 min too" on the results screen (the video is not uploaded again). "Pick one by one" scans up to 30 minutes.
