@@ -759,7 +759,7 @@ def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeyp
     assert rendered == [(0, "score", 2, "초록"), (3, "start", 0, "초록")]
     assert client.get(f"/jobs/{job_id}").json()["reel"]["order"] == [0, 3]  # 둘 이상이면 모음도
     # 장면마다가 아니라 끝날 때 한 번(이 시험은 찾기가 맡기기보다 먼저 끝나 랠리 알림이 앞에 하나 있다)
-    assert [k for k, _ in sent if k != "rallies"] == ["auto_done"] and sent[-1] == ("auto_done", {"n": 2, "review": 2})
+    assert [k for k, _ in sent if k != "rallies"] == ["auto_done"] and sent[-1][0] == "auto_done" and {k: sent[-1][1][k] for k in ("n", "review")} == {"n": 2, "review": 2} and sent[-1][1]["m"] >= 1
     assert client.post(f"/jobs/{job_id}/auto", json={"t": 1, "x": 1, "y": 1, "team": "a"}).status_code == 409  # 한 번만
     long_id = _send(client).json()["id"]
     job = jobs.load_job(long_id)
@@ -1014,7 +1014,7 @@ def test_feedback_is_kept_with_its_scene_and_shown_to_the_operator(client: TestC
     r = client.post("/feedback", json={"rating": "bad", "text": "제가 아니라 옆 사람을 따라가요", "job": job_id, "rally": 0, "lang": "ko"})
     assert r.json() == {"status": "ok"}
     client.post("/feedback", json={"rating": "good"})
-    jobs.delete_previous_days(1e12)  # 새벽 4시 삭제가 지나도 의견은 남는다
+    jobs.delete_expired(1e12)  # 자동 삭제가 지나도 의견은 남는다
     monkeypatch.setenv("TAPME_ADMIN_TOKEN", "t")
     got = client.get("/admin/summary", headers={"X-Admin-Token": "t"}).json()["feedback"]
     assert [(f["rating"], f.get("scene")) for f in got] == [("good", None), ("bad", "awaiting_tap")]
@@ -1371,3 +1371,29 @@ def test_status_tells_how_long_until_rally_finding_starts(client: TestClient, mo
     assert body["queue"] == 2 and body["queue_wait_sec"] == 2 * server.SCAN_EST_SEC
     monkeypatch.setattr(jobs.SCAN_TURNS, "position", lambda key: None)
     assert client.get(f"/jobs/{job.id}").json()["queue_wait_sec"] == 0
+
+
+def test_unhidden_faces_need_a_consent_check_before_making(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/3 사용자: 얼굴 가리기를 끄거나 한 팀만 가리면 동의를 받았는지 체크해야 만든다(화면과 서버 둘 다)
+    monkeypatch.setattr(server, "_start_auto", lambda job_id, c: None)
+    job_id = _send(client).json()["id"]
+    me = {"t": 3.0, "x": 1, "y": 1, "team": "초록"}
+    assert client.post(f"/jobs/{job_id}/auto", json={**me, "face_mosaic": False}).status_code == 422
+    assert client.post(f"/jobs/{job_id}/auto", json={**me, "mosaic_team": "opponent"}).status_code == 422
+    assert client.post(f"/jobs/{job_id}/auto", json={**me, "mosaic_team": "opponent", "faces_consent": True}).status_code == 200
+    assert jobs.load_job(job_id).auto["options"]["faces_consent"] is True
+    other = _send(client).json()["id"]
+    assert client.post(f"/jobs/{other}/auto", json=me).status_code == 200  # 기본(모두 가림)은 체크 없이
+
+
+def test_finished_status_tells_when_it_is_deleted_and_how_long_it_took(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tapme import push
+
+    monkeypatch.setattr(server, "DAILY_WIPE", True)
+    job = jobs.create_job("m.mp4", b"video", "Match", 0.0, 0.0, "")
+    job.auto = {"state": "done", "finished_at": job.created_at + 551, "options": {}}
+    job.save()
+    body = client.get(f"/jobs/{job.id}").json()
+    assert body["took_sec"] == 551 and body["delete_at"] == pytest.approx(job.created_at + jobs.KEEP_SEC)
+    title, text = push.message("auto_done", "en", n=4, review=0, m=9)
+    assert title == "4 highlights are ready (9 min)" and "Save all" in text and "24 hours" in text

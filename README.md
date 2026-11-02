@@ -32,8 +32,8 @@ A highlight is made automatically only when Muse Spark is at least 0.9 sure **an
 ## Privacy by design
 
 - Faces are blurred **before** anything is sent to Meta (OpenCV YuNet). Users can also blur on their own phone so the original never leaves the device.
-- In the final video everyone except the tapped user is blurred (frontal and profile face detectors, held for 0.2 s so it does not flicker off). Users can turn it off or keep their own team unblurred, with consent.
-- Clips uploaded to the Meta API are deleted right after each answer. On our server, all videos are deleted every day at 4:00 KST.
+- In the final video everyone except the tapped user is blurred (frontal and profile face detectors, held for 0.2 s so it does not flicker off). Turning it off, or hiding only one team, requires the user to confirm that the people whose faces show have agreed (checked in the app and on the server).
+- Clips uploaded to the Meta API are deleted right after each answer. On our server, every upload and its highlights are deleted 24 hours after upload.
 - Members only (Baegugu login), a consent screen before upload, and no videos of minors.
 
 ## Architecture

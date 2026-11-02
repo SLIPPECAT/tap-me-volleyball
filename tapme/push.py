@@ -42,9 +42,10 @@ MESSAGES = {
     "marker_done": {"ko": ("나 표시 영상이 완성됐어요", "경기 전체에서 나를 표시했어요. 열어서 저장해 보세요"),
                     "ja": ("自分マーク動画ができました", "試合全体で自分をマークしました。開いて保存してください"),
                     "en": ("Your marked full-match video is ready", "You are marked through the whole match. Open it to save")},
-    "auto_done": {"ko": ("하이라이트 {n}개가 완성됐어요", "열어서 한 번에 저장해 보세요{more}"),
-                  "ja": ("ハイライトが{n}本できました", "開いてまとめて保存してください{more}"),
-                  "en": ("{n} highlights are ready", "Open them and save them all at once{more}")},
+    # 얼마나 걸렸는지와 다음에 할 일(11/3 사용자)
+    "auto_done": {"ko": ("하이라이트 {n}개가 완성됐어요 ({m}분)", "열어서 '모두 저장'으로 한 번에 저장해 주세요. 올린 지 24시간 뒤 지워져요{more}"),
+                  "ja": ("ハイライトが{n}本できました（{m}分）", "開いて「すべて保存」でまとめて保存してください。アップロードから24時間後に削除されます{more}"),
+                  "en": ("{n} highlights are ready ({m} min)", "Open them and tap Save all. They are deleted 24 hours after upload{more}")},
     "auto_more": {"ko": " (나인지 확인할 장면 {review}개)", "ja": "（本人か確認するシーン{review}件）", "en": " ({review} scenes to check)"},
     "auto_none": {"ko": ("나를 찾은 장면이 없어요", "열어서 직접 고르거나 다른 장면에서 나를 다시 탭해 주세요"),
                   "ja": ("自分が映るシーンが見つかりませんでした", "開いて自分で選ぶか、別の場面で自分をタップし直してください"),
@@ -93,6 +94,7 @@ def message(kind: str, lang: str, **vars: Any) -> tuple[str, str]:
         vars["more"] = MESSAGES["more"][lang].format(**vars) if vars.get("left") else ""
     if kind == "auto_done":
         vars["more"] = MESSAGES["auto_more"][lang].format(**vars) if vars.get("review") else ""
+        vars.setdefault("m", 1)
     return title.format(**vars), body.format(**vars)
 
 

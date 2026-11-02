@@ -180,6 +180,7 @@ class Job:
     auto: dict[str, Any] = field(default_factory=dict)
     # 나 표시 영상(11/2 사용자): 경기 전체 원본 가로 화면에 랠리 중 '나' 표시 {"status", "video", "done", "total"}
     marker: dict[str, Any] = field(default_factory=dict)
+    created_at: float = 0.0  # 올린 시각(초). 이때부터 KEEP_SEC 뒤 지운다(11/3 사용자: 새벽 4시 대신 올린 지 24시간)
 
     def __post_init__(self) -> None:
         self._seen: dict[str, Any] | None = None  # 마지막으로 읽거나 쓴 이 객체의 내용(save가 바뀐 항목만 고르는 기준)
@@ -273,7 +274,10 @@ KST = 9 * 3600
 MAX_UPLOADS_PER_DAY = int(os.environ.get("TAPME_MAX_UPLOADS_PER_DAY", "0"))
 # 디스크 남은 공간이 이보다 적으면 새 영상을 받지 않는다(GB, 0이면 보지 않음). 이 맥은 원래 꽉 차 있어 배포 서버에서만
 MIN_FREE_GB = float(os.environ.get("TAPME_MIN_FREE_GB", "0"))
-IDLE_BEFORE_DELETE_SEC = 3600  # 하루가 바뀔 때 처리 중이던 작업은 한 시간 조용해진 뒤에 지운다
+IDLE_BEFORE_DELETE_SEC = 3600  # 지울 때가 되어도 처리 중이던 작업은 한 시간 조용해진 뒤에 지운다
+# 올린 영상·결과는 올린 지 이만큼 뒤 지운다(11/3 사용자: 새벽 4시에 한꺼번에 지우면 밤에 올린 사람은 몇 시간밖에 없다).
+# 회원 얼굴이 서버에 남는 최대 시간은 그대로 24시간. 하루 올리기 한도는 여전히 새벽 4시 기준(day_start)
+KEEP_SEC = float(os.environ.get("TAPME_KEEP_HOURS", "24")) * 3600
 
 
 def day_start(now: float | None = None) -> float:
@@ -287,23 +291,35 @@ def today(now: float | None = None) -> str:
     return time.strftime("%Y-%m-%d", time.gmtime(day_start(now) + KST))
 
 
-def delete_previous_days(now: float | None = None) -> list[str]:
-    """하루가 바뀌면 지난날 작업 폴더(원본·결과 영상)를 모두 지운다. 마지막 저장이 하루 시작 전이고 한 시간 넘게
-    조용한 작업만 — 하루가 바뀔 때 처리 중이던 작업은 끝난 뒤 지운다. 상태로 거르지 않는다(서버가 꺼져 멈춘 작업도).
-    정모 영상에는 다른 회원 얼굴이 담겨 오래 두지 않는다(10/31 사용자 결정, 배포 서버에서만 켠다)."""
+def created_time(job_dir: Path) -> float:
+    """작업을 올린 시각. 11/3 전에 만든 작업은 기록이 없어 원본 영상(없으면 job.json)의 수정 시각으로 본다."""
+    meta = job_dir / "job.json"
+    try:
+        created = float(json.loads(meta.read_text()).get("created_at") or 0)
+    except (OSError, ValueError):
+        created = 0.0
+    if created:
+        return created
+    sources = sorted(job_dir.glob("source.*"))
+    return (sources[0] if sources else meta).stat().st_mtime
+
+
+def delete_expired(now: float | None = None) -> list[str]:
+    """올린 지 KEEP_SEC가 지난 작업 폴더(원본·결과 영상)를 지운다. 마지막 저장 뒤 한 시간 넘게 조용한 작업만 — 그때
+    처리 중이던 작업은 끝난 뒤 지운다. 상태로 거르지 않는다(서버가 꺼져 멈춘 작업도). 정모 영상에는 다른 회원 얼굴이
+    담겨 오래 두지 않는다(10/31 사용자 결정, 11/3 올린 지 24시간으로, 배포 서버에서만 켠다)."""
     now = time.time() if now is None else now
-    start, gone = day_start(now), []
+    gone: list[str] = []
     uploads = JOBS_DIR / "_uploads"
     for d in uploads.iterdir() if uploads.exists() else []:  # 다 올리지 못하고 남은 이어 올리기 조각
         data = d / "data"
-        if data.exists() and data.stat().st_mtime < start and now - data.stat().st_mtime >= IDLE_BEFORE_DELETE_SEC:
+        if data.exists() and now - data.stat().st_mtime >= max(KEEP_SEC, IDLE_BEFORE_DELETE_SEC):
             shutil.rmtree(d)
     for d in JOBS_DIR.iterdir() if JOBS_DIR.exists() else []:
         meta = d / "job.json"
         if not d.is_dir() or not meta.exists():
             continue
-        mtime = meta.stat().st_mtime
-        if mtime >= start or now - mtime < IDLE_BEFORE_DELETE_SEC:
+        if now - created_time(d) < KEEP_SEC or now - meta.stat().st_mtime < IDLE_BEFORE_DELETE_SEC:
             continue
         shutil.rmtree(d)
         gone.append(d.name)
@@ -319,6 +335,7 @@ def create_job(filename: str, data: bytes | BinaryIO | Path, match_name: str = "
     경로는 옮기기만 한다. start·end: 훑을 구간(초, end 0이면 끝까지)."""
     job = Job(id=uuid.uuid4().hex[:12], video="", match_name=match_name.strip()[:40] or Path(filename).stem[:40],
               scan_range=[start, end], code=code)
+    job.created_at = time.time()
     job.dir.mkdir(parents=True, exist_ok=True)
     suffix = Path(filename).suffix.lower()
     src = job.dir / f"source{suffix if suffix in VIDEO_SUFFIXES else '.mp4'}"
@@ -532,6 +549,7 @@ def continue_job(prev: Job, start: float, end: float) -> Job:
     """앞 작업과 같은 영상의 다른 구간을 새 작업으로(11/2 사용자: 긴 경기를 10분씩 이어 맡기기). 원본은 다시 받지 않고
     같은 파일을 하드 링크로 쓴다(디스크 그대로, 새벽 정리 때 둘 다 지워진다). 나를 찾을 기준 사진도 앞 작업 것을 쓴다."""
     job = Job(id=uuid.uuid4().hex[:12], video="", match_name=prev.match_name, scan_range=[start, end], code=prev.code)
+    job.created_at = time.time()
     job.dir.mkdir(parents=True, exist_ok=True)
     src = job.dir / Path(prev.video).name
     try:
@@ -641,6 +659,7 @@ def create_browser_job(filename: str, duration: float, start: float, end: float,
     """브라우저 방식 작업: 원본 없이 길이·구간만 받는다. 기기가 흐린 1분 조각을 이 계획대로 올린다(조각 번호 = 순서)."""
     job = Job(id=uuid.uuid4().hex[:12], video="", mode="browser", code=code, status="finding_rallies", source_size=size,
               match_name=match_name.strip()[:40] or Path(filename).stem[:40], duration_sec=round(duration, 2))
+    job.created_at = time.time()
     job.dir.mkdir(parents=True, exist_ok=True)
     job.scan_range = scan_range(job.duration_sec, start, end)
     begin, length = job.scan_range[0], job.scan_range[1] - job.scan_range[0]

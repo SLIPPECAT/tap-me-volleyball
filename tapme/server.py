@@ -42,15 +42,15 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from tapme import access, auto, gate, jobs, member, muse, push, render, scan, score
 
-# 매일 새벽 4시(jobs.DAY_START_HOUR)에 지난날 영상을 모두 지운다. 배포 서버에서만 켠다(이 맥의 시험 작업은 지우지 않게).
-# 서버가 꺼져 있다가 켜지면 바로 한 번 지운다
+# 올린 지 24시간(jobs.KEEP_SEC)이 지난 영상을 지운다(11/3 사용자: 새벽 4시 한꺼번에 → 올린 지 24시간). 배포 서버에서만 켠다
+# (이 맥의 시험 작업은 지우지 않게). 10분마다 보고, 서버가 꺼져 있다가 켜지면 바로 한 번 지운다
 DAILY_WIPE = os.environ.get("TAPME_DAILY_WIPE") == "1"
 
 
 def _sweep() -> None:
     while True:
         try:
-            jobs.delete_previous_days()
+            jobs.delete_expired()
         except Exception:  # noqa: BLE001 - 지우기가 실패해도 서버는 계속
             traceback.print_exc()
         time.sleep(600)
@@ -185,7 +185,7 @@ async def _limit_rate(request, call_next):
 async def _note_request(request, call_next):
     global _last_request
     response = await call_next(request)
-    # 실패한 요청(400 이상)은 '사용 중'으로 세지 않는다(11/2: 새벽 4시에 지워진 작업을 열어 둔 화면이 2초마다 물어 밤새
+    # 실패한 요청(400 이상)은 '사용 중'으로 세지 않는다(11/2: 자동 삭제로 지워진 작업을 열어 둔 화면이 2초마다 물어 밤새
     # 404가 11,975번 — 서버가 6시간 반 동안 꺼지지 않았다). 로그인 없이 묻는 화면(401)·봇(/test.php 404)도 마찬가지.
     # 회원 전용이면 입장 쿠키가 있는 요청과 입장하는 요청만 센다 — 봇이 robots.txt(200)만 두드려도 깨어 있었다(11/2)
     member = (not gate.MEMBERS_ONLY or request.url.path in ("/access/claim", "/access/enter")
@@ -232,6 +232,14 @@ class RenderOptions(BaseModel):
     fps: int = Field(default=0, description="결과 영상 fps: 0이면 원본 그대로, 30이면 30fps까지(60fps 원본은 렌더가 약 절반)")
     reel: str = Field(default="full", pattern="^(full|short)$", description="한 번에 맡기기의 모음 영상: full 랠리 전체 · short 득점 앞뒤")
     face_scale: float = Field(default=render.DEFAULT_FACE_SCALE, description="모자이크 얼굴 찾기 배율 1·1.5·2: 작을수록 빠르고 작은 얼굴을 놓친다")
+    # 얼굴 가리기를 끄거나 한 팀만 가리면 얼굴이 그대로 나오는 사람의 동의를 받았다고 사용자가 체크해야 만든다(11/3 사용자)
+    faces_consent: bool = False
+
+    @model_validator(mode="after")
+    def _faces_consent(self) -> RenderOptions:
+        if (not self.face_mosaic or self.mosaic_team != "all") and not self.faces_consent:
+            raise ValueError("얼굴이 그대로 나오는 사람들의 동의를 받았는지 확인해 주세요")
+        return self
 
     @field_validator("languages")
     @classmethod
@@ -485,7 +493,7 @@ def _start_auto(job_id: str, client: Any) -> None:
         job.save()
     o = job.auto.get("options", {})
     _log(job_id, "auto", max=job.auto.get("max"), mosaic=o.get("mosaic_team", "all") if o.get("face_mosaic", True) else "none",
-         languages=o.get("languages", []), hint=bool(job.auto.get("hint")))
+         faces_consent=bool(o.get("faces_consent")), languages=o.get("languages", []), hint=bool(job.auto.get("hint")))
     threading.Thread(target=_run_auto, args=(job_id, client), daemon=True).start()
 
 
@@ -691,9 +699,11 @@ def _finish_highlights(job_id: str, made: list[int], review: list[int], a: dict[
         job.reel = {"status": "rendering", "order": done}
         job.save()
         _run(job_id, jobs.make_reel, done, a.get("options", {}).get("reel", "full"))
-    _auto_set(job_id, state="done")
+    _auto_set(job_id, state="done", finished_at=time.time())
     if done:
-        push.notify(job_id, "auto_done", f"/#job={job_id}", n=len(done), review=len(review))
+        # 얼마나 걸렸는지도 알린다(11/3 사용자): 올린 때부터 끝날 때까지
+        took = time.time() - (job.created_at or time.time())
+        push.notify(job_id, "auto_done", f"/#job={job_id}", n=len(done), review=len(review), m=max(1, round(took / 60)))
     else:
         push.notify(job_id, "auto_none", f"/#job={job_id}")
 
@@ -912,7 +922,7 @@ def check_access(req: AccessRequest, request: Request) -> dict[str, Any]:
     ip = _client_ip(request)
     _bad_code_check(ip, "", False)
     out: dict[str, Any] = {"required": access.REQUIRED, "waiting": jobs.SCAN_TURNS.waiting(), "closed": _closed_reason(req.code),
-                           "wipe_hour": jobs.DAY_START_HOUR if DAILY_WIPE else None,
+                           "keep_hours": round(jobs.KEEP_SEC / 3600) if DAILY_WIPE else None,
                            "est": {"scan_rate": EST_SERVER_SEC_PER_VIDEO_SEC, "highlight_sec": EST_HIGHLIGHT_SEC}}
     if access.REQUIRED and req.code:
         try:
@@ -1235,6 +1245,9 @@ def status(job_id: str) -> dict[str, Any]:
             "reel": {k: v for k, v in job.reel.items() if k != "video"},
             "marker": {k: v for k, v in job.marker.items() if k != "video"},
             "auto": {k: v for k, v in job.auto.items() if k != "me"},
+            # 언제 지워지는지·얼마나 걸렸는지(11/3 사용자): 화면이 끝난 뒤 '어떻게 하면 되는지'와 함께 보여 준다
+            "delete_at": (job.created_at + jobs.KEEP_SEC) if DAILY_WIPE and job.created_at else None,
+            "took_sec": round(job.auto["finished_at"] - job.created_at) if job.auto.get("finished_at") and job.created_at else None,
             "winners": jobs.point_winners(job) if job.auto else {}}
 
 

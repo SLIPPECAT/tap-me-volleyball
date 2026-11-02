@@ -636,17 +636,34 @@ def test_the_day_starts_at_4am_korean_time() -> None:
     assert (jobs.today(KST_4AM_NOV1 - 60), jobs.today(KST_4AM_NOV1 + 60)) == ("2026-10-31", "2026-11-01")
 
 
-def test_previous_days_are_wiped_but_busy_jobs_and_ledgers_stay(job: jobs.Job) -> None:
+def test_jobs_are_deleted_24_hours_after_upload_but_busy_jobs_and_ledgers_stay(job: jobs.Job) -> None:
+    # 11/3 사용자: 새벽 4시에 한꺼번에 지우면 밤에 올린 사람은 몇 시간밖에 없다 → 올린 지 24시간 뒤
     import os
 
+    t0 = KST_4AM_NOV1 - 2 * 3600  # 새벽 2시에 올림(예전 규칙이면 두 시간 뒤 4시에 지워졌다)
     busy, fresh = jobs.create_job("b.mp4", b"x"), jobs.create_job("c.mp4", b"x")
-    for j, t in ((job, KST_4AM_NOV1 - 3 * 3600), (busy, KST_4AM_NOV1 - 600), (fresh, KST_4AM_NOV1 + 600)):
-        os.utime(j.dir / "job.json", (t, t))
+    for j, created, saved in ((job, t0, t0 + 600), (busy, t0, t0 + jobs.KEEP_SEC - 600), (fresh, t0 + 6 * 3600, t0 + 6 * 3600)):
+        j.created_at = created
+        j.save()
+        os.utime(j.dir / "job.json", (saved, saved))
     (jobs.JOBS_DIR / "_access.json").write_text("{}")
-    now = KST_4AM_NOV1 + 1800  # 새벽 4:30
-    assert jobs.delete_previous_days(now) == [job.id]  # 3:50에 저장한 작업은 아직 처리 중일 수 있다
-    assert jobs.delete_previous_days(now + 3600) == [busy.id]  # 한 시간 조용하면 지운다
+    assert jobs.delete_expired(KST_4AM_NOV1 + 1800) == []  # 새벽 4:30: 예전과 달리 아직 남는다
+    now = t0 + jobs.KEEP_SEC + 60
+    assert jobs.delete_expired(now) == [job.id]  # 24시간 지난 작업만. busy는 10분 전에도 저장(처리 중일 수 있다)
+    assert jobs.delete_expired(now + 3600) == [busy.id]  # 한 시간 조용하면 지운다
     assert fresh.dir.exists() and (jobs.JOBS_DIR / "_access.json").exists()
+
+
+def test_jobs_made_before_the_upload_time_was_recorded_use_the_video_file_time(job: jobs.Job) -> None:
+    import os
+
+    job.created_at = 0.0
+    job.save()
+    old = KST_4AM_NOV1 - 2 * 86400
+    for f in job.dir.iterdir():
+        os.utime(f, (old, old))
+    assert jobs.created_time(job.dir) == old
+    assert jobs.delete_expired(KST_4AM_NOV1) == [job.id]
 
 
 def test_uploads_are_counted_per_day() -> None:
