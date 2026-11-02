@@ -273,7 +273,7 @@ def test_ground_marker_goes_under_my_feet_not_over_them() -> None:
     me = Box(track.TAPPED_ID, 170, 120, 230, 320)
     frame = Image.new("RGB", (400, 400), (90, 90, 90))
     frame.paste((200, 30, 30), (180, 290, 220, 320))  # 빨간 신발
-    rec = SimpleNamespace(mask=SimpleNamespace(width=60, height=200))
+    rec = SimpleNamespace(mask=SimpleNamespace(width=60, height=200, payload="~", encoding="lossless"))  # 공식 해석 경로
     body = [1 if 290 - 120 <= y < 320 - 120 and 10 <= x < 50 else 0 for y in range(200) for x in range(60)]
     import tapme.render as r
 

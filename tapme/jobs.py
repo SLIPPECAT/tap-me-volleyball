@@ -821,9 +821,13 @@ def scene_render_inputs(job: Job, scene: dict[str, Any], languages: list[str], p
         start, end = scene["clip"]
         scene["clip_video"] = str(_cut(*_source(job, scene["index"], start), end - start, sam_clip.parent / "clip.mp4", None))
         scene["clip_is_original"] = True
-    me = track.parse((sam_clip.parent / "me_wire.txt").read_text())
-    others = track.parse(_track_others(job, client, sam_clip).read_text()) if privacy == "silhouette" else None
-    by, masks = track.merge_me_and_others(me, others)
+    me_text = (sam_clip.parent / "me_wire.txt").read_text()
+    if privacy == "silhouette":  # 다른 선수 마스크까지(드문 옵션) — 공식 해석
+        others = track.parse(_track_others(job, client, sam_clip).read_text())
+        by, masks = track.merge_me_and_others(track.parse(me_text), others)
+    else:  # 상자는 빠른 해석, '나' 마스크는 원문 그대로(렌더가 필요한 프레임만 푼다, H-67)
+        by = track.boxes_by_frame(track.parse_boxes(me_text))
+        masks = track.raw_masks_by_frame(me_text, track.TAPPED_ID)
     # '나'는 확실히 잡은 구간(span) 안에서만 쓴다. 그 밖은 화면 밖에 나갔다 들어와 다른 사람일 수 있다(실험 H-24·H-25)
     s0, s1 = scene["span_frames"]
     by = {k: [b for b in v if b.object_id != track.TAPPED_ID or s0 <= k <= s1] for k, v in by.items()}

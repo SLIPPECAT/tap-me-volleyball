@@ -64,6 +64,42 @@ _MASK_TAG = re.compile(r"<\|mask;[^|]*\|>")
 _TINY_MASK = "<|mask;x=0;y=0;data=1,1,!!!!!&O.lVP|>"
 
 
+@dataclass(frozen=True)
+class RawMask:
+    """SAM 마스크 원문(높이·너비·압축 데이터). 공식 해석기(parse)는 읽어 들일 때 마스크마다 풀고 다시 압축해 같은지 검사해
+    렌더 시간의 대부분(하이라이트 하나 약 60초)을 썼다(11/2 H-67). 렌더는 필요한 프레임만 검사 없이 푼다(render._mask)."""
+    width: int
+    height: int
+    payload: str
+
+    @property
+    def encoding(self) -> str:
+        return "lossless" if self.payload.startswith("~") else "one_bit"
+
+
+@dataclass(frozen=True)
+class RawMaskRecord:
+    object_id: str
+    mask: RawMask
+
+
+_FRAME_SPLIT = re.compile(r"<(\d+)f>")
+_OBJECT = re.compile(r"(\w+)<\|box;[^|]*\|>(?:<\|mask;[^|]*?data=(\d+),(\d+),([^|;]*)[^|]*\|>)?")
+
+
+def raw_masks_by_frame(wire_text: str, object_id: str | None = None) -> dict[int, dict[str, RawMaskRecord]]:
+    """masks_by_frame과 같은 모양(프레임 → 객체 → 마스크)을 원문에서 바로. 마스크는 풀지 않는다."""
+    parts = _FRAME_SPLIT.split(wire_text)
+    out: dict[int, dict[str, RawMaskRecord]] = {}
+    for k, body in zip(parts[1::2], parts[2::2], strict=False):
+        for m in _OBJECT.finditer(body):
+            oid, mh, mw, payload = m.groups()
+            if payload is None or (object_id is not None and oid != object_id):
+                continue
+            out.setdefault(int(k), {})[oid] = RawMaskRecord(oid, RawMask(int(mw), int(mh), payload))
+    return out
+
+
 def parse_boxes(wire_text: str) -> VideoSegmentationResult:
     """parse와 같은 상자(마스크는 빈 1x1). 마스크가 필요한 곳(렌더의 '나')은 parse를 쓴다."""
     return parse(_MASK_TAG.sub(_TINY_MASK, wire_text))

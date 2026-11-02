@@ -124,17 +124,55 @@ def load_font(size: int, text: str) -> ImageFont.FreeTypeFont | ImageFont.ImageF
 _MASKS: dict[int, tuple[SegmentationMaskRecord, Image.Image | None]] = {}
 
 
+try:  # 검사(다시 압축해 비교) 없이 푸는 내부 함수. 없으면 공식 함수(검사 포함, 두 배 느림)
+    from meta_sam_parser._mask_codec import _decode_raster as _fast_decode
+except ImportError:  # pragma: no cover
+    _fast_decode = None
+
+
+def _decode(payload: str, width: int, height: int, encoding: str, mask: object = None) -> bytes:
+    if encoding == "one_bit" and _fast_decode is not None:
+        return _fast_decode(payload, width, height)
+    return decode_mask_to_raster(mask)  # type: ignore[arg-type]
+
+
+def _decode_job(args: tuple[str, int, int]) -> bytes | None:
+    """얼굴 찾기 일꾼에서 마스크 하나를 푼다(렌더 시작 전에 한꺼번에, H-67)."""
+    payload, width, height = args
+    try:
+        return _decode(payload, width, height, "one_bit")
+    except Exception:  # noqa: BLE001 - 하나가 깨져도 그 프레임만 마스크 없이
+        return None
+
+
+def _mask_image(raster: bytes | None, mw: int, mh: int) -> Image.Image | None:
+    if raster is None or mw <= 0 or mh <= 0 or len(raster) != mw * mh:
+        return None
+    return Image.fromarray(np.frombuffer(bytes(raster), np.uint8).reshape(mh, mw) * np.uint8(255), "L")
+
+
+def _predecode(recs: list) -> None:
+    """렌더에 쓸 마스크를 미리 푼다. 일꾼이 여럿이면 나눠서(하이라이트 하나 마스크 약 280장, 한 프로세스로 약 30초)."""
+    todo = [r for r in recs if r.mask.encoding == "one_bit" and id(r) not in _MASKS]
+    if RENDER_WORKERS <= 1 or len(todo) < 8:
+        return  # 하나씩은 _mask가 그때그때
+    pool = anonymize.acquire_pool()
+    try:
+        rasters = list(pool.map(_decode_job, [(r.mask.payload, r.mask.width, r.mask.height) for r in todo], chunksize=4))
+    finally:
+        anonymize.release_pool()
+    for r, raster in zip(todo, rasters, strict=True):
+        _MASKS[id(r)] = (r, _mask_image(raster, r.mask.width, r.mask.height))
+
+
 def _mask(rec: SegmentationMaskRecord | None, w: int, h: int) -> Image.Image | None:
     if rec is None or w <= 0 or h <= 0:
         return None
     hit = _MASKS.get(id(rec))
     if hit is None or hit[0] is not rec:
         mw, mh = rec.mask.width, rec.mask.height
-        raster = decode_mask_to_raster(rec.mask)  # 0/1 바이트
-        img = None
-        if mw > 0 and mh > 0 and len(raster) == mw * mh:
-            img = Image.fromarray(np.frombuffer(bytes(raster), np.uint8).reshape(mh, mw) * np.uint8(255), "L")
-        hit = _MASKS[id(rec)] = (rec, img)
+        raster = _decode(rec.mask.payload, mw, mh, rec.mask.encoding, rec.mask)  # 0/1 바이트
+        hit = _MASKS[id(rec)] = (rec, _mask_image(raster, mw, mh))
     return None if hit[1] is None else hit[1].resize((w, h), Image.Resampling.NEAREST)
 
 
@@ -435,6 +473,8 @@ def render_video(
             read_i += 1
 
     _MASKS.clear()
+    want = {round(j * sam_fps / fps) for j in range(n)}  # 이 영상에 쓰일 SAM 프레임의 마스크만
+    _predecode([rec for k in want for oid, rec in masks_by_sam.get(k, {}).items() if privacy == "silhouette" or oid == me])
     try:
         i = 0
         faces: list[tuple[int, int, int, int]] = []

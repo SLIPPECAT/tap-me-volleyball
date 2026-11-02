@@ -135,3 +135,30 @@ def test_box_only_parse_gives_the_same_boxes_without_decoding_masks() -> None:
     assert track.boxes_by_frame(track.parse_boxes(WIRE)) == track.boxes_by_frame(track.parse(WIRE))
     assert not track.parse_boxes(WIRE).diagnostics
     assert _mask_codec._encode_raster(bytes([1]), 1, 1) in track._TINY_MASK  # 빈 마스크가 정식 인코딩이어야 받아 준다
+
+
+def test_raw_masks_match_the_official_parser_and_decode_without_the_recheck() -> None:
+    # H-67(11/2): 공식 해석기는 마스크마다 풀고 다시 압축해 검사해 하이라이트 하나 렌더의 약 60초를 썼다.
+    # 원문에서 바로 꺼낸 마스크(높이·너비·데이터)가 공식 해석과 같고, 검사 없이 풀어도 같은 화소가 나온다
+    from meta_sam_parser import decode_mask_to_raster
+    from meta_sam_parser._mask_codec import _encode_raster
+
+    from tapme import render
+
+    w, h = 6, 4
+    raster = bytes([1 if (x + y) % 3 == 0 or x == 2 else 0 for y in range(h) for x in range(w)])
+    payload = _encode_raster(raster, w, h)
+    box = "<|box;x1=10;y1=20;x2=16;y2=24;w=320;h=240|>"
+    wire = (f"<0f>0{box}<|mask;x=0;y=0;data={h},{w},{payload}|>,5{box}<|mask;x=0;y=0;data={h},{w},{payload}|>\n"
+            f"<1f>0{box}<|mask;x=0;y=0;data={h},{w},{payload}|>\n")
+    official = track.masks_by_frame(track.parse(wire))
+    raw = track.raw_masks_by_frame(wire)
+    assert raw.keys() == official.keys() and {k: set(v) for k, v in raw.items()} == {k: set(v) for k, v in official.items()}
+    for k, objs in official.items():
+        for oid, rec in objs.items():
+            r = raw[k][oid]
+            assert (r.mask.width, r.mask.height, r.mask.payload) == (rec.mask.width, rec.mask.height, rec.mask.payload)
+            assert render._decode(r.mask.payload, w, h, r.mask.encoding) == decode_mask_to_raster(rec.mask) == raster
+    assert set(track.raw_masks_by_frame(wire, track.TAPPED_ID)[0]) == {"0"}  # '나'만
+    img = render._mask(raw[1]["0"], 12, 8)
+    assert img is not None and img.size == (12, 8)
