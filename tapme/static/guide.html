@@ -14,13 +14,13 @@
   .guide table { border-collapse: collapse; font-size: var(--text-sm); width: 100%; }
   .guide td { padding: var(--space-2xs) var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule-2); vertical-align: top; }
   [data-lang] { display: none; }
-  html[lang="ko"] [data-lang="ko"], html[lang="en"] [data-lang="en"] { display: grid; }
+  html[lang="ko"] [data-lang="ko"], html[lang="ja"] [data-lang="ja"], html[lang="en"] [data-lang="en"] { display: grid; }
 </style>
 </head>
 <body>
 <header class="bar"><div class="bar-in">
   <h1><a href="/" style="color: inherit; text-decoration: none">Tap Me Volleyball</a></h1>
-  <div class="langs-ui"><button data-set="ko">한</button><button data-set="en">EN</button></div>
+  <div class="langs-ui"><button data-set="ko">한</button><button data-set="ja">日</button><button data-set="en">EN</button></div>
 </div></header>
 
 <main class="guide" data-lang="ko">
@@ -116,6 +116,99 @@
   </section>
 </main>
 
+<main class="guide" data-lang="ja">
+  <section>
+    <h2>何ができますか</h2>
+    <p>試合の動画をアップロードして動画の中の自分を一度タップすると、AIがラリーを見つけ、ラリーごとに<strong>自分を追いかける縦長のハイライト</strong>とまとめ動画を作ります（<strong>まとめて任せる</strong>）。ラリーを自分で選んでひとつずつ作ることもできます（<strong>ひとつずつ選ぶ</strong>）。</p>
+  </section>
+
+  <section>
+    <h2>準備</h2>
+    <ul>
+      <li><strong>利用コード</strong>: Baeguguのバナーから入ると自動で受け取ります（この端末に保存）。任せる回数の制限はありません（サービス全体のAI費用の上限に達すると止まります）。まとめて任せるは見つけたハイライトをすべて作り、ひとつずつ選ぶはハイライト10本まで作れます。</li>
+      <li><strong>動画</strong>: スマホを三脚や手すりに固定し、<strong>コート全体が映るように横向きで</strong>撮った動画がいちばんうまくいきます。ボールを追ってカメラを動かすと、画面の外に出た自分を見失うことがあります。</li>
+      <li><strong>長さ</strong>: まとめて任せるは10分ずつ、ひとつずつ選ぶは30分まで見ます。長い試合は区間を選んで任せ、終わったら結果画面の<strong>次の10分も任せる</strong>で続けます（動画をアップロードし直しません）。</li>
+      <li><strong>Wi-Fi</strong>での利用をおすすめします（動画のサイズが大きいため）。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>まとめて任せる（おすすめ）</h2>
+    <ol>
+      <li><strong>動画を選ぶ</strong> → 10分を超える場合は最初に任せる10分の区間を選ぶ → 同意にチェック</li>
+      <li><strong>自分を教える</strong>: 動画を動かして<strong>自分が大きく映る場面（カメラ側のコート）</strong>で止め、自分をタップします。小さすぎる（遠い）人や人がいない所をタップすると、別の場面でもう一度タップするよう案内します。背番号やユニフォームの色などの情報と、自分のチーム名を入れます。</li>
+      <li><strong>設定</strong>（顔のモザイクなど）を確認して<strong>任せる</strong>。画面を閉じてもサーバーで続きます。前に待っている人がいれば、その人数と始まるまでのおおよその時間を表示します。</li>
+      <li><strong>結果</strong>: AIが自分だと確信したラリーだけを自動で作ります。はっきりしないときは<strong>「自分ですか？」</strong>と聞きます — 押して自分を選ぶと、そのラリーも作ります。</li>
+      <li>自分が<strong>コートの向こう側（遠く）</strong>にいたラリーは小さく映って他の選手と間違えやすいため、<strong>作りません</strong>。必要なら結果画面のラリー一覧から選んで作れます。</li>
+      <li>終わると、通知と結果画面に<strong>かかった時間、次にすること、削除される時刻</strong>が出ます。<strong>すべて保存</strong>でまとめて保存し、長い試合は<strong>次の10分も任せる</strong>で続けます。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>ひとつずつ選ぶの手順</h2>
+    <ol>
+      <li><strong>動画を選ぶ</strong> →（長い動画なら区間を選ぶ）→ 同意にチェック → <strong>この動画で始める</strong></li>
+      <li>端末の速度を測ったあと、次のどちらかを選びます。終わる時刻も表示します。
+        <ul>
+          <li><strong>この端末で処理</strong>: 元の動画はスマホの外に出ません。終わるまで画面を点けたままにしてください。</li>
+          <li><strong>サーバーに任せる</strong>: アップロードが終われば、スマホを使ってかまいません。</li>
+        </ul>
+      </li>
+      <li><strong>ラリー一覧</strong>で場面の写真を押してプレビューし、作るラリーを選びます。探している途中でも、見つかったラリーから選べます。</li>
+      <li><strong>自分を選ぶ</strong>: 選手カードから自分を選ぶか、写真の中の自分の体をタップします。多くの場面で選ぶほど正確です。</li>
+      <li>オプション（字幕・拡大・顔のモザイク）を選んで<strong>ハイライトを作る</strong>。複数のラリーをまとめて予約することもできます。</li>
+      <li>できあがったら<strong>保存</strong>または<strong>共有</strong>します。字幕・拡大は費用なしで作り直せます。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>かかる時間（目安）</h2>
+    <table>
+      <tr><td>最初に開くとき</td><td>サーバーが起動するまで30秒ほど</td></tr>
+      <tr><td>まとめて任せる（10分の試合）</td><td>アップロードから最初のハイライトまで約9分、すべて終わるまで約20〜30分（ラリーの数による）。混んでいるときは順番を待ちます</td></tr>
+      <tr><td>ラリー探し（10分の動画）</td><td>サーバーで約4分 · 端末では端末の速度による（始めるときに表示します）。見つかったラリーは数分後から表示されます</td></tr>
+      <tr><td>ハイライト1本（ひとつずつ選ぶ）</td><td>約4〜6分。混んでいるときは順番を待ちます</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>終わったらお知らせします</h2>
+    <ul>
+      <li><strong>Android（Chrome）</strong>: 通知の許可を聞かれたら「許可」を押してください。</li>
+      <li><strong>iPhone</strong>: Safariの共有ボタン → <strong>「ホーム画面に追加」</strong>から開いたアプリでだけ通知が届きます。</li>
+      <li>通知がなくても、このページのリンク（リンクをコピー）からまた開けば続きを見られます。<strong>このリンクは自分だけで使ってください</strong> — リンクを知っている人は、動画が削除されるまで（アップロードから24時間）見られます。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>途中で止まったら</h2>
+    <ul>
+      <li>画面が消えたり接続が切れたりすると、<strong>「続きをアップロード」/「続きを処理する」</strong>が表示されます。最初からやり直す必要はありません。</li>
+      <li>ページを開き直した場合は、同じ動画をもう一度選んでください。止まった所から続けます。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>顔と動画の扱い</h2>
+    <ul>
+      <li>動画の分析に<strong>海外のAIサービス（Meta）</strong>を使います。送る前に<strong>顔をぼかします</strong>（とても小さい顔、横を向いた顔、隠れた顔は漏れることがあります）。</li>
+      <li>送ったシーンは分析が終わるとすぐ削除します。ただしMetaのサービス改善に使われることがあります。</li>
+      <li>アップロードした動画と作ったハイライトは<strong>アップロードから24時間後にすべて削除されます</strong>（結果画面に削除される時刻が出ます）。ハイライトはできたらすぐ保存してください。</li>
+      <li>サービス改善のため、利用記録（日時・動画の長さ・結果の数・かかった時間）を30日間保存します。動画・写真・顔は保存しません。</li>
+      <li>完成動画では他の人の顔を隠す設定が最初からオンです。オフにしたり片方のチームだけ隠したりするには、<strong>顔がそのまま映る人たちの同意を得たことにチェックしないと</strong>作れません。保存・共有の前にももう一度確認してください。</li>
+      <li>映っている人の同意を得た動画だけをアップロードしてください。<strong>未成年が映っている動画はアップロードしないでください。</strong></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>ご意見・お問い合わせ</h2>
+    <ul>
+      <li>画面のいちばん下の<strong>「ご意見を送る」</strong>から、良かった点、不便だった点、おかしく映った場面を教えてください。どの場面だったかも一緒に届きます。</li>
+      <li>動画の削除依頼・お問い合わせ: メール <a href="mailto:baegugu@naver.com">baegugu@naver.com</a> · Instagram <a href="https://instagram.com/baegugu_official" rel="noopener">@baegugu_official</a> のDM（Baegugu公式の窓口）</li>
+    </ul>
+  </section>
+</main>
+
 <main class="guide" data-lang="en">
   <section>
     <h2>What it does</h2>
@@ -201,13 +294,15 @@
   </section>
 </main>
 <script>
-// 언어: ?lang=en, 앱에서 고른 언어(localStorage lang), 기기 언어 순. 일본어 화면이면 영어로
-const pick = (l) => (l === "ko" ? "ko" : "en");
+// 언어: ?lang=en, 앱에서 고른 언어(localStorage lang), 기기 언어 순. 한·일·영(11/3 사용자: 일본어도), 그 밖은 영어
+const pick = (l) => (["ko", "ja", "en"].includes(l) ? l : "en");
 let lang = new URLSearchParams(location.search).get("lang");
 try { lang ||= localStorage.getItem("lang"); } catch { /* 저장소를 못 쓰면 기기 언어 */ }
 lang = pick(lang || (navigator.language || "en").slice(0, 2));
+const TITLES = { ko: "사용 안내", ja: "使い方", en: "Guide" };
 const apply = () => {
   document.documentElement.lang = lang;
+  document.title = `${TITLES[lang]} · Tap Me Volleyball`;
   document.querySelectorAll("[data-set]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.set === lang)));
 };
 document.querySelectorAll("[data-set]").forEach((b) => { b.onclick = () => { lang = b.dataset.set; apply(); }; });

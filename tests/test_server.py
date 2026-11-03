@@ -1455,3 +1455,15 @@ console.log(JSON.stringify([[I,0,0,0,I,0,0,0,W], [0,I,0,-I,0,0,0,0,W], [-I,0,0,0
   .map((m) => isUpright(m))));
 """)
     assert json.loads(subprocess.check_output(["node", str(script)])) == [True, False, False, False, True]
+
+
+def test_guide_has_korean_japanese_and_english_with_the_same_sections() -> None:
+    # 11/3 사용자: 사용 안내에 일본어가 없었다(일본어 화면이면 영어로 보였다)
+    html = (Path(server.__file__).parent / "static" / "guide.html").read_text()
+    shapes = []
+    for lang in ("ko", "ja", "en"):
+        part = html[html.index(f'<main class="guide" data-lang="{lang}">'):]
+        part = part[:part.index("</main>")]
+        shapes.append((part.count("<section>"), part.count("<li>"), part.count("<tr>")))
+    assert shapes[0] == shapes[1] == shapes[2]
+    assert 'data-set="ja"' in html and 'html[lang="ja"] [data-lang="ja"]' in html and '["ko", "ja", "en"]' in html
