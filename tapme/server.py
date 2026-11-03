@@ -856,18 +856,29 @@ class AccessRequest(BaseModel):
     code: str = Field(default="", max_length=20)
 
 
-def _closed_reason(code: str = "") -> str | None:
-    """새 영상을 받을 수 없는 이유. 랠리 찾기 대기가 꽉 찼거나 전체 비용이 30분 영상 하나도 못 훑을 만큼 남았을 때.
-    하루 올리기 한도는 심사용 코드에는 걸지 않는다(심사위원이 '오늘은 다 찼어요'를 보지 않게)."""
+def _closed(code: str = "") -> tuple[str, dict[str, int]] | None:
+    """새 영상을 받을 수 없는 이유(화면 번역 키, 값). 랠리 찾기 대기가 꽉 찼거나 전체 비용이 30분 영상 하나도 못 훑을 만큼
+    남았을 때. 하루 올리기 한도는 심사용 코드에는 걸지 않는다(심사위원이 '오늘은 다 찼어요'를 보지 않게)."""
     if jobs.SCAN_TURNS.waiting() >= jobs.MAX_WAITING_SCANS:
-        return "지금 사용자가 많아요. 잠시 뒤 다시 와 주세요"
+        return "busy", {}
     if jobs.MAX_UPLOADS_PER_DAY and jobs.uploads_today() >= jobs.MAX_UPLOADS_PER_DAY and not access.is_judge(code):
-        return f"오늘 받을 수 있는 영상 {jobs.MAX_UPLOADS_PER_DAY}편이 다 찼어요. 내일 새벽 {jobs.DAY_START_HOUR}시 뒤에 다시 와 주세요"
+        return "dayFull", {"n": jobs.MAX_UPLOADS_PER_DAY, "h": jobs.DAY_START_HOUR}
     if jobs.MIN_FREE_GB and jobs.free_gb() < jobs.MIN_FREE_GB:
-        return "지금 사용자가 많아요. 잠시 뒤 다시 와 주세요"
+        return "busy", {}
     if jobs.total_spent() + scan.estimate_usd(jobs.MAX_SCAN_SEC) > jobs.MAX_USD_TOTAL:
-        return "이번 행사에 준비한 AI 비용을 다 써서 더 받을 수 없어요"
+        return "budget", {}
     return None
+
+
+_CLOSED_KO = {"busy": "지금 사용자가 많아요. 잠시 뒤 다시 와 주세요",
+              "dayFull": "오늘 받을 수 있는 영상 {n}편이 다 찼어요. 내일 새벽 {h}시 뒤에 다시 와 주세요",
+              "budget": "이번 행사에 준비한 AI 비용을 다 써서 더 받을 수 없어요"}
+
+
+def _closed_reason(code: str = "") -> str | None:
+    """받을 수 없는 이유(한국어 문장). 화면은 /access의 closed_key로 언어별 문구를 쓴다(11/3 사용자: 번역 안 됨)."""
+    c = _closed(code)
+    return _CLOSED_KO[c[0]].format(**c[1]) if c else None
 
 
 # 화면이 보여 줄 예상 시간(10/31 사용자: 대기 시간·언제 확인할 수 있는지가 관건). 클라우드 실측(BENCH.md, n2-highcpu-16·
@@ -921,7 +932,9 @@ def check_access(req: AccessRequest, request: Request) -> dict[str, Any]:
     """올리기 전에 묻는다: 코드가 맞는지, 남은 횟수, 지금 받을 수 있는지(2GB를 올린 뒤 거절하지 않게)."""
     ip = _client_ip(request)
     _bad_code_check(ip, "", False)
+    closed = _closed(req.code)
     out: dict[str, Any] = {"required": access.REQUIRED, "waiting": jobs.SCAN_TURNS.waiting(), "closed": _closed_reason(req.code),
+                           "closed_key": closed[0] if closed else None, "closed_vars": closed[1] if closed else {},
                            "keep_hours": round(jobs.KEEP_SEC / 3600) if DAILY_WIPE else None,
                            "est": {"scan_rate": EST_SERVER_SEC_PER_VIDEO_SEC, "highlight_sec": EST_HIGHLIGHT_SEC}}
     if access.REQUIRED and req.code:

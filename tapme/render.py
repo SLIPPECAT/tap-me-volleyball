@@ -296,7 +296,7 @@ FACE_SCALES = (1.0, 1.5, 2.0)
 # 옆얼굴 Haar는 결과 화면(자른 곳) + 이만큼(프레임 높이 대비) 둘레에서만(H-58, 11/2): 화면 전체 4.9초 → 2.0초/장,
 # 결과 화면 안 얼굴 덮음 99.9 → 99.8%. 결과에 안 보이는 곳의 옆얼굴은 찾을 필요가 없다. YuNet은 늘 화면 전체(H-28)
 PROFILE_MARGIN = 0.15
-DEFAULT_FACE_SCALE = 2.0
+DEFAULT_FACE_SCALE = 1.0  # 11/3 사용자: 가급적 1배(가장 빠름). 화면도 1배를 추천한다
 
 
 def my_face_box(faces: list[tuple[int, int, int, int]], me: Box | None) -> tuple[int, int, int, int] | None:

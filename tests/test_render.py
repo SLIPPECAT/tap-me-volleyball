@@ -214,10 +214,11 @@ def test_face_scale_sets_the_detector_upscale_and_runs_one_detector_at_1x(tmp_pa
         plain.clear()
         render.render_video(src, tmp_path / f"{scale}.mp4", {}, {}, "me", sam_fps=5, zoom=1.0, face_scale=scale)
         assert scales == [scale, scale] and len(plain) == (0 if scale == 1.0 else 2)
-    assert render.DEFAULT_FACE_SCALE == anonymize.DETECT_UPSCALE == 2.0
+    # 11/3 사용자: 결과 영상 모자이크는 가급적 1배(가장 빠름). Meta로 보내는 흐림본은 그대로 2배(DETECT_UPSCALE)
+    assert render.DEFAULT_FACE_SCALE == 1.0 and anonymize.DETECT_UPSCALE == 2.0
     import inspect
 
-    assert inspect.signature(render.render_video).parameters["face_scale"].default == 2.0  # 고르지 않으면 지금처럼
+    assert inspect.signature(render.render_video).parameters["face_scale"].default == 1.0  # 고르지 않으면 1배
 
 
 def test_me_marker_glows_at_the_feet_and_points_from_above() -> None:
