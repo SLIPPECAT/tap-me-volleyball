@@ -167,6 +167,16 @@ def test_home_screen_files_are_served(client: TestClient) -> None:
         assert client.get(icon["src"]).headers["content-type"] == "image/png"
 
 
+
+def test_favicon_shows_even_on_the_locked_page(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/3 사용자: 브라우저 탭에 아이콘이 없었다. 잠금 화면은 /static을 못 읽으니 잠가도 열리는 /favicon.ico 하나로
+    monkeypatch.setattr(gate, "MEMBERS_ONLY", True)
+    r = client.get("/favicon.ico")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/x-icon"
+    assert '<link rel="icon" href="/favicon.ico">' in client.get("/", headers={"accept": "text/html"}).text
+    for page in ("index.html", "guide.html", "admin.html"):
+        assert '<link rel="icon" href="/favicon.ico">' in (server.STATIC_DIR / page).read_text()
+
 def _awaiting_tap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> str:
     def fake_prepare(job: jobs.Job, index: int, c) -> None:
         job.scenes[str(index)] = {"index": index, "status": "awaiting_tap", "tap_frames": {"score": 4, "start": 0}}

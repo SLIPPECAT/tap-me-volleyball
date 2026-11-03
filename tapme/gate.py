@@ -26,8 +26,8 @@ JUDGE_ACCESS = os.environ.get("TAPME_JUDGE_ACCESS") == "1"
 SECRET = os.environ.get("TAPME_SESSION_SECRET", "")
 COOKIE = "tapme_session"
 MAX_AGE = 30 * 24 * 3600
-# 잠가도 열어 두는 주소: 꺼짐 확인(입구가 서버 안에서 묻는다)·코드 받기·코드로 들어오기·검색 엔진 안내·운영 현황(관리 토큰)
-OPEN_PATHS = ("/idle", "/access/claim", "/access/enter", "/robots.txt")
+# 잠가도 열어 두는 주소: 꺼짐 확인(입구가 서버 안에서 묻는다)·코드 받기·코드로 들어오기·검색 엔진 안내·탭 아이콘·운영 현황(관리 토큰)
+OPEN_PATHS = ("/idle", "/access/claim", "/access/enter", "/robots.txt", "/favicon.ico")
 OPEN_PREFIXES = ("/admin/",)
 
 
@@ -79,6 +79,7 @@ def is_open(path: str) -> bool:
 PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow">
 <title>Tap Me Volleyball</title>
+<link rel="icon" href="/favicon.ico">
 <style>
 :root { color-scheme: light dark; --bg: #f4f8fd; --ink: #1f3550; --muted: #5b6f86; --line: #d6e2ef; --blue: #3d8ee8; }
 @media (prefers-color-scheme: dark) { :root { --bg: #0d1520; --ink: #e8eef6; --muted: #9fb0c4; --line: #26364a; } }

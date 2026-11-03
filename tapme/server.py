@@ -1031,6 +1031,12 @@ def enter_with_code(req: EnterRequest, request: Request) -> JSONResponse:
     return _with_session({"ok": True}, "code", req.code)
 
 
+@app.get("/favicon.ico")
+def favicon() -> FileResponse:
+    """브라우저 탭 아이콘. 잠금 화면에서도 보이게 /static 밖에 둔다(gate.OPEN_PATHS)."""
+    return FileResponse(STATIC_DIR / "icons" / "favicon.ico", media_type="image/x-icon")
+
+
 @app.get("/robots.txt")
 def robots() -> PlainTextResponse:
     return PlainTextResponse("User-agent: *\nDisallow: /\n")
