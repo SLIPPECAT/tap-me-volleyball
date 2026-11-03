@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tapme import jobs, muse, score, track
+from tapme import jobs, muse, render, score, track
 from tests.test_track import _MASK_A, WIRE  # 320×334 화면, 선수 0·1
 
 
@@ -891,3 +891,23 @@ def test_continue_job_reuses_the_same_video_file_and_reference(tmp_path: Path, m
     assert Path(job.video).stat().st_ino == Path(prev.video).stat().st_ino  # 하드 링크: 다시 받지도, 복사하지도 않는다
     assert (job.dir / "auto" / "ref.jpg").read_bytes() == b"ref"
     assert jobs.load_job(job.id).video == job.video
+
+
+def test_variable_frame_rate_scene_is_cut_to_constant_fps(tmp_path: Path) -> None:
+    # 11/3 점검: 가변 프레임레이트(앞 1초 60fps, 뒤 30fps)를 그대로 자르면 렌더가 센 프레임 수와 실제로 풀리는 수가 달라
+    # 뒷부분에서 화면 자르기·'나' 표시가 멈췄다 → 원본 fps로 자를 때도 고정 fps로
+    import subprocess
+
+    vfr = tmp_path / "vfr.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=60:duration=3",
+                    "-vf", "select='lt(t,1)+not(mod(n,2))'", "-fps_mode", "vfr", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    str(vfr)], check=True)
+    assert jobs.cfr_target(vfr) == 60
+    out = jobs._cut(vfr, 0.0, 3.0, tmp_path / "clip.mp4", None)
+    assert jobs.cfr_target(out) is None
+    _, _, fps, n = render.probe(out)
+    assert round(fps) == 60 and abs(n - 180) <= 2  # 센 프레임 수 = 실제로 풀리는 수
+    cfr = tmp_path / "cfr.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=30:duration=1",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(cfr)], check=True)
+    assert jobs.cfr_target(cfr) is None  # 고정 fps 영상은 그대로 자른다

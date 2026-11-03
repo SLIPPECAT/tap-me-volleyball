@@ -529,3 +529,15 @@ def test_head_marker_keeps_its_size_when_my_box_grows() -> None:
     normal = _marker_width(face, Box("me", 100, 200, 200, 500))
     grown = _marker_width(face, Box("me", 100, 150, 360, 500))
     assert abs(grown - normal) <= 6
+
+
+def test_high_fps_source_renders_at_most_60fps_even_as_source(tmp_path: Path) -> None:
+    # 11/3 점검: 120·240fps 원본을 '원본 그대로'로 만들면 프레임마다 얼굴을 찾아 30fps의 4~8배 걸렸다 → 60fps까지
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=120:duration=0.5",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)], check=True)
+    by = {k: [Box("me", 140, 40, 180, 140)] for k in range(3)}
+    out = render.render_video(src, tmp_path / "o.mp4", by, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=False)
+    assert round(render.probe(out)[2]) == render.HIGH_FPS_CAP == 60
+    out30 = render.render_video(src, tmp_path / "o30.mp4", by, {}, "me", sam_fps=5, zoom=1.0, face_mosaic=False, max_fps=30)
+    assert round(render.probe(out30)[2]) == 30  # 고른 값은 그대로

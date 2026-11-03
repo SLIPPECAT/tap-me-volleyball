@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -1423,3 +1424,34 @@ def test_finished_status_tells_when_it_is_deleted_and_how_long_it_took(client: T
     assert body["took_sec"] == 551 and body["delete_at"] == pytest.approx(job.created_at + jobs.KEEP_SEC)
     title, text = push.message("auto_done", "en", n=4, review=0, m=9)
     assert title == "4 highlights are ready (9 min)" and "Save all" in text and "24 hours" in text
+
+
+def test_video_info_records_codec_hdr_rotation_and_variable_fps() -> None:
+    # 11/3 점검: 화질·형식에 따라 처리가 어려워지는지 보려고 어떤 영상이 오는지 남긴다
+    iphone = {"streams": [{"width": 1920, "height": 1080, "avg_frame_rate": "28437/1000", "r_frame_rate": "30/1",
+                           "codec_name": "hevc", "pix_fmt": "yuv420p10le", "color_transfer": "arib-std-b67",
+                           "side_data_list": [{"rotation": -90}]}]}
+    assert server.video_info(iphone) == {"size": "1920x1080", "fps": 28, "codec": "hevc", "pix_fmt": "yuv420p10le",
+                                         "hdr": True, "rotation": -90, "vfr": True}
+    plain = {"streams": [{"width": 1280, "height": 720, "avg_frame_rate": "30000/1001", "r_frame_rate": "30000/1001",
+                          "codec_name": "h264", "pix_fmt": "yuv420p", "color_transfer": "bt709"}]}
+    info = server.video_info(plain)
+    assert (info["hdr"], info["rotation"], info["vfr"], info["fps"]) == (False, 0, False, 30)
+    assert server._video_info("/nonexistent.mp4") == {"size": "", "fps": 0}
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node가 없으면 건너뜀")
+def test_device_blur_sends_any_rotated_or_mirrored_video_to_the_server(tmp_path: Path) -> None:
+    # 11/3 점검: 기기 처리가 90°·270°만 서버로 넘겨, 180°(반대로 들고 찍음)·좌우 반전은 거꾸로 된 프레임을 흐려 Meta로 보냈다
+    import subprocess
+
+    js = (Path(server.__file__).parent / "static" / "browser-blur.js").read_text()
+    fn = js[js.index("function isUpright(m) {"):]
+    fn = fn[:fn.index("\n  }\n") + 4]
+    script = tmp_path / "t.js"
+    script.write_text(fn + """
+const I = 65536, W = 1073741824;
+console.log(JSON.stringify([[I,0,0,0,I,0,0,0,W], [0,I,0,-I,0,0,0,0,W], [-I,0,0,0,-I,0,0,0,W], [-I,0,0,0,I,0,0,0,W], undefined]
+  .map((m) => isUpright(m))));
+""")
+    assert json.loads(subprocess.check_output(["node", str(script)])) == [True, False, False, False, True]

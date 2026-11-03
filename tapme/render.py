@@ -296,6 +296,7 @@ FACE_SCALES = (1.0, 1.5, 2.0)
 # 옆얼굴 Haar는 결과 화면(자른 곳) + 이만큼(프레임 높이 대비) 둘레에서만(H-58, 11/2): 화면 전체 4.9초 → 2.0초/장,
 # 결과 화면 안 얼굴 덮음 99.9 → 99.8%. 결과에 안 보이는 곳의 옆얼굴은 찾을 필요가 없다. YuNet은 늘 화면 전체(H-28)
 PROFILE_MARGIN = 0.15
+HIGH_FPS_CAP = 60  # '원본 그대로'여도 결과 영상은 이 fps까지
 DEFAULT_FACE_SCALE = 1.0  # 11/3 사용자: 가급적 1배(가장 빠름). 화면도 1배를 추천한다
 
 
@@ -536,6 +537,8 @@ def render_video(
         plain = anonymize.load_plain_detector() if two_detectors else None
     width, height, fps, n = probe(src)
     vf: list[str] = []
+    if not max_fps and fps > HIGH_FPS_CAP + 0.5:
+        max_fps = HIGH_FPS_CAP  # 11/3 점검: 120·240fps 원본은 프레임마다 얼굴을 찾아 30fps의 4~8배 걸린다
     if max_fps and fps > max_fps + 0.5:
         # 결과를 max_fps로(사용자 선택). 60fps 원본은 프레임마다 얼굴을 찾아 렌더가 30fps의 두 배 걸렸다(10/30 성능 테스트)
         n, fps = int(n * max_fps / fps) + 1, float(max_fps)

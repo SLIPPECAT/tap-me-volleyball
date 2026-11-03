@@ -28,6 +28,11 @@
 
   class TooSlow extends Error {}
 
+  // mp4 트랙 행렬(16.16 고정소수 a,b,u,c,d,v,…)이 기본 방향인지: a=d=1.0, b=c=0. 없으면 기본으로 본다
+  function isUpright(m) {
+    return !m || m.length < 5 || (m[0] === 65536 && m[1] === 0 && m[3] === 0 && m[4] === 65536);
+  }
+
   function supported() {
     return typeof VideoDecoder === "function" && typeof VideoEncoder === "function" && typeof VideoFrame === "function"
       && typeof OffscreenCanvas === "function" && typeof WebAssembly === "object";
@@ -72,8 +77,10 @@
       const track = this.info && this.info.videoTracks[0];
       if (err || !track) throw new Error("영상을 풀 수 없어요");
       // 세워 찍은 영상은 프레임이 누운 채 회전 표시만 있다. 그대로 흐리면 누운 조각이 Meta로 가 서버(ffmpeg가 바로 세움)로 넘긴다
+      // 기본 방향(행렬 a=d=1.0, b=c=0)이 아니면 모두 서버로. 90°·270°만 걸러 180°(폰을 반대로 들고 찍음)·좌우 반전은
+      // 거꾸로 된 프레임을 흐려 그대로 Meta로 보냈다 — 거꾸로 된 얼굴은 놓칠 수 있다(11/3 점검)
       const m = track.matrix || [];
-      if (m.length >= 5 && (Math.abs(m[1]) > 0 || Math.abs(m[3]) > 0)) throw new Error("회전된 영상은 서버에서 처리해요");
+      if (!isUpright(m)) throw new Error("회전된 영상은 서버에서 처리해요");
       this.track = track;
       let description;
       for (const entry of mp4.getTrackById(track.id).mdia.minf.stbl.stsd.entries) {
@@ -458,5 +465,5 @@
     return { ...(await probe(file, 0, onStep)), px: BENCH_W * BENCH_H };
   }
 
-  window.BrowserBlur = { supported, chunkPlan, run, probe, bench, extractSegment, FPS, MAX_SEC_PER_FRAME, PROBE_FRAMES };
+  window.BrowserBlur = { supported, isUpright, chunkPlan, run, probe, bench, extractSegment, FPS, MAX_SEC_PER_FRAME, PROBE_FRAMES };
 })();

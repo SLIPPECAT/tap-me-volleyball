@@ -353,6 +353,32 @@ def eval_rate(rate: str) -> float:
     return float(num) / float(den or 1) if float(den or 1) else 0.0
 
 
+HDR_TRANSFERS = ("smpte2084", "arib-std-b67")  # PQ(HDR10·HDR10+·돌비 비전 기본층)·HLG(아이폰 HDR)
+
+
+def video_info(probe: dict[str, Any]) -> dict[str, Any]:
+    """ffprobe json에서 기록할 것: 크기·fps(평균)·코덱·화소 형식·HDR·회전·가변 프레임레이트(11/3 점검: 화질·형식에 따라
+    처리가 어려워지는지 실제로 어떤 영상이 오는지 몰랐다). 화면에 보이는 방향이 아니라 저장된 크기."""
+    s = probe["streams"][0]
+    avg, r = eval_rate(s.get("avg_frame_rate", "0/1")), eval_rate(s.get("r_frame_rate", "0/1"))
+    rotation = next((int(float(d["rotation"])) for d in s.get("side_data_list", []) if "rotation" in d), 0)
+    return {"size": f"{s.get('width', '')}x{s.get('height', '')}", "fps": round(avg), "codec": s.get("codec_name", ""),
+            "pix_fmt": s.get("pix_fmt", ""), "hdr": s.get("color_transfer", "") in HDR_TRANSFERS, "rotation": rotation,
+            "vfr": bool(avg and r and abs(r - avg) / r > jobs.VFR_TOLERANCE)}
+
+
+def _video_info(video: str | Path) -> dict[str, Any]:
+    """기록용 영상 정보. 프레임 수는 세지 않는다(render.probe는 1시간 영상이면 몇 분 걸린다). 못 읽으면 크기·fps만 비워 둔다."""
+    try:
+        out = subprocess.check_output(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height,avg_frame_rate,r_frame_rate,codec_name,pix_fmt,color_transfer:stream_side_data=rotation",
+             "-of", "json", str(video)], timeout=30)
+        return video_info(json.loads(out))
+    except Exception:  # noqa: BLE001 - 기록용
+        return {"size": "", "fps": 0}
+
+
 def _kind(job: jobs.Job) -> str:
     """요청 기록에 남길 코드 종류(배너·심사·운영자가 붙인 이름)."""
     return access._load().get(job.code, {}).get("label", "") if job.code else ""
@@ -390,15 +416,8 @@ def _run_scan(job_id: str, client: Any) -> None:
         if job.error:
             access.refund(job.code, "uploads")
         job.save()
-        try:  # 기록용(프레임 수는 세지 않는다 — render.probe는 1시간 영상이면 몇 분 걸린다)
-            out = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                                           "stream=width,height,avg_frame_rate", "-of", "csv=p=0", job.video], timeout=30)
-            w, h, rate = out.decode().strip().split(",")[:3]
-            size, fps = f"{w}x{h}", round(eval_rate(rate))
-        except Exception:  # noqa: BLE001 - 기록용, 못 읽으면 비워 둔다
-            size, fps = "", 0
         _log(job_id, "rallies", t0, status=job.status, error=job.error, duration_sec=round(job.duration_sec),
-             size=size, fps=fps, rallies=sum(bool(r.get("is_rally")) for r in job.rallies), unread=len(job.unread))
+             **_video_info(job.video), rallies=sum(bool(r.get("is_rally")) for r in job.rallies), unread=len(job.unread))
         if job.status == "rallies_ready":
             # 맡기기 설정은 올린 뒤 몇 초 늦게 저장된다 — 찾기를 시작할 때 읽은 job에는 없어 디스크에서 다시 본다(10/31 실기기)
             if jobs.load_job(job_id).auto:  # 한 번에 맡기기: 랠리 목록 알림 대신 바로 이어 만든다(끝나면 한 번 알린다)

@@ -527,11 +527,35 @@ def save_segment(job: Job, index: int, video: Path, audio: Path | None, first_fr
     job.save()
 
 
+VFR_TOLERANCE = 0.02  # r_frame_rate와 평균 fps가 이만큼 넘게 다르면 가변 프레임레이트로 본다
+VFR_MAX_FPS = 61  # 가변 영상을 맞출 fps 상한(넘으면 평균 fps로)
+
+
+def cfr_target(video: Path) -> int | None:
+    """가변 프레임레이트(체육관처럼 어두우면 폰이 fps를 바꾼다) 영상이면 맞출 고정 fps, 아니면 None.
+    가변 그대로 자르면 렌더가 프레임 수(nb_read_frames)와 실제로 풀리는 프레임 수가 달라 뒷부분 약 25%에서 화면 자르기와
+    '나' 표시가 멈췄다(11/3 점검, 60→30fps 흉내 영상: 180장으로 세고 239장이 풀림)."""
+    try:
+        s = json.loads(subprocess.check_output(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate,avg_frame_rate",
+             "-of", "json", str(video)], timeout=30))["streams"][0]
+        rates = [s[k].partition("/") for k in ("r_frame_rate", "avg_frame_rate")]
+        r, avg = (float(n) / float(d or 1) if float(d or 1) else 0.0 for n, _, d in rates)
+    except Exception:  # noqa: BLE001 - 못 읽으면 지금처럼 그대로 자른다
+        return None
+    if not r or not avg or abs(r - avg) / r <= VFR_TOLERANCE:
+        return None
+    return round(r) if r <= VFR_MAX_FPS else round(avg)
+
+
 def _cut(video: Path, start: float, duration: float, out: Path, fps: int | None) -> Path:
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{start:.2f}", "-i", str(video), "-t", f"{duration:.2f}"]
+    rate = fps or cfr_target(video)  # 원본 fps로 자를 때도 가변이면 고정으로
     # -r는 원본보다 4프레임(0.13초) 늦은 장면을 골라, SAM 박스(프레임 k = k/fps초)가 원본 클립보다 늦게 따라갔다(S1)
-    cmd += ["-vf", f"setpts=PTS-STARTPTS,fps={fps}:round=up"] if fps else []
-    subprocess.run([*cmd, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(out)], check=True)
+    cmd += ["-vf", f"setpts=PTS-STARTPTS,fps={rate}:round=up"] if rate else []
+    # 중간 파일이라 빠르게(기본 preset은 4K60 5초에 16초, 11/3 점검). 렌더가 다시 압축하니 화질은 넉넉히(crf 18)
+    subprocess.run([*cmd, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    str(out)], check=True)
     return out
 
 
