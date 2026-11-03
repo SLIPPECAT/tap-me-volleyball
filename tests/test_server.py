@@ -1075,6 +1075,27 @@ def test_one_code_cannot_open_endless_uploads(client: TestClient, monkeypatch: p
     assert ok == [200, 200, 429]
 
 
+def test_stale_uploads_from_another_device_free_their_slot(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/3: 아이폰에서 올리다 만 자리 2개가 남아 같은 회원 코드로 안드로이드에서 올리면 24시간 동안 거절됐다
+    import os
+    import time
+
+    monkeypatch.setattr(access, "REQUIRED", True)
+    code, other = access.new_codes(2)
+    ids = [client.post("/uploads", json={"size": 10, "code": code}).json()["id"] for _ in range(2)]
+    theirs = client.post("/uploads", json={"size": 10, "code": other}).json()["id"]
+    assert client.post("/uploads", json={"size": 10, "code": code}).status_code == 429  # 둘 다 방금 연 자리
+
+    old = time.time() - server.STALE_UPLOAD_SEC - 1
+    for up in [ids[0], theirs]:  # 하나는 올리다 멈춤, 다른 코드의 자리도 오래됨
+        os.utime(jobs.JOBS_DIR / "_uploads" / up / "data", (old, old))
+    assert client.post("/uploads", json={"size": 10, "code": code}).status_code == 200
+    assert client.get(f"/uploads/{ids[0]}").status_code == 404  # 멈춘 자리만 비웠다
+    assert client.get(f"/uploads/{ids[1]}").status_code == 200  # 올리는 중인 자리는 그대로
+    assert client.get(f"/uploads/{theirs}").status_code == 200  # 다른 코드의 자리는 건드리지 않는다
+    assert client.post("/uploads", json={"size": 10, "code": code}).status_code == 429
+
+
 def test_card_names_are_written_on_the_photos(tmp_path: Path) -> None:
     # H-49: 이름을 사진 앞 글로만 주면 Muse가 한 칸 밀린 이름(C1 → C2)으로 답했다. 사진 왼쪽 위에도 이름을 쓴다
     import base64

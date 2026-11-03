@@ -1137,6 +1137,7 @@ class UploadInit(BaseModel):
 
 MAX_UPLOAD_PIECE = 32 * 1024 * 1024  # 이어 올리기 한 번에 받는 크기(기기는 16MB씩)
 MAX_OPEN_UPLOADS = 2  # 코드 하나가 동시에 열어 둘 수 있는 이어 올리기 자리
+STALE_UPLOAD_SEC = 15 * 60  # 자리가 찼을 때 이만큼 조각이 오지 않은 자리는 올리다 만 것으로 보고 비운다
 
 
 @app.post("/uploads")
@@ -1151,9 +1152,13 @@ def start_upload(req: UploadInit, request: Request) -> dict[str, Any]:
                 raise HTTPException(403, "이 코드로 올릴 수 있는 영상을 다 썼어요")
         except access.AccessDenied as e:
             raise HTTPException(403, str(e)) from e
-    # 코드 하나로 이어 올리기 자리를 끝없이 열어 디스크를 채우지 못하게(10/31 보안 검토)
-    if access.REQUIRED and jobs.open_uploads(access.normalize(req.code)) >= MAX_OPEN_UPLOADS:
-        raise HTTPException(429, "올리던 영상이 이미 있어요. 그 영상을 마저 올리거나 내일 다시 해 주세요")
+    # 코드 하나로 이어 올리기 자리를 끝없이 열어 디스크를 채우지 못하게(10/31 보안 검토). 자리가 다 찼으면 한동안 조각이
+    # 오지 않은(올리다 만) 자리부터 비운다 — 다른 기기에서 올리다 만 자리는 이 기기에서 이을 수 없다(11/3)
+    norm = access.normalize(req.code)
+    if access.REQUIRED and jobs.open_uploads(norm) >= MAX_OPEN_UPLOADS:
+        jobs.drop_stale_uploads(norm, STALE_UPLOAD_SEC)
+        if jobs.open_uploads(norm) >= MAX_OPEN_UPLOADS:
+            raise HTTPException(429, "다른 영상을 올리는 중이에요. 그 영상이 다 올라간 뒤 다시 해 주세요")
     upload_id = jobs.new_upload({**req.model_dump(), "code": access.normalize(req.code)})
     return {"id": upload_id, "received": 0}
 

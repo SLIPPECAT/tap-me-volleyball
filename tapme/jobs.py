@@ -375,6 +375,24 @@ def open_uploads(code: str) -> int:
                for p in (d.iterdir() if d.exists() else []) if (p / "meta.json").exists())
 
 
+def drop_stale_uploads(code: str, idle_sec: float, now: float | None = None) -> int:
+    """이 코드로 열어 둔 이어 올리기 자리 중 idle_sec 넘게 조각이 오지 않은 것을 지운다. 지운 수.
+    코드는 회원당 하나라 기기끼리 같이 쓴다. 이어 올리기는 같은 기기에서 같은 파일을 골라야만 이어지므로, 아이폰에서 올리다 만
+    자리 2개가 남으면 안드로이드에서는 그 자리를 풀 길 없이 24시간 동안 거절됐다(11/3 사용자: 안드로이드에서 업로드가 안 됨)."""
+    now = time.time() if now is None else now
+    d = JOBS_DIR / "_uploads"
+    gone = 0
+    for p in d.iterdir() if d.exists() else []:
+        meta, data = p / "meta.json", p / "data"
+        if not meta.exists() or json.loads(meta.read_text()).get("code") != code:
+            continue
+        last = (data if data.exists() else meta).stat().st_mtime
+        if now - last >= idle_sec:
+            shutil.rmtree(p)
+            gone += 1
+    return gone
+
+
 def upload_status(upload_id: str) -> dict[str, Any]:
     d = _upload_dir(upload_id)
     if not (d / "meta.json").exists():

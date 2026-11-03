@@ -132,6 +132,7 @@
     </div>
     <div class="progress" id="up-progress" hidden><div></div></div>
     <p class="muted" id="up-status" aria-live="polite"></p>
+    <p class="error" id="up-error" role="alert" hidden></p>
     <button class="primary" id="resume-upload" data-t="resumeUpload" hidden></button>
     <p class="error" id="upload-warn" data-t="keepOpen" hidden></p>
     <!-- 덜 쓰는 것은 영상 고르기 아래로(10/31: 첫 화면에서 영상 고르기가 아래로 밀렸다) -->
@@ -466,6 +467,12 @@ function initLang() {
 
 function show(section) { for (const s of ["s-upload", "s-rallies", "s-tap", "s-result"]) $(s).hidden = s !== section; }
 function setError(msg) { $("error").textContent = msg || ""; $("error").hidden = !msg; }
+// 올리기 오류는 올리기 진행 자리 바로 아래에(11/3: 맨 위에만 띄워 화면 밖이었다 — 안드로이드에서 '업로드 중'이 잠깐 보였다가
+// 이유 없이 사라진 것처럼 보였다). 보이게 그 자리로 옮긴다
+function setUpError(msg) {
+  $("up-error").textContent = msg || ""; $("up-error").hidden = !msg;
+  if (msg) $("up-error").scrollIntoView({ block: "center", behavior: "smooth" });
+}
 // 기기 쪽 오류(처리 멈춤 등)는 서버 상태를 다시 그려도 남겨 둔다(2초마다 서버 오류로 덮여 안 보였다, 10/31 아이폰)
 function setLocalError(msg) { state.localError = msg || ""; setError(msg); }
 function setHash() { location.hash = state.job ? `job=${state.job}` + (state.rally !== null ? `&rally=${state.rally}` : "") : ""; }
@@ -1246,7 +1253,7 @@ for (const id of ["back-rallies", "back-rallies2", "back-rallies3"]) {
 // 끊기면 서버가 받은 곳부터 잇는다. 이어 올릴 자리는 이 기기에 기억해 화면을 새로 열고 같은 영상을 다시 골라도 이어진다
 const UP_PIECE = 16 * 1024 * 1024;
 async function uploadVideo(f) {
-  setError(""); $("resume-upload").hidden = true; $("up-progress").hidden = false; $("upload-warn").hidden = false;
+  setError(""); setUpError(""); $("resume-upload").hidden = true; $("up-progress").hidden = false; $("upload-warn").hidden = false;
   state.uploading = true; state.uploadFile = f; state.uploadPaused = false; keepAwake(true);
   const sig = `${f.name}|${f.size}|${f.lastModified}`;
   try {
@@ -1284,8 +1291,8 @@ async function uploadVideo(f) {
   } catch (e) {
     state.uploading = false; keepAwake(false); $("upload-warn").hidden = true;
     // 연결이 끊긴 것(화면 꺼짐 등)이면 이어 올리게, 서버가 거절한 것(코드·한도)이면 그대로 알린다
-    if (e instanceof TypeError) { state.uploadPaused = true; $("resume-upload").hidden = false; setError(t("uploadPaused")); }
-    else { setError(e.message); $("start-upload").disabled = false; $("up-progress").hidden = true; }
+    if (e instanceof TypeError) { state.uploadPaused = true; $("resume-upload").hidden = false; setUpError(t("uploadPaused")); }
+    else { setUpError(e.message); $("start-upload").disabled = false; $("up-progress").hidden = true; }
   }
 }
 $("resume-upload").onclick = () => uploadVideo(state.uploadFile || state.pending);
@@ -1494,7 +1501,7 @@ function pickVideo(f) {
   updateStart();
   document.querySelector(".drop").classList.add("has-file");
   const label = document.querySelector(".drop span"); label.dataset.t = "pickAgain"; label.textContent = t("pickAgain");
-  setError("");
+  setError(""); if (!state.uploading) setUpError("");
 }
 $("file").addEventListener("change", () => { const f = $("file").files[0]; if (f) pickVideo(f); });
 $("start-upload").onclick = async () => {
