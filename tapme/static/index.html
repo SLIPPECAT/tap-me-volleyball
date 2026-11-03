@@ -1507,6 +1507,8 @@ $("file").addEventListener("change", () => { const f = $("file").files[0]; if (f
 $("start-upload").onclick = async () => {
   if (!state.pending) return;
   $("start-upload").disabled = true;
+  const saved = storeGet("code");  // 이 기기에 마지막으로 저장된 코드(입장 쿠키와 같은 것)로 올린다
+  if (saved && saved !== $("code").value.trim()) $("code").value = saved;
   await checkAccess();  // 올리는 사이 대기가 차거나 비용이 다했을 수 있다
   if (!state.access.ok || !$("consent-check").checked) return;
   if (state.mode === "auto") {  // 한 번에 맡기기: 기기·서버를 고르지 않고 서버로(장면을 원본에서 잘라야 한다)
@@ -1834,6 +1836,11 @@ function updateStart() {
 let codeTimer = 0;
 $("code").addEventListener("input", () => { clearTimeout(codeTimer); codeTimer = setTimeout(checkAccess, 400); });
 $("code").value = storeGet("code") || "";
+// 다른 탭에서 코드가 바뀌면(배너를 다시 눌러 새 탭에서 회원 확인) 이 화면도 따라간다. 입장 쿠키는 탭끼리 같이 쓰는데
+// 열려 있던 탭은 예전 코드로 올려 '이 기기에서 들어올 때 쓴 코드로만' 403이었다(11/3 안드로이드, 새로고침하면 됐다)
+window.addEventListener("storage", (e) => {
+  if (e.key === "code" && e.newValue && e.newValue !== $("code").value.trim()) { $("code").value = e.newValue; checkAccess(); }
+});
 // 초대 링크(배구구 배너·심사용, 10/31 사용자 결정): ?invite=… 으로 오면 이 기기에 코드가 없을 때만 하나 받는다
 async function claimInvite() {
   const invite = new URLSearchParams(location.search).get("invite");
