@@ -204,3 +204,11 @@ def test_make_reference_refuses_a_missed_or_too_small_tap(tmp_path: Path, monkey
         auto.make_reference(job, 3.0, 915, 440, None)
     assert str(e.value) == auto.TAP_MESSAGES["small"]
     assert not (job.dir / "auto" / "ref.jpg").exists()  # 못 고르면 기준 사진을 남기지 않는다
+
+
+def test_tap_size_uses_the_short_side_so_portrait_videos_are_not_penalized() -> None:
+    # 11/3: 화면 높이로 재면 세로 영상(1080×1920)은 같은 크기의 선수도 '너무 작아요'였다 → 짧은 변 기준(가로는 그대로)
+    box = track.Box("p", 500, 800, 560, 950)  # 키 150px
+    assert auto.pick_tapped([box], 530, 900, min(1080, 1920))[1] == "ok"  # 세로 1080×1920: 150 ≥ 0.12×1080
+    assert auto.pick_tapped([box], 530, 900, 1920)[1] == "small"  # 예전처럼 높이(1920)로 재면 작다고 했다
+    assert auto.pick_tapped([box], 530, 900, min(1920, 1080))[1] == "ok"  # 가로 1080p는 전과 같다

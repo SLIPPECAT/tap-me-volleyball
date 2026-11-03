@@ -911,3 +911,35 @@ def test_variable_frame_rate_scene_is_cut_to_constant_fps(tmp_path: Path) -> Non
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=30:duration=1",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(cfr)], check=True)
     assert jobs.cfr_target(cfr) is None  # 고정 fps 영상은 그대로 자른다
+
+
+def _hdr_video(path: Path, transfer: str) -> Path:
+    import subprocess
+
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=1",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                    # 화소는 그대로 두고 HDR 태그만(변환 경로가 태그를 읽어 동작하는지 본다)
+                    "-vf", f"setparams=color_trc={transfer}:color_primaries=bt2020:colorspace=bt2020nc:range=tv,format=yuv420p10le",
+                    "-c:v", "libx265", "-x265-params", "log-level=error", "-c:a", "aac", "-shortest", str(path)], check=True)
+    return path
+
+
+@pytest.mark.parametrize("transfer", ["arib-std-b67", "smpte2084"])
+def test_hdr_upload_is_converted_once_to_sdr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transfer: str) -> None:
+    # 11/3 점검: HDR(아이폰 HLG·갤럭시 HDR10+)을 색 변환 없이 8비트로 바꿔 탁하거나 바랜 화면에서 얼굴을 찾고 렌더했다
+    import json
+    import subprocess
+
+    monkeypatch.setattr(jobs, "JOBS_DIR", tmp_path / "jobs")
+    job = jobs.create_job("m.mov", _hdr_video(tmp_path / "hdr.mov", transfer))
+    assert jobs.is_hdr(Path(job.video))
+    assert jobs.ensure_sdr(job) is True
+    out = Path(job.video)
+    assert out.name == "source.mp4" and not (job.dir / "source.mov").exists()
+    s = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries",
+                                            "stream=codec_type,codec_name,pix_fmt,color_transfer", "-of", "json", str(out)]))
+    video = next(x for x in s["streams"] if x["codec_type"] == "video")
+    assert (video["codec_name"], video["pix_fmt"], video["color_transfer"]) == ("h264", "yuv420p", "bt709")
+    assert any(x["codec_type"] == "audio" for x in s["streams"])  # 소리는 그대로
+    assert jobs.load_job(job.id).video == str(out)
+    assert jobs.ensure_sdr(job) is False  # 한 번만

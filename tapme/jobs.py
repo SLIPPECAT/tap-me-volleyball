@@ -527,6 +527,41 @@ def save_segment(job: Job, index: int, video: Path, audio: Path | None, first_fr
     job.save()
 
 
+HDR_TRANSFERS = ("smpte2084", "arib-std-b67")  # PQ(HDR10·HDR10+·돌비 비전 기본층)·HLG(아이폰 HDR)
+# HDR → SDR(bt709): 선형으로 펴서 bt709 색역으로 옮기고 hable로 밝기를 접은 뒤 8비트로. 이 변환 없이 8비트로 바꾸면
+# HLG는 탁하고 PQ는 회색으로 바랬다(11/3 점검) — 얼굴 찾기(흐림본·모자이크)도 대비가 낮은 화면에서 돌았다
+SDR_FILTER = ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,"
+              "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+
+
+def is_hdr(video: Path) -> bool:
+    try:
+        s = json.loads(subprocess.check_output(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_transfer", "-of", "json",
+             str(video)], timeout=30))["streams"][0]
+    except Exception:  # noqa: BLE001 - 못 읽으면 그대로 둔다
+        return False
+    return s.get("color_transfer", "") in HDR_TRANSFERS
+
+
+def ensure_sdr(job: Job) -> bool:
+    """HDR 원본이면 한 번 SDR(H.264, bt709)로 바꿔 원본 자리에 둔다. 이후 랠리 찾기·흐림본·장면·렌더는 모두 이 파일을 쓴다
+    (11/3: 영상을 읽는 곳이 10군데가 넘어 곳곳에서 바꾸는 대신). 회전은 ffmpeg가 바로 세워 쓴다. 바꿨으면 True."""
+    src = Path(job.video) if job.video else None
+    if src is None or not src.exists() or not is_hdr(src):
+        return False
+    tmp = job.dir / "source_sdr.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-map", "0:v:0", "-map", "0:a:0?", "-vf", SDR_FILTER,
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-color_primaries", "bt709", "-color_trc", "bt709",
+                    "-colorspace", "bt709", "-c:a", "aac", "-movflags", "+faststart", str(tmp)], check=True)
+    final = job.dir / "source.mp4"
+    src.unlink()
+    os.replace(tmp, final)
+    job.video = str(final)
+    job.save()
+    return True
+
+
 VFR_TOLERANCE = 0.02  # r_frame_rate와 평균 fps가 이만큼 넘게 다르면 가변 프레임레이트로 본다
 VFR_MAX_FPS = 61  # 가변 영상을 맞출 fps 상한(넘으면 평균 fps로)
 

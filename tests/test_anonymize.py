@@ -175,3 +175,29 @@ def test_a_face_at_the_frame_edge_is_blurred_to_its_corners() -> None:
     edge_change = np.abs(out[corner].astype(int) - frame[corner].astype(int)).mean()
     inner_change = np.abs(interior[100:104, 150:154].astype(int) - frame[100:104, 150:154].astype(int)).mean()
     assert edge_change > 0.5 * inner_change
+
+
+def test_meta_blur_scale_matches_1080p_at_2x_for_any_resolution() -> None:
+    # 11/3 점검: 4K도 늘 2배로 찾아 장당 8배 걸렸다. 짧은 변을 2160(1080p 2배)에 맞추되 1~2배 안에서
+    assert anonymize.detect_upscale(1920, 1080) == 2.0
+    assert anonymize.detect_upscale(1080, 1920) == 2.0  # 세로 1080p도 그대로
+    assert anonymize.detect_upscale(1280, 720) == 2.0  # 작은 영상은 2배까지만
+    assert anonymize.detect_upscale(1920, 1440) == 1.5  # 갤럭시 4:3
+    assert anonymize.detect_upscale(3840, 2160) == 1.0  # 4K
+    assert anonymize.detect_upscale(2160, 3840) == 1.0
+
+
+def test_meta_blur_runs_4k_frames_at_their_own_size() -> None:
+    sizes: list[tuple[int, int]] = []
+
+    class FakeDetector:
+        def setInputSize(self, size):
+            sizes.append(size)
+
+        def detect(self, img):
+            return None, None
+
+    anonymize.detect_faces_split(np.zeros((2160, 3840, 3), np.uint8), FakeDetector())
+    anonymize.detect_faces_split(np.zeros((1080, 1920, 3), np.uint8), FakeDetector())
+    anonymize.detect_faces_split(np.zeros((2160, 3840, 3), np.uint8), FakeDetector(), upscale=2.0)  # 결과 영상은 고른 대로
+    assert sizes == [(3840, 2160), (3840, 2160), (7680, 4320)]

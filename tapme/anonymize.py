@@ -39,7 +39,15 @@ if threads := int(os.environ.get("TAPME_CV_THREADS", "0")):
     cv2.setNumThreads(threads)
 # 10/28 H-22 보강: 0.6·원래 크기·정면 검출만으로는 옆얼굴을 놓쳤다(H-21)
 SCORE_THRESHOLD = 0.5
-DETECT_UPSCALE = 2.0  # 프레임을 이만큼 키워 YuNet을 돌린다(작은 얼굴)
+DETECT_UPSCALE = 2.0  # 프레임을 이만큼 키워 YuNet을 돌린다(작은 얼굴). 짧은 변 1080 이하의 배율
+DETECT_SHORT_SIDE = 1080  # 이 짧은 변을 DETECT_UPSCALE배 키운 것(2160)과 같은 크기로 맞춘다
+
+
+def detect_upscale(w: int, h: int) -> float:
+    """Meta로 보내는 흐림본의 YuNet 배율. 키운 프레임의 짧은 변이 2160(1080p 2배)이 되게 하되 1~2배 안에서.
+    4K는 1배로도 1080p 2배와 얼굴 화소 크기가 같고 원래 화질이라 놓치는 얼굴이 늘지 않는다 — 2배면 장당 8배 걸렸다
+    (1스레드 1080p 2배 0.44초 · 4K 2배 3.6초 · 4K 1배 0.43초, 11/3 점검). 1080p 이하(세로 1080×1920 포함)는 그대로 2배."""
+    return round(min(DETECT_UPSCALE, max(1.0, DETECT_UPSCALE * DETECT_SHORT_SIDE / max(1, min(w, h)))), 3)
 PROFILE_MIN_NEIGHBORS = 4
 PROFILE_SCALE_FACTOR = 1.1  # 결과 영상 모자이크(render.py)만 쓴다
 # Meta로 보내는 흐림본은 옆얼굴 검출 없이 YuNet만(11/1 사용자 결정, H-51): 옆얼굴로만 잡던 얼굴은 0.14%(70분 경기 296장에
@@ -72,7 +80,7 @@ def detect_faces(
 ) -> list[tuple[int, int, int, int]]:
     """프레임에서 얼굴 박스 (x, y, w, h) 목록을 돌려준다.
 
-    YuNet은 DETECT_UPSCALE배로 키운 프레임에서 찾고, profile이 있으면 옆얼굴도 양쪽 방향으로 찾는다.
+    YuNet은 해상도에 맞춘 배율(detect_upscale)로 키운 프레임에서 찾고, profile이 있으면 옆얼굴도 양쪽 방향으로 찾는다.
     """
     front, side = detect_faces_split(frame, detector, profile, profile_scale)
     return front + side
@@ -83,13 +91,16 @@ def detect_faces_split(
     detector: cv2.FaceDetectorYN,
     profile: cv2.CascadeClassifier | None = None,
     profile_scale: float = PROFILE_SCALE_FACTOR,
-    upscale: float = DETECT_UPSCALE,
+    upscale: float | None = None,
     profile_region: tuple[int, int, int, int] | None = None,
 ) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
     """(YuNet 얼굴, 옆얼굴 Haar 얼굴). 옆얼굴 Haar는 유니폼 등·다리를 얼굴로 잡는 일이 있어(H-48) 결과 영상에서 따로 거른다.
-    upscale: YuNet을 돌릴 확대 배율. 결과 영상 모자이크만 사용자가 고른다(render.FACE_SCALES), Meta 흐림본은 늘 기본값.
+    upscale: YuNet을 돌릴 확대 배율. 결과 영상 모자이크는 사용자가 고른다(render.FACE_SCALES). 주지 않으면(Meta 흐림본)
+    해상도에 맞춘 detect_upscale.
     profile_region: (x0, y0, x1, y1)이면 옆얼굴 Haar는 그 안에서만 찾는다(결과 화면 근처, H-58). YuNet은 늘 화면 전체."""
     h, w = frame.shape[:2]
+    if upscale is None:
+        upscale = detect_upscale(w, h)
     big_w, big_h = int(w * upscale), int(h * upscale)
     big = frame if (big_w, big_h) == (w, h) else cv2.resize(frame, (big_w, big_h))
     detector.setInputSize((big_w, big_h))

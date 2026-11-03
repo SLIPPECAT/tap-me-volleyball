@@ -5,7 +5,7 @@
 # 쿠키가 없으면 빈 값이 간다(회원 아님·입장 쿠키 없음). 예전 sslip 주소는 닫았다(10/31 사용자: 외부 노출 없이).
 tapme.highlight.baegugu.com {
 	request_body {
-		max_size 450MB
+		max_size 1200MB
 	}
 	handle /access/claim {
 		reverse_proxy 127.0.0.1:8000 {

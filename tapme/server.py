@@ -403,9 +403,18 @@ def _run_scan(job_id: str, client: Any) -> None:
     job = jobs.load_job(job_id)
     size = Path(job.video).stat().st_size if job.video and Path(job.video).exists() else 0
     _log(job_id, "upload", size_mb=round(size / 1e6, 1))
+    info = _video_info(job.video)  # 올린 그대로의 형식(HDR이면 아래에서 SDR로 바꾼다)
     with _Working(), jobs.SCAN_TURNS.turn(job_id):
         job = jobs.load_job(job_id)
         try:
+            if info.get("hdr"):
+                t1 = time.time()
+                try:
+                    jobs.ensure_sdr(job)
+                    _log(job_id, "sdr", t1)
+                except Exception:  # noqa: BLE001 - 못 바꾸면 원본 그대로 찾는다(색만 바랜다)
+                    traceback.print_exc()
+                    _log(job_id, "sdr", t1, error="변환 실패")
             jobs.find_rallies(job, client)
             job.error = None
         except (jobs.BudgetExceeded, ValueError) as e:
@@ -417,7 +426,7 @@ def _run_scan(job_id: str, client: Any) -> None:
             access.refund(job.code, "uploads")
         job.save()
         _log(job_id, "rallies", t0, status=job.status, error=job.error, duration_sec=round(job.duration_sec),
-             **_video_info(job.video), rallies=sum(bool(r.get("is_rally")) for r in job.rallies), unread=len(job.unread))
+             **info, rallies=sum(bool(r.get("is_rally")) for r in job.rallies), unread=len(job.unread))
         if job.status == "rallies_ready":
             # 맡기기 설정은 올린 뒤 몇 초 늦게 저장된다 — 찾기를 시작할 때 읽은 job에는 없어 디스크에서 다시 본다(10/31 실기기)
             if jobs.load_job(job_id).auto:  # 한 번에 맡기기: 랠리 목록 알림 대신 바로 이어 만든다(끝나면 한 번 알린다)
@@ -1076,7 +1085,9 @@ class BrowserJobRequest(BaseModel):
 
 
 MAX_CHUNK_BYTES = 80 * 1024 * 1024  # 1분 흐림본(2fps) 조각은 수십 MB 안쪽
-MAX_SEGMENT_BYTES = 400 * 1024 * 1024  # 랠리 구간 원본(키프레임 간격만큼 넉넉, 4K도 들어가게)
+# 랠리 구간 원본(키프레임 간격만큼 넉넉). 400MB였을 때 4K60 1분 랠리(HEVC 약 420MB, H.264 약 840MB)가 넘쳤다(11/3 점검).
+# 1MB씩 디스크로 받으니 메모리는 그대로. deploy/Caddyfile의 max_size는 영상+소리가 들어가게 이보다 크게
+MAX_SEGMENT_BYTES = 1024 * 1024 * 1024
 
 
 @app.post("/jobs/browser")

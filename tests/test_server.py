@@ -1467,3 +1467,12 @@ def test_guide_has_korean_japanese_and_english_with_the_same_sections() -> None:
         shapes.append((part.count("<section>"), part.count("<li>"), part.count("<tr>")))
     assert shapes[0] == shapes[1] == shapes[2]
     assert 'data-set="ja"' in html and 'html[lang="ja"] [data-lang="ja"]' in html and '["ko", "ja", "en"]' in html
+
+
+def test_proxy_body_limit_fits_a_whole_rally_segment() -> None:
+    # 11/3 점검: 4K60 1분 랠리 구간이 400MB 한도를 넘어 413이었다. 서버 한도와 Caddy 한도가 어긋나지 않게
+    import re
+
+    caddy = (Path(server.__file__).parent.parent / "deploy" / "Caddyfile").read_text()
+    max_mb = int(re.search(r"max_size (\d+)MB", caddy).group(1))
+    assert server.MAX_SEGMENT_BYTES >= 1024**3 and max_mb * 1000**2 > server.MAX_SEGMENT_BYTES * 1.1
