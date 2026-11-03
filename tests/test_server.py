@@ -397,7 +397,7 @@ def test_idle_reports_quiet_time_and_running_work(client: TestClient, monkeypatc
     assert client.get(f"/jobs/{job_id}").status_code == 401
     assert client.get("/robots.txt").status_code == 200  # 봇이 열린 주소만 두드려도 깨어 있었다(11/2)
     assert client.get("/idle").json()["idle_sec"] > 3600
-    client.cookies.set(gate.COOKIE, gate.make("member"))  # 입장한 회원의 요청은 센다
+    client.cookies.set(gate.COOKIE, gate.make("member", owner="ABCD2345"))  # 입장한 회원의 요청은 센다
     assert client.get("/").status_code == 200
     assert client.get("/idle").json()["idle_sec"] < 60
     client.cookies.clear()
@@ -563,8 +563,13 @@ def test_a_member_cannot_open_another_members_job(client: TestClient, monkeypatc
     assert client.get(f"/uploads/{up}").status_code == 404
     assert client.post("/uploads", json={"filename": "m.mp4", "size": 1, "code": code_a}).status_code == 403  # 남의 코드로
     assert client.post("/uploads", json={"filename": "m.mp4", "size": 1, "code": code_b}).status_code == 200
-    client.cookies.set(gate.COOKIE, gate.make("member"))  # 주인 정보가 없는 예전 쿠키
-    assert client.get(f"/jobs/{job_id}").status_code == 404
+    # 주인 정보가 없는 예전 쿠키(10/31 주인 확인 전): 화면은 열리는데 올리기만 403이었다(11/3 안드로이드) → 입장 전으로 본다.
+    # 화면은 안내(배너 초대면 회원 확인을 다시 해 새 쿠키), 나머지는 401
+    client.cookies.set(gate.COOKIE, gate.make("member"))
+    assert client.get(f"/jobs/{job_id}").status_code == 401
+    assert client.post("/access", json={"code": code_b}).status_code == 401
+    assert client.post("/uploads", json={"filename": "m.mp4", "size": 1, "code": code_b}).status_code == 401
+    assert client.get("/", headers={"accept": "text/html"}).status_code == 403
 
 
 def test_judges_get_in_through_their_own_link(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -59,6 +59,11 @@ def session(value: str | None, now: float | None = None) -> dict | None:
         data = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     except ValueError:
         return None
+    # 주인 정보(o)가 없는 쿠키는 들어오지 않은 것으로 본다. 주인 확인을 넣기 전(10/31 21:47~22:42 배포)에 받은 30일짜리
+    # 쿠키는 화면·코드 확인은 되는데 올리기만 매번 403이었다(11/3 안드로이드: '업로드 중'이 보였다가 사라짐). 없는 것으로
+    # 보면 배너로 들어올 때 안내 화면이 회원 확인을 다시 해 주인 정보가 든 쿠키를 새로 받는다
+    if not data.get("o"):
+        return None
     return data if data.get("e", 0) > (time.time() if now is None else now) else None
 
 
