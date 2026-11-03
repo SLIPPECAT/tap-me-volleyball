@@ -630,7 +630,7 @@ def test_one_shot_asks_several_rallies_at_once_but_queues_in_order(client: TestC
         return {"frame": "score", "card": 1, "confidence": 0.9}
 
     monkeypatch.setattr(jobs, "find_rallies", five_rallies)
-    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c, **kw: job.dir / "ref.jpg")
     monkeypatch.setattr(auto, "find_me", slow_find)
     monkeypatch.setattr(jobs, "prepare_frames", lambda job, i, c: (job.scenes.__setitem__(str(i), {"index": i, "status": "frames_ready"}), job.save()))
     rendered: list[int] = []
@@ -676,7 +676,7 @@ def test_one_shot_makes_every_found_rally_without_using_code_highlights_and_asks
         return scan
 
     asked: list[int] = []
-    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c, **kw: job.dir / "ref.jpg")
     monkeypatch.setattr(auto, "find_me", lambda job, i, ref, hint, c: asked.append(i) or {"frame": "score", "card": 1, "confidence": 0.9})
     monkeypatch.setattr(jobs, "prepare_frames", lambda job, i, c: (job.scenes.__setitem__(str(i), {"index": i, "status": "frames_ready"}), job.save()))
 
@@ -743,7 +743,8 @@ def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeyp
         job.save()
 
     monkeypatch.setattr(jobs, "find_rallies", four_rallies)
-    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    ref_box: list = []
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c, **kw: ref_box.append(kw.get("box")) or job.dir / "ref.jpg")
     answers = {0: {"frame": "score", "card": 2, "confidence": 0.9}, 1: {"frame": "b2", "card": 1, "confidence": 0.5},
                2: {"frame": "score", "card": -1, "confidence": 0.9}, 3: {"frame": "start", "card": 0, "confidence": 0.95}}
     monkeypatch.setattr(auto, "find_me", lambda job, i, ref, hint, c: answers[i])
@@ -763,7 +764,8 @@ def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeyp
     monkeypatch.setattr(push, "notify", lambda job_id, kind, url, **v: sent.append((kind, v)))
 
     job_id = _send(client).json()["id"]
-    r = client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "hint": "초록 10번", "team": "초록", "outputs": ["highlights"]})
+    r = client.post(f"/jobs/{job_id}/auto", json={"t": 3.0, "x": 100, "y": 200, "hint": "초록 10번", "team": "초록", "outputs": ["highlights"],
+                                                  "box": [70, 100, 130, 300], "taps": 7})
     assert r.status_code == 200
     for _ in range(100):
         if client.get(f"/jobs/{job_id}").json()["auto"].get("state") == "done":
@@ -773,6 +775,10 @@ def test_one_shot_finds_me_makes_highlights_and_reel(client: TestClient, monkeyp
     # 나는 모든 랠리에 있다(11/1 사용자): 못 찾은 랠리(-1)도 건너뛰지 않고 확인 묶음으로. 고른 장면 종류로 만든다
     assert a["state"] == "done" and a["made"] == [0, 3] and a["review"] == [1, 2] and "me" not in a
     assert rendered == [(0, "score", 2, "초록"), (3, "start", 0, "초록")]
+    # 11/3: 화면에서 고른 테두리는 기준 사진을 만들 때 넘기고, 맡기기 전 탭한 횟수는 요청 기록에 남긴다(첫 사용이 어려운지 보려고)
+    assert ref_box == [[70, 100, 130, 300]]
+    logged = [json.loads(line) for line in (jobs.JOBS_DIR / "_requests.jsonl").read_text().splitlines()]
+    assert [r["taps"] for r in logged if r["job"] == job_id and r["event"] == "auto"] == [7]
     assert client.get(f"/jobs/{job_id}").json()["reel"]["order"] == [0, 3]  # 둘 이상이면 모음도
     # 장면마다가 아니라 끝날 때 한 번(이 시험은 찾기가 맡기기보다 먼저 끝나 랠리 알림이 앞에 하나 있다)
     assert [k for k, _ in sent if k != "rallies"] == ["auto_done"] and sent[-1][0] == "auto_done" and {k: sent[-1][1][k] for k in ("n", "review")} == {"n": 2, "review": 2} and sent[-1][1]["m"] >= 1
@@ -805,7 +811,7 @@ def test_one_shot_starts_when_settings_arrive_during_the_scan_and_resumes_after_
         job.save()
 
     monkeypatch.setattr(jobs, "find_rallies", scan_while_settings_arrive)
-    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c, **kw: job.dir / "ref.jpg")
     asked: list[int] = []
 
     def find_me(job, i, ref, hint, c):
@@ -1196,7 +1202,7 @@ def test_far_side_rallies_are_neither_made_nor_asked(client: TestClient, monkeyp
         job.save()
 
     monkeypatch.setattr(jobs, "find_rallies", three_rallies)
-    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c, **kw: job.dir / "ref.jpg")
     # 카드 0은 발이 아래(카메라 쪽), 카드 1은 위(건너편), 카드 2는 가운데
     boxes = [[0, 600, 50, 900], [0, 100, 30, 300], [0, 400, 40, 600]]
     monkeypatch.setattr(jobs, "prepare_frames", lambda job, i, c: job.scenes.__setitem__(
@@ -1239,20 +1245,27 @@ def test_tap_check_stops_a_too_small_or_missed_tap_before_upload(client: TestCli
                 track.Box("1", 900, 400, 930, 480)]  # 높이 80 / 1080 = 0.07 → 너무 작음
     monkeypatch.setattr(track, "detect_players", fake_detect)
     jpg = cv2.imencode(".jpg", np.zeros((1080, 1920, 3), np.uint8))[1].tobytes()
-    post = lambda x, y: client.post("/tap-check", files={"image": ("tap.jpg", jpg, "image/jpeg")}, data={"x": x, "y": y}).json()
+    def post(x, y):
+        r = client.post("/tap-check", files={"image": ("tap.jpg", jpg, "image/jpeg")}, data={"x": x, "y": y}).json()
+        return {k: v for k, v in r.items() if k != "boxes"}
     before = jobs.total_spent()
     assert post(130, 400) == {"ok": True, "reason": "ok", "height": 0.185}
     assert post(915, 440)["reason"] == "small"
     assert post(1500, 800) == {"ok": False, "reason": "miss", "height": 0.0}
     assert post(165, 400)["ok"] is True  # 상자 가장자리를 조금 벗어나도 그 사람
-    assert sent == [True] * 4 and not list((jobs.JOBS_DIR / "_tapcheck").iterdir())  # 확인 뒤 사진을 지운다
-    assert jobs.total_spent() == pytest.approx(before + 4 * track.USD_PER_IMAGE)
+    # 11/3: 장면을 고르면 탭 없이 먼저 묻는다 → 테두리만(판정 없음)
+    boxes = client.post("/tap-check", files={"image": ("tap.jpg", jpg, "image/jpeg")}).json()
+    assert boxes == {"boxes": [{"l": 100, "t": 300, "r": 160, "b": 500, "ok": True}, {"l": 900, "t": 400, "r": 930, "b": 480, "ok": False}]}
+    assert sent == [True] * 5 and not list((jobs.JOBS_DIR / "_tapcheck").iterdir())  # 확인 뒤 사진을 지운다
+    assert jobs.total_spent() == pytest.approx(before + 5 * track.USD_PER_IMAGE)
     assert client.post("/tap-check", files={"image": ("x.jpg", b"not an image", "image/jpeg")}, data={"x": 1, "y": 1}).status_code == 400
     # 서버가 맡을 때도 같은 기준(화면 확인을 건너뛴 경우)
     assert auto.pick_tapped([track.Box("1", 900, 400, 930, 480)], 915, 440, 1080)[1] == "small"
     assert auto.MIN_REF_HEIGHT == 0.12
     html = client.get("/").text
-    assert "checkTap(state.me)" in html and "state.me.ok === true" in html  # 확인을 통과해야 '만들어 줘'가 눌린다
+    assert "state.me.ok === true" in html  # 확인을 통과해야 '만들어 줘'가 눌린다
+    # 11/3: 장면을 고르면 사람을 먼저 찾아 테두리로 보여 주고, 탭은 그 테두리로 바로 맞춘다(탭마다 다시 묻지 않는다)
+    assert "findPeople();" in html and "decideTap(me, sc.boxes)" in html and "taps: state.taps" in html
 
 
 def test_refresh_keeps_the_picked_video_and_tap(client: TestClient) -> None:
@@ -1279,7 +1292,7 @@ def test_one_shot_makes_the_marker_video_first_then_fast_highlights(client: Test
         job.status = "rallies_ready"
         job.save()
     monkeypatch.setattr(jobs, "find_rallies", scan)
-    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c: job.dir / "ref.jpg")
+    monkeypatch.setattr(auto, "make_reference", lambda job, t, x, y, c, **kw: job.dir / "ref.jpg")
     monkeypatch.setattr(auto, "find_me", lambda job, i, ref, hint, c: {"frame": "score", "card": 1, "confidence": 0.95})
     monkeypatch.setattr(jobs, "prepare_frames", lambda job, i, c: (job.scenes.__setitem__(str(i), {"index": i, "status": "frames_ready"}), job.save()))
     monkeypatch.setattr(jobs, "serve_side", lambda job, i, c: {"side": "near"})

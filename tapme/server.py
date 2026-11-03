@@ -521,7 +521,8 @@ def _start_auto(job_id: str, client: Any) -> None:
         job.save()
     o = job.auto.get("options", {})
     _log(job_id, "auto", max=job.auto.get("max"), mosaic=o.get("mosaic_team", "all") if o.get("face_mosaic", True) else "none",
-         faces_consent=bool(o.get("faces_consent")), languages=o.get("languages", []), hint=bool(job.auto.get("hint")))
+         faces_consent=bool(o.get("faces_consent")), languages=o.get("languages", []), hint=bool(job.auto.get("hint")),
+         taps=job.auto.get("taps"))
     threading.Thread(target=_run_auto, args=(job_id, client), daemon=True).start()
 
 
@@ -580,7 +581,7 @@ def _auto_steps(job_id: str, client: Any) -> None:
     a = job.auto
     with _step_lock:
         job = jobs.load_job(job_id)
-        ref = auto.make_reference(job, a["me"]["t"], a["me"]["x"], a["me"]["y"], client)
+        ref = auto.make_reference(job, a["me"]["t"], a["me"]["x"], a["me"]["y"], client, box=a["me"].get("box"))
         job.save()
     order = [r["index"] for r in sorted(job.rallies, key=lambda r: r["start_sec"]) if r.get("is_rally")]
     made: list[int] = []
@@ -748,6 +749,9 @@ class AutoRequest(RenderOptions):
     hint: str = Field(default="", max_length=100, description="등번호·유니폼 색·신발처럼 나를 알아볼 정보")
     team: str = Field(min_length=1, max_length=20)
     max: int = Field(default=auto.MAX_HIGHLIGHTS, ge=1, le=auto.MAX_HIGHLIGHTS)
+    # 화면에서 고른 사람 테두리(원본 화소 왼·위·오른·아래). 서버가 다시 찾을 때 탭한 점이 빗나가도 같은 사람을 잡는다(11/3)
+    box: list[float] | None = Field(default=None, min_length=4, max_length=4)
+    taps: int = Field(default=0, ge=0, le=10000, description="맡기기 전에 탭한 횟수(기록용, 11/3 사용자: 처음 쓸 때 탭이 어려웠다)")
     # 무엇을 만들지(11/2 사용자): marker(경기 전체에 나 표시, 원본 가로) · highlights(랠리별 세로). 둘 다면 나 표시 영상을 먼저
     # 만들며 찾은 얼굴을 하이라이트가 다시 써 하이라이트가 몇 분 안에 나온다
     # 11/2 저녁 사용자: 나 표시 영상은 가로 화면 전체 얼굴 찾기로 10분 경기 약 1시간 40분 → 화면에서 숨기고 기본은 하이라이트만.
@@ -776,7 +780,8 @@ def start_auto(job_id: str, req: AutoRequest) -> dict[str, str]:
     if length > auto.MAX_SCAN_SEC + 1:
         raise HTTPException(400, f"한 번에 맡기기는 {auto.MAX_SCAN_SEC // 60}분까지예요. 구간을 골라 주세요")
     options = {k: v for k, v in req.model_dump().items() if k in RenderOptions.model_fields}
-    job.auto = {"state": "waiting", "me": {"t": req.t, "x": req.x, "y": req.y}, "hint": req.hint.strip(),
+    job.auto = {"state": "waiting", "me": {"t": req.t, "x": req.x, "y": req.y, "box": req.box}, "taps": req.taps,
+                "hint": req.hint.strip(),
                 "team": req.team.strip(), "options": options, "max": req.max, "found": {}, "made": [], "review": [],
                 "outputs": req.outputs}
     job.save()
@@ -819,8 +824,9 @@ def auto_next(job_id: str, background: BackgroundTasks) -> dict[str, Any]:
 
 
 @app.post("/tap-check")
-def tap_check(image: UploadFile, x: float = Form(..., ge=0), y: float = Form(..., ge=0)) -> dict[str, Any]:
-    """한 번에 맡기기에서 '나'를 탭하면, 올리기 전에 그 장면 한 장으로 내가 충분히 크게 보이는지 확인한다(11/2 사용자)."""
+def tap_check(image: UploadFile, x: float | None = Form(None, ge=0), y: float | None = Form(None, ge=0)) -> dict[str, Any]:
+    """한 번에 맡기기에서 장면을 고르면 그 한 장의 선수 테두리를 모두 돌려준다(11/3 사용자: 화면이 그려 두고 탭을 바로 맞춘다).
+    x·y를 같이 주면 내가 충분히 크게 보이는지 판정도 한다(11/2 사용자)."""
     data = image.file.read(MAX_TAP_IMAGE_BYTES + 1)
     if len(data) > MAX_TAP_IMAGE_BYTES:
         raise HTTPException(413, "사진이 너무 커요")

@@ -93,9 +93,11 @@ def pick_tapped(boxes: list[track.Box], x: float, y: float, frame_short: int) ->
     return pick, ("small" if pick.bottom - pick.top < MIN_REF_HEIGHT * frame_short else "ok")
 
 
-def check_tap(image: bytes, x: float, y: float, client: Any) -> dict[str, Any]:
-    """올리기 전, 탭한 장면 한 장으로 '나'가 충분히 크게 보이는지(11/2 사용자). 얼굴을 흐린 뒤 SAM으로 선수를 찾는다
-    (장당 track.USD_PER_IMAGE, 서비스 전체 비용 장부에 더한다). 얼굴이 그대로인 사진은 남기지 않는다."""
+def check_tap(image: bytes, x: float | None, y: float | None, client: Any) -> dict[str, Any]:
+    """올리기 전, 고른 장면 한 장의 선수를 모두 찾아 테두리(boxes, ok=기준 사진으로 쓸 만큼 큼)로 돌려준다. 화면은 이걸 그려
+    두고 탭을 바로 맞춘다(11/3 사용자: 처음 쓸 때 탭해도 인식이 안 된다는 느낌 — 탭마다 다시 묻지 않게). x·y를 같이 주면
+    예전처럼 판정(ok·reason·height)도 더한다(11/2 사용자). 얼굴을 흐린 뒤 SAM으로 찾는다(장당 track.USD_PER_IMAGE,
+    서비스 전체 비용 장부에 더한다). 얼굴이 그대로인 사진은 남기지 않는다."""
     frame = cv2.imdecode(np.frombuffer(image, np.uint8), cv2.IMREAD_COLOR)
     if frame is None:
         raise ValueError("사진을 읽지 못했어요")
@@ -113,13 +115,30 @@ def check_tap(image: bytes, x: float, y: float, client: Any) -> dict[str, Any]:
     with jobs._lock:
         jobs._add_spend(track.USD_PER_IMAGE)
     short = min(frame.shape[:2])
+    out: dict[str, Any] = {"boxes": [{"l": round(b.left), "t": round(b.top), "r": round(b.right), "b": round(b.bottom),
+                                      "ok": b.bottom - b.top >= MIN_REF_HEIGHT * short} for b in boxes]}
+    if x is None or y is None:
+        return out
     pick, why = pick_tapped(boxes, x, y, short)
     height = round((pick.bottom - pick.top) / short, 3) if pick else 0.0
-    return {"ok": why == "ok", "reason": why, "height": height}
+    return {**out, "ok": why == "ok", "reason": why, "height": height}
 
 
-def make_reference(job: jobs.Job, t: float, x: float, y: float, client: Any) -> Path:
-    """탭한 순간(원본 t초, 원본 화소 x·y)의 얼굴 흐림 화면에서 선수를 찾아, 탭한 곳을 가장 잘 덮는 사람의 카드를 자른다."""
+MIN_OVERLAP = 0.3  # 화면에서 고른 테두리와 서버가 다시 찾은 상자가 이만큼(IoU) 겹치면 같은 사람
+
+
+def _overlap(a: track.Box, b: list[float]) -> float:
+    w = min(a.right, b[2]) - max(a.left, b[0])
+    h = min(a.bottom, b[3]) - max(a.top, b[1])
+    inter = max(0.0, w) * max(0.0, h)
+    union = (a.right - a.left) * (a.bottom - a.top) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def make_reference(job: jobs.Job, t: float, x: float, y: float, client: Any, box: list[float] | None = None) -> Path:
+    """탭한 순간(원본 t초, 원본 화소 x·y)의 얼굴 흐림 화면에서 선수를 찾아, 탭한 곳을 가장 잘 덮는 사람의 카드를 자른다.
+    화면에서 고른 테두리(box: 왼·위·오른·아래)가 있으면, 탭한 점이 빗나가도 그 테두리와 많이 겹치는 사람을 고른다
+    (11/3 21:30: 화면 확인은 통과했는데 서버가 다시 찾은 상자가 어긋나 실패했다)."""
     d = job.dir / "auto"
     d.mkdir(exist_ok=True)
     ref = d / "ref.jpg"
@@ -136,6 +155,11 @@ def make_reference(job: jobs.Job, t: float, x: float, y: float, client: Any) -> 
         raise jobs.TapMissed("탭한 화면에서 선수를 찾지 못했어요. 내가 크게 보이는 다른 장면에서 다시 탭해 주세요")
     img = Image.open(frame)
     pick, why = pick_tapped(boxes, x, y, min(img.size))  # 올리기 전에 화면이 확인하지만(/tap-check) 서버도 한 번 더
+    if pick is None and box:
+        best = max(boxes, key=lambda b: _overlap(b, box))
+        if _overlap(best, box) >= MIN_OVERLAP:
+            pick = best
+            why = "small" if pick.bottom - pick.top < MIN_REF_HEIGHT * min(img.size) else "ok"
     if pick is None or why != "ok":
         frame.unlink()
         raise jobs.TapMissed(TAP_MESSAGES[why])

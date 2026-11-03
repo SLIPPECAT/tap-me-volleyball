@@ -212,3 +212,35 @@ def test_tap_size_uses_the_short_side_so_portrait_videos_are_not_penalized() -> 
     assert auto.pick_tapped([box], 530, 900, min(1080, 1920))[1] == "ok"  # 세로 1080×1920: 150 ≥ 0.12×1080
     assert auto.pick_tapped([box], 530, 900, 1920)[1] == "small"  # 예전처럼 높이(1920)로 재면 작다고 했다
     assert auto.pick_tapped([box], 530, 900, min(1920, 1080))[1] == "ok"  # 가로 1080p는 전과 같다
+
+
+def test_tap_check_returns_every_player_box_so_the_screen_can_show_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/3 사용자: 처음 쓸 때 탭해도 인식이 안 된다는 느낌(오늘 시작 전 탭 확인 6~22번). 장면을 고르면 사람을 먼저 찾아
+    # 테두리로 보여 주고, 탭은 화면이 그 테두리로 바로 맞춘다 — 탭할 때마다 서버에 다시 묻지 않는다
+    import cv2
+    import numpy as np
+
+    monkeypatch.setattr(jobs, "total_spent", lambda: 0.0)
+    monkeypatch.setattr(jobs, "_add_spend", lambda usd: None)
+    monkeypatch.setattr(auto.anonymize, "load_detector", lambda: None)
+    monkeypatch.setattr(auto.anonymize, "detect_faces", lambda frame, det: [])
+    monkeypatch.setattr(track, "detect_players", lambda c, p: [track.Box("a", 100, 300, 160, 500), track.Box("b", 900, 400, 930, 480)])
+    jpg = cv2.imencode(".jpg", np.zeros((1080, 1920, 3), np.uint8))[1].tobytes()
+    seen = auto.check_tap(jpg, None, None, client=None)
+    assert seen["boxes"] == [{"l": 100, "t": 300, "r": 160, "b": 500, "ok": True},
+                             {"l": 900, "t": 400, "r": 930, "b": 480, "ok": False}]  # 80px < 0.12×1080 → 너무 작음
+    assert "ok" not in seen  # 탭 없이 물으면 판정은 없다
+    assert auto.check_tap(jpg, 130, 400, client=None)["ok"] is True  # 예전처럼 탭과 같이 물어도 된다
+
+
+def test_reference_keeps_the_chosen_player_when_the_tap_point_misses_on_the_server(tmp_path: Path,
+                                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    # 11/3 21:30: 화면 확인은 통과했는데 서버가 다시 찾은 상자가 조금 어긋나 '탭한 곳에서 선수를 찾지 못했어요'로 끝났다.
+    # 화면에서 고른 테두리를 같이 받아, 탭한 점이 빗나가도 그 테두리와 가장 많이 겹치는 사람을 고른다
+    shifted = track.Box("0", 120, 300, 180, 500)  # 화면 테두리(100~160)보다 20px 옆 — 탭한 점(110)은 빗나간다
+    job, _ = _reference_setup(tmp_path, monkeypatch, [shifted, track.Box("1", 600, 300, 660, 500)])
+    assert auto.make_reference(job, 3.0, 110, 400, None, box=[100, 300, 160, 500]).exists()
+    (tmp_path / "far").mkdir()
+    job, _ = _reference_setup(tmp_path / "far", monkeypatch, [track.Box("1", 600, 300, 660, 500)])
+    with pytest.raises(jobs.TapMissed):  # 겹치는 사람이 없으면 엉뚱한 사람을 고르지 않는다
+        auto.make_reference(job, 3.0, 110, 400, None, box=[100, 300, 160, 500])
